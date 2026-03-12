@@ -1,0 +1,19 @@
+{
+  "contracts": {
+    "main_locate": "只返回合法 JSON，格式为：{\"found\": true|false, \"bbox\": [x1, y1, x2, y2] | null, \"confidence\": 0.0, \"reason\": \"简短解释\", \"autonomous_inference\": {\"likely_whereabouts\": [\"...\"], \"likely_action\": \"...\", \"priority_search_regions\": [\"...\"]} | null, \"needs_clarification\": true|false, \"clarification_question\": \"问题或 null\"}。",
+    "memory_markdown": "只返回 Markdown 正文，不要分 section，不要返回 JSON，不要使用 ``` 代码块围栏。尽量短。"
+  },
+  "prompts": {
+    "main_init": "你现在负责根据用户的一句初始描述，在当前图像中找到这个人。这句初始描述是：“{target_description}”。这句描述只用于这一次初始化定位。请在最新一帧中找出目标的 bbox。bbox 请返回 0..1000 归一化坐标。请返回紧贴目标人体可见区域的框，不要把旁边的人或大块背景包进去。如果存在多个合理候选，请不要猜测，直接返回 needs_clarification=true 并提出一个聚焦的澄清问题。",
+    "main_track": "第一张图片里的人就是目标人物。后面的图片按时间从旧到新排列，最后一张是要输出 bbox 的帧。请参照目标人物和下面这份简短 tracking memory，在最后一张图中找到同一个人并给出 bounding box。bbox 请返回 0..1000 归一化坐标。tracking memory 只作辅助，不是绝对真值。优先看人物自身较稳定的外观特征：体型、发型、裤子、鞋子、眼镜、背包、稳定配饰。没有把握就返回 found=false。如果有多个相近候选，返回 needs_clarification=true。\n\n当前 tracking memory：\n{memory}",
+    "sub_init_memory": "请根据第一张目标裁剪图和后面的场景帧，初始化一份极短的 tracking memory，供下一轮定位使用。忽略用户最初描述，只看当前图像。直接输出一段话，不要分 section，不要列点。前半段尽可能描述这个人的稳定特征，优先写体型、发型、裤子、鞋子、眼镜、背包、稳定配饰。后半段直接给出怎么和周围环境里的人区分开的建议。不要把场景位置、bbox、确认、匹配写进 memory。整体保持一小段话，越短越好。",
+    "sub_update_memory": "请根据第一张目标裁剪图和后面的场景帧，直接重写 tracking memory，供下一轮定位使用。直接输出一段话，不要分 section，不要列点。前半段尽可能描述这个人的稳定特征，优先写体型、发型、裤子、鞋子、眼镜、背包、稳定配饰。后半段直接给出怎么和周围环境里的人区分开的建议。不要把位置、bbox、确认、匹配写进 memory。整体保持一小段话，越短越好。",
+    "answer_chat": "你正在回答一次会话内的追踪问题。请基于当前 tracking memory、最近几帧和补充说明来回答用户。回答要简短、明确区分观察与推测，不要重置 session，不要改写 memory。用户问题如下：\n{question}\n\n当前 tracking memory：\n{memory}"
+  },
+  "limits": {
+    "main_max_tokens": 400,
+    "track_max_tokens": 300,
+    "memory_max_tokens": 180,
+    "chat_max_tokens": 220
+  }
+}

@@ -23,9 +23,9 @@ class TrackingSession:
     memory_path: str
     latest_result_path: Optional[str]
     latest_target_crop_path: Optional[str]
+    latest_visualization_path: Optional[str]
     latest_confirmed_frame_path: Optional[str]
     reference_crop_paths: List[str]
-    events_path: str
     clarification_notes: List[str]
     pending_clarification_question: Optional[str]
 
@@ -45,12 +45,10 @@ class SessionStore:
         session_dir.mkdir(parents=True, exist_ok=True)
 
         memory_path = session_dir / "memory.md"
-        events_path = session_dir / "events.jsonl"
         state_path = session_dir / "session.json"
 
         normalized_memory = normalize_memory_markdown(initial_memory)
         memory_path.write_text(normalized_memory, encoding="utf-8")
-        events_path.write_text("", encoding="utf-8")
 
         timestamp = _utc_now()
         session = TrackingSession(
@@ -62,18 +60,13 @@ class SessionStore:
             memory_path=str(memory_path),
             latest_result_path=None,
             latest_target_crop_path=None,
+            latest_visualization_path=None,
             latest_confirmed_frame_path=None,
             reference_crop_paths=[],
-            events_path=str(events_path),
             clarification_notes=[],
             pending_clarification_question=None,
         )
         self._write_session_state(session, state_path)
-        self.append_event(
-            session_id,
-            "initialize_target",
-            {"target_description": target_description},
-        )
         return self.load_session(session_id)
 
     def session_dir(self, session_id: str) -> Path:
@@ -83,6 +76,7 @@ class SessionStore:
         state_path = self.session_dir(session_id) / "session.json"
         payload = json.loads(state_path.read_text(encoding="utf-8"))
         payload.setdefault("latest_target_crop_path", None)
+        payload.setdefault("latest_visualization_path", None)
         payload.setdefault("latest_confirmed_frame_path", None)
         payload.setdefault("reference_crop_paths", [])
         payload.setdefault("clarification_notes", [])
@@ -133,6 +127,22 @@ class SessionStore:
             **{
                 **asdict(session),
                 "latest_target_crop_path": str(crop_path),
+                "updated_at": _utc_now(),
+            }
+        )
+        self._write_session_state(updated, self.session_dir(session_id) / "session.json")
+        return updated
+
+    def set_latest_visualization_path(
+        self,
+        session_id: str,
+        visualization_path: Path,
+    ) -> TrackingSession:
+        session = self.load_session(session_id)
+        updated = TrackingSession(
+            **{
+                **asdict(session),
+                "latest_visualization_path": str(visualization_path),
                 "updated_at": _utc_now(),
             }
         )
@@ -208,38 +218,7 @@ class SessionStore:
             }
         )
         self._write_session_state(updated, self.session_dir(session_id) / "session.json")
-        self.append_event(session_id, "clarify_target", {"note": note.strip()})
         return updated
-
-    def append_event(
-        self,
-        session_id: str,
-        event_type: str,
-        payload: Dict[str, Any],
-    ) -> None:
-        session_dir = self.session_dir(session_id)
-        session_dir.mkdir(parents=True, exist_ok=True)
-        events_path = session_dir / "events.jsonl"
-        line = json.dumps(
-            {
-                "event_type": event_type,
-                "timestamp": _utc_now(),
-                "payload": payload,
-            },
-            ensure_ascii=True,
-        )
-        with events_path.open("a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
-
-    def read_events(self, session_id: str) -> List[Dict[str, Any]]:
-        events_path = self.session_dir(session_id) / "events.jsonl"
-        if not events_path.exists():
-            return []
-        return [
-            json.loads(line)
-            for line in events_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
 
     def _write_session_state(self, session: TrackingSession, state_path: Path) -> None:
         state_path.write_text(

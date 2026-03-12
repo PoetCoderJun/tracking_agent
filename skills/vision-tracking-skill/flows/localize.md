@@ -18,6 +18,8 @@ Use this flow for every low-frequency tracking turn.
 
 ## Runtime mapping
 
-- `PiAgentCore.run_tracking_step(...)`
-- `DashScopeTrackingBackend.locate_target(...)`
-- `validate_locate_result(...)`
+- Skill agent prompt for the locate call on the selected batch
+- `scripts/output_validator.py` to validate the locate result
+- `scripts/target_crop.py` to persist a new reference crop when found
+- `scripts/bbox_visualization.py` to persist the bbox overlay
+- `scripts/runtime_state.py --action advance` after consuming a new batch

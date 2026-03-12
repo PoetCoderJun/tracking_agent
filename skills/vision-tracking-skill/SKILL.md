@@ -1,11 +1,11 @@
 ---
 name: vision-tracking-skill
-description: Session-based visual tracking skill for locating a user-described person in sampled video frames, maintaining compact tracking memory, handling clarification, and answering tracking-status chat. Use when Codex needs to run, inspect, or debug the tracking loop and its session artifacts in this repository.
+description: Conversational visual tracking skill for maintaining a persistent human-in-the-loop tracking session over sampled video frames. Use when Codex or Claude Code should interact naturally with the user, decide how to advance the tracking session from context, and use the bundled scripts only as atomic capabilities.
 ---
 
 # Vision Tracking Skill
 
-Use this skill when Pi Agent needs to localize a user-specified person in the latest frame, maintain evolving tracking memory, and support clarification or tracking-related chat without breaking the session.
+Use this skill when the host agent needs to maintain an ongoing tracking conversation with the user, localize a described person in sampled video frames, evolve compact tracking memory, and respond naturally to interruptions, corrections, questions, or target changes without collapsing into a rigid workflow.
 
 ## What this skill owns
 
@@ -27,36 +27,65 @@ Use this skill when Pi Agent needs to localize a user-specified person in the la
 
 ## Runtime entry points
 
-- Pi Agent core: `tracking_agent/pi_agent_core.py`
-- Session store: `tracking_agent/session_store.py`
-- Frame/query readers: `tracking_agent/history_queue.py`
-- DashScope backend: `tracking_agent/dashscope_tracking_backend.py`
+- Query plan builder: `scripts/build_query_plan.py`
+- One-shot replay helper: `scripts/track_from_description.py`
+- Session store: `scripts/session_store.py`
+- Runtime state helper: `scripts/runtime_state.py`
+- Frame/query readers: `scripts/frame_manifest_reader.py`, `scripts/history_queue.py`
 
-## Workflow
+## Interaction model
 
-1. Read the current frame window from the local queue or query plan.
-2. If the target is new or replaced, run [init.md](./flows/init.md).
-3. Run [localize.md](./flows/localize.md) to get the current target bbox or `not found`.
-4. Rewrite memory with [update-memory.md](./flows/update-memory.md).
-5. If ambiguity remains, use [clarify.md](./flows/clarify.md).
-6. If the user asks a tracking-related question, use [answer-chat.md](./flows/answer-chat.md).
+This is one unified conversational skill, not a menu of separate user-facing modes.
+
+For each new user turn:
+
+1. Read the active session and current runtime context.
+2. Interpret the new message in context instead of forcing an up-front closed-set intent label.
+3. Decide what combination of tool calls best moves the session forward.
+4. Use the flow documents below as reusable patterns, not as a rigid taxonomy.
+
+Read [interaction-policy.md](./references/interaction-policy.md) before combining tools.
+
+Reusable flow patterns:
+
+1. [init.md](./flows/init.md)
+2. [localize.md](./flows/localize.md)
+3. [update-memory.md](./flows/update-memory.md)
+4. [clarify.md](./flows/clarify.md)
+5. [answer-chat.md](./flows/answer-chat.md)
 
 ## Required references
 
 - Memory template: [memory-format.md](./references/memory-format.md)
 - Output contracts: [output-contracts.md](./references/output-contracts.md)
 - Prompting rules: [prompting-guidelines.md](./references/prompting-guidelines.md)
+- Interaction policy: [interaction-policy.md](./references/interaction-policy.md)
+- Agent prompt/config bundle: [agent-config.json](./references/agent-config.json)
 
 ## Deterministic helpers
 
 - Frame manifest reader: [frame_manifest_reader.py](./scripts/frame_manifest_reader.py)
 - Query batch helper: [history_queue.py](./scripts/history_queue.py)
+- Query-plan builder wrapper: [build_query_plan.py](./scripts/build_query_plan.py)
+- Given-description tracking runner: [track_from_description.py](./scripts/track_from_description.py)
 - Session state helper: [session_store.py](./scripts/session_store.py)
+- Runtime state helper: [runtime_state.py](./scripts/runtime_state.py)
+- Main-agent locate call: [main_agent_locate.py](./scripts/main_agent_locate.py)
+- Sub-agent memory call: [sub_agent_memory.py](./scripts/sub_agent_memory.py)
+- Tracking chat answer call: [answer_tracking_chat.py](./scripts/answer_tracking_chat.py)
+- Target crop writer: [target_crop.py](./scripts/target_crop.py)
+- BBox visualization writer: [bbox_visualization.py](./scripts/bbox_visualization.py)
 - Memory normalizer: [memory_rewriter.py](./scripts/memory_rewriter.py)
 - Locate-result validator: [output_validator.py](./scripts/output_validator.py)
+- Shared model-call helper: [agent_common.py](./scripts/agent_common.py)
 
 ## Notes
 
+- The skill owns the full conversational tracking session.
+- Python helpers must stay atomic. Do not reintroduce a monolithic round runner under `skills/` or `scaffold/`.
+- Continuous end-to-end replay is allowed only as a test harness, not as the production orchestration layer.
+- All user-facing runtime entry points referenced by this skill must resolve within the skill folder itself.
+- Do not expose a fixed closed list of user-facing intents. Let the host agent decide how to combine the tool calls from context.
 - Keep memory short, natural-language, and search-oriented.
 - Rewrite memory in place instead of appending logs forever.
 - Distinguish observations from hypotheses in wording.

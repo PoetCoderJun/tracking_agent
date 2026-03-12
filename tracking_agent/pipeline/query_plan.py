@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import List
 
-from tracking_agent.frame_queue import FrameRecord
+from tracking_agent.pipeline.frame_queue import FrameRecord
 
 
 @dataclass(frozen=True)

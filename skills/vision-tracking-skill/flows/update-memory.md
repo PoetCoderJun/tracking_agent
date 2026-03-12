@@ -18,5 +18,6 @@ Use this flow after every localization attempt.
 
 ## Runtime mapping
 
-- `DashScopeTrackingBackend.rewrite_memory(...)`
+- Skill sub-agent prompt for memory rewriting
 - `SessionStore.write_memory(...)`
+- `scripts/memory_rewriter.py` to normalize the rewritten memory before saving

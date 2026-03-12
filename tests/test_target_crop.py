@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from tracking_agent.output_validator import denormalize_bbox_from_1000_scale
 from tracking_agent.target_crop import save_target_crop
 
 
@@ -21,3 +22,12 @@ def test_save_target_crop_expands_tiny_bbox_to_minimum_size(tmp_path: Path) -> N
     with Image.open(crop_path) as crop:
         assert crop.size[0] >= 16
         assert crop.size[1] >= 16
+
+
+def test_denormalize_bbox_from_1000_scale_maps_to_pixel_coordinates() -> None:
+    bbox = denormalize_bbox_from_1000_scale(
+        [379, 180, 596, 994],
+        image_size=(512, 384),
+    )
+
+    assert bbox == [194, 69, 305, 382]

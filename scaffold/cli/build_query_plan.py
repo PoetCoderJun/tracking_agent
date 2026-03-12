@@ -11,8 +11,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tracking_agent.config import load_settings
-from tracking_agent.frame_queue import extract_video_to_frame_queue
-from tracking_agent.query_plan import build_query_batches, write_query_plan
+from tracking_agent.pipeline import (
+    build_query_batches,
+    extract_video_to_frame_queue,
+    write_query_plan,
+)
 
 
 def parse_args() -> argparse.Namespace:

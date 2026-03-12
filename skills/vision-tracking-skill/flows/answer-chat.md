@@ -16,5 +16,5 @@ Use this flow when the user asks a tracking-related question during an active se
 
 ## Runtime mapping
 
-- `PiAgentCore.answer_chat(...)`
-- `DashScopeTrackingBackend.answer_chat(...)`
+- `scripts/session_store.py --show-memory` to inspect current memory before answering
+- `scripts/answer_tracking_chat.py` to produce the grounded answer

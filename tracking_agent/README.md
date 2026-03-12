@@ -1,11 +1,14 @@
 # tracking_agent package layout
 
-`tracking_agent/` 现在按职责分为两层：
+`tracking_agent/` 现在按职责分为三组：
 
-- `core/`: 会话状态、意图路由、单步追踪、会话循环。
-- 根目录其它模块: DashScope 后端、推理工具、query-plan、图像处理与配置。
+- `core/`: session 存储与 runtime state 存储。
+- `pipeline/`: 抽帧、query plan、历史 batch 读取。
+- 根目录保留通用模块: 图像处理、memory 格式、配置、输出校验。
 
-兼容性说明：
+导入约定：
 
-- 旧路径 `tracking_agent.pi_agent_core`、`tracking_agent.pi_agent_loop`、`tracking_agent.session_store`、`tracking_agent.intent_router` 仍可导入。
-- 新代码优先从 `tracking_agent.core` 导入核心编排逻辑。
+- `skills/` 负责开放式的 tracking 会话编排，而不是做封闭意图分类。
+- Python 代码只保留 timing、状态、文件读写和结果校验等底层工具。
+- 若需要端到端回放，只能放在测试 harness 中，不能作为生产 workflow 入口。
+- 新代码统一从 `tracking_agent.core`、`tracking_agent.pipeline` 和根目录工具模块导入。

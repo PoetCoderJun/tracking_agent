@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tracking_agent.history_queue import get_query_batch
+from tracking_agent.pipeline import get_query_batch
 
 
 def parse_args() -> argparse.Namespace:

@@ -16,5 +16,8 @@ Use this flow when the user starts a tracking session or replaces the target.
 
 ## Runtime mapping
 
-- `PiAgentCore.initialize_target(...)`
-- `DashScopeTrackingBackend.initialize_memory(...)`
+- Skill agent prompt for first-turn localization and first memory draft
+- `scripts/session_store.py` to inspect/reset session artifacts
+- `scripts/target_crop.py` to persist the confirmed target crop
+- `scripts/bbox_visualization.py` to persist the first bbox preview
+- `scripts/runtime_state.py --action reuse` if initialization reuses the current batch

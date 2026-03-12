@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tracking_agent.frame_queue import extract_video_to_frame_queue
-from tracking_agent.query_plan import build_query_batches
+from tracking_agent.pipeline import build_query_batches, extract_video_to_frame_queue
 
 
 ROOT = Path(__file__).resolve().parents[1]
