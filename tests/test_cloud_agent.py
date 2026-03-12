@@ -70,6 +70,22 @@ def test_normalize_select_result_backfills_clarification_question() -> None:
     assert normalized["text"] == "有多个候选人"
 
 
+def test_normalize_select_result_accepts_bounding_box_id_alias() -> None:
+    normalized = normalize_select_result(
+        {
+            "found": True,
+            "bounding_box_id": 15,
+            "text": "已确认目标。",
+            "reason": "",
+            "needs_clarification": False,
+        }
+    )
+
+    assert normalized["found"] is True
+    assert normalized["target_id"] == 15
+    assert normalized["bounding_box_id"] == 15
+
+
 def test_should_force_init_for_new_target_description_without_active_target() -> None:
     session = _session(latest_target_id=None, latest_memory="")
 
@@ -155,7 +171,7 @@ def test_run_select_defers_memory_rewrite_to_background_worker(tmp_path: Path, m
     def fake_call_model(**kwargs):
         calls.append(kwargs)
         return {
-            "response_text": '{"found": true, "target_id": 15, "text": "已确认目标", "needs_clarification": false, "reason": ""}'
+            "response_text": '{"found": true, "bounding_box_id": 15, "text": "已确认目标", "needs_clarification": false, "reason": ""}'
         }
 
     def fake_save_detection_visualization(image_path: Path, detections, output_path: Path) -> None:

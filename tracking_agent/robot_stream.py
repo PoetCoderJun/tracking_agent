@@ -133,7 +133,13 @@ def append_event_jsonl(path: Path, event: RobotIngestEvent) -> None:
         handle.write("\n")
 
 
-def post_event(url: str, event: RobotIngestEvent) -> Dict[str, Any]:
+def post_event(
+    url: str,
+    event: RobotIngestEvent,
+    timeout_seconds: float = 300,
+) -> Dict[str, Any]:
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
     payload = event_payload(event, include_image_base64=True)
     request = urllib.request.Request(
         url=url,
@@ -141,7 +147,7 @@ def post_event(url: str, event: RobotIngestEvent) -> Dict[str, Any]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
     return {
         "status": getattr(response, "status", 200),

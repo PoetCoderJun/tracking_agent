@@ -55,6 +55,12 @@ def parse_args() -> argparse.Namespace:
         help="Text payload attached to follow-up events after the first initialization event.",
     )
     parser.add_argument("--backend-url", default="http://127.0.0.1:8001/api/v1/robot/ingest")
+    parser.add_argument(
+        "--backend-timeout-seconds",
+        type=float,
+        default=310.0,
+        help="HTTP timeout used when waiting for backend to reply after agent processing.",
+    )
     parser.add_argument("--model", default="yolov8n.pt")
     parser.add_argument("--tracker", default=None)
     parser.add_argument("--conf", type=float, default=0.25)
@@ -134,6 +140,8 @@ def main() -> int:
         raise ValueError("--sample-every must be positive")
     if args.interval_seconds <= 0:
         raise ValueError("--interval-seconds must be positive")
+    if args.backend_timeout_seconds <= 0:
+        raise ValueError("--backend-timeout-seconds must be positive")
     if args.max_events is not None and args.max_events <= 0:
         raise ValueError("--max-events must be positive when provided")
 
@@ -203,7 +211,11 @@ def main() -> int:
 
         backend_status = None
         if args.backend_url:
-            backend_response = post_event(args.backend_url, event)
+            backend_response = post_event(
+                args.backend_url,
+                event,
+                timeout_seconds=args.backend_timeout_seconds,
+            )
             backend_status = backend_response["status"]
 
         summary = {

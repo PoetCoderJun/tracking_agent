@@ -9,8 +9,9 @@ Use this skill when the host agent needs to maintain an ongoing tracking convers
 
 ## What this skill owns
 
-- A VLM-first Main Agent that outputs the current target `bbox` or `not found`
-- A Sub-agent that rewrites the target memory in Markdown
+- A unified conversational tracking agent that chooses skill tools in context
+- A VLM-first localization capability for `init` and `track`
+- A memory rewrite capability that rewrites the target memory in Markdown
 - Human-in-the-loop behaviors:
   - rough initialization from a short user description
   - interruption and target replacement
@@ -28,7 +29,7 @@ Use this skill when the host agent needs to maintain an ongoing tracking convers
 ## Runtime entry points
 
 - Query plan builder: `scripts/build_query_plan.py`
-- One-shot replay helper: `scripts/track_from_description.py`
+- One-shot replay helper: `scripts/track_from_description.py` (requires per-frame candidate detections with stable bounding box IDs)
 - Session store: `scripts/session_store.py`
 - Runtime state helper: `scripts/runtime_state.py`
 - Frame/query readers: `scripts/frame_manifest_reader.py`, `scripts/history_queue.py`
@@ -46,6 +47,15 @@ For each new user turn:
 
 Read [interaction-policy.md](./references/interaction-policy.md) before combining tools.
 
+The host agent should expose and combine these skill-level tools:
+
+- `reply`: answer a tracking-related question or ask one focused clarification question without mutating target binding
+- `init`: bind a new target from the latest frame using the current user description
+- `track`: continue binding the active target on the latest frame using memory and recent session context
+- `rewrite_memory`: optionally rewrite memory after a successful `init` or `track`
+
+The backend in this repository is not the dialogue orchestrator. It only stores session state, serves frame/context payloads, and accepts agent results. The host agent should read `/api/v1/sessions/{session_id}/agent-context`, run this skill externally, then post the chosen tool result to `/api/v1/sessions/{session_id}/agent-result`.
+
 Reusable flow patterns:
 
 1. [init.md](./flows/init.md)
@@ -61,6 +71,8 @@ Reusable flow patterns:
 - Prompting rules: [prompting-guidelines.md](./references/prompting-guidelines.md)
 - Interaction policy: [interaction-policy.md](./references/interaction-policy.md)
 - Agent prompt/config bundle: [agent-config.json](./references/agent-config.json)
+- PI Agent tool contract: [pi-agent-tools.json](./references/pi-agent-tools.json)
+- PI host agent config: [pi-host-agent-config.json](./references/pi-host-agent-config.json)
 
 ## Deterministic helpers
 
@@ -68,11 +80,15 @@ Reusable flow patterns:
 - Query batch helper: [history_queue.py](./scripts/history_queue.py)
 - Query-plan builder wrapper: [build_query_plan.py](./scripts/build_query_plan.py)
 - Given-description tracking runner: [track_from_description.py](./scripts/track_from_description.py)
+- `track_from_description.py` now expects an external detections file and only asks the model to select a candidate `bounding_box_id`
 - Session state helper: [session_store.py](./scripts/session_store.py)
 - Runtime state helper: [runtime_state.py](./scripts/runtime_state.py)
 - Main-agent locate call: [main_agent_locate.py](./scripts/main_agent_locate.py)
 - Sub-agent memory call: [sub_agent_memory.py](./scripts/sub_agent_memory.py)
 - Tracking chat answer call: [answer_tracking_chat.py](./scripts/answer_tracking_chat.py)
+- PI Agent skill adapter: [pi_agent_adapter.py](./scripts/pi_agent_adapter.py)
+- Backend bridge for PI execution: [pi_backend_bridge.py](./scripts/pi_backend_bridge.py)
+- Model-driven PI host turn: [pi_host_turn.py](./scripts/pi_host_turn.py)
 - Target crop writer: [target_crop.py](./scripts/target_crop.py)
 - BBox visualization writer: [bbox_visualization.py](./scripts/bbox_visualization.py)
 - Memory normalizer: [memory_rewriter.py](./scripts/memory_rewriter.py)

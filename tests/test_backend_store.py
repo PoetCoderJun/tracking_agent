@@ -93,10 +93,45 @@ def test_apply_agent_result_backfills_bbox_from_latest_frame(tmp_path: Path) -> 
     assert session.latest_target_id == 15
     assert session.latest_memory == "短发，黑衣服。"
     assert session.latest_result is not None
+    assert session.latest_result["bounding_box_id"] == 15
     assert session.latest_result["bbox"] == [100, 120, 180, 260]
     assert len(session.result_history) == 1
     assert session.result_history[0]["memory"] == "短发，黑衣服。"
     assert session.latest_confirmed_frame_path is not None
+
+
+def test_build_agent_context_exposes_bounding_box_aliases(tmp_path: Path) -> None:
+    store = BackendStore(tmp_path / "state", frame_buffer_size=3)
+    store.ingest_robot_event(
+        session_id="sess_001",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[
+            {"track_id": 15, "bbox": [100, 120, 180, 260], "score": 0.94},
+        ],
+        text="",
+    )
+    store.apply_agent_result(
+        "sess_001",
+        {
+            "text": "我认为当前目标是 15。",
+            "bounding_box_id": 15,
+            "found": True,
+            "needs_clarification": False,
+            "clarification_question": None,
+            "memory": "短发，黑衣服。",
+        },
+    )
+
+    context = store.build_agent_context("sess_001")
+
+    assert context["latest_bounding_box_id"] == 15
+    assert context["latest_result"]["bounding_box_id"] == 15
+    assert context["frames"][-1]["detections"][0]["bounding_box_id"] == 15
 
 
 def test_apply_agent_result_hides_bbox_when_target_not_found(tmp_path: Path) -> None:

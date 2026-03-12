@@ -101,7 +101,7 @@ def normalize_orchestration_result(result: Dict[str, Any]) -> Dict[str, Any]:
 
 def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
     found = bool(result.get("found", False))
-    target_id = result.get("target_id")
+    target_id = result.get("bounding_box_id")
     if target_id is not None:
         target_id = int(target_id)
 
@@ -120,6 +120,7 @@ def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "found": found and target_id is not None,
         "target_id": target_id,
+        "bounding_box_id": target_id,
         "text": text,
         "reason": reason,
         "needs_clarification": needs_clarification,
@@ -320,6 +321,7 @@ class CloudTrackingAgent:
             "behavior": behavior,
             "text": normalized["text"],
             "target_id": normalized["target_id"],
+            "bounding_box_id": normalized["bounding_box_id"],
             "found": normalized["found"],
             "needs_clarification": normalized["needs_clarification"],
             "clarification_question": normalized["clarification_question"],
@@ -351,7 +353,7 @@ class CloudTrackingAgent:
         if not detections:
             return "- 无候选人"
         return "\n".join(
-            f"- ID {int(detection.track_id)}: bbox={list(detection.bbox)}, score={float(detection.score):.2f}"
+            f"- bounding_box_id={int(detection.track_id)}: bbox={list(detection.bbox)}, score={float(detection.score):.2f}"
             for detection in detections
         )
 

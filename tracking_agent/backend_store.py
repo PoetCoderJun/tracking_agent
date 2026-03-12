@@ -14,6 +14,21 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _extract_bounding_box_id(payload: Dict[str, Any]) -> Optional[int]:
+    raw_value = (
+        payload.get("bounding_box_id")
+        if isinstance(payload, dict)
+        else None
+    )
+    if raw_value is None and isinstance(payload, dict):
+        raw_value = payload.get("bbox_id")
+    if raw_value is None and isinstance(payload, dict):
+        raw_value = payload.get("target_id")
+    if raw_value is None:
+        return None
+    return int(raw_value)
+
+
 RESULT_HISTORY_LIMIT = 60
 
 
@@ -171,7 +186,7 @@ class BackendStore:
                         "device_id": session.device_id,
                         "updated_at": session.updated_at,
                         "latest_target_id": session.latest_target_id,
-                        "latest_result": session.latest_result,
+                        "latest_result": self._with_result_aliases(session.latest_result),
                     }
                 )
             sessions.sort(key=lambda item: item["updated_at"], reverse=True)
@@ -252,13 +267,25 @@ class BackendStore:
             "target_description": session.target_description,
             "memory": session.latest_memory,
             "latest_target_id": session.latest_target_id,
+            "latest_bounding_box_id": session.latest_target_id,
             "latest_target_crop": session.latest_target_crop,
             "latest_confirmed_frame_path": session.latest_confirmed_frame_path,
             "clarification_notes": session.clarification_notes,
             "conversation_history": session.conversation_history,
             "pending_question": session.pending_question,
-            "latest_result": session.latest_result,
-            "frames": [asdict(frame) for frame in session.recent_frames],
+            "latest_result": self._with_result_aliases(session.latest_result),
+            "frames": [
+                {
+                    "frame_id": frame.frame_id,
+                    "timestamp_ms": frame.timestamp_ms,
+                    "image_path": frame.image_path,
+                    "detections": [
+                        self._detection_payload(detection)
+                        for detection in frame.detections
+                    ],
+                }
+                for frame in session.recent_frames
+            ],
         }
 
     def apply_agent_result(
@@ -269,7 +296,7 @@ class BackendStore:
         with self._lock:
             session = self.load_session(session_id)
             latest_frame = session.recent_frames[-1] if session.recent_frames else None
-            target_id = result.get("target_id")
+            target_id = _extract_bounding_box_id(result)
             bbox = self._latest_bbox_for_target(latest_frame, target_id)
 
             memory = str(result.get("memory", "")).strip() or session.latest_memory
@@ -291,6 +318,7 @@ class BackendStore:
                 "behavior": str(result.get("behavior", "reply")),
                 "text": str(result.get("text", "")).strip(),
                 "target_id": None if target_id is None else int(target_id),
+                "bounding_box_id": None if target_id is None else int(target_id),
                 "bbox": visible_bbox,
                 "found": found,
                 "needs_clarification": bool(result.get("needs_clarification", False)),
@@ -337,6 +365,28 @@ class BackendStore:
             )
             self._write_session(updated)
             return updated
+
+    def _detection_payload(self, detection: BackendDetection) -> Dict[str, Any]:
+        return {
+            "track_id": int(detection.track_id),
+            "bounding_box_id": int(detection.track_id),
+            "bbox": list(detection.bbox),
+            "score": float(detection.score),
+            "label": detection.label,
+        }
+
+    def _with_result_aliases(
+        self,
+        result: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if result is None:
+            return None
+        payload = dict(result)
+        target_id = _extract_bounding_box_id(payload)
+        if target_id is not None:
+            payload["target_id"] = int(target_id)
+            payload["bounding_box_id"] = int(target_id)
+        return payload
 
     def apply_memory_update(
         self,

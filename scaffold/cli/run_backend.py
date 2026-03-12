@@ -17,6 +17,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--state-root", default="./runtime/backend")
     parser.add_argument("--frame-buffer-size", type=int, default=3)
     parser.add_argument("--env-file", default=".ENV")
+    parser.add_argument(
+        "--external-agent-wait-seconds",
+        type=float,
+        default=300.0,
+        help="How long /robot/ingest should wait for an external /agent-result before replying.",
+    )
+    parser.add_argument(
+        "--external-agent-poll-seconds",
+        type=float,
+        default=0.1,
+        help="Polling interval used while waiting for an external /agent-result.",
+    )
     return parser.parse_args()
 
 
@@ -39,6 +51,8 @@ def main() -> int:
         state_root=Path(args.state_root),
         frame_buffer_size=args.frame_buffer_size,
         env_path=Path(args.env_file),
+        external_agent_wait_seconds=args.external_agent_wait_seconds,
+        external_agent_poll_seconds=args.external_agent_poll_seconds,
     )
     uvicorn.run(app, host=args.host, port=args.port)
     return 0

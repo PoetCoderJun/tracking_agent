@@ -1,0 +1,117 @@
+{
+  "skill_name": "vision-tracking-skill",
+  "adapter_entrypoint": "skills/vision-tracking-skill/scripts/pi_agent_adapter.py",
+  "tooling_notes": [
+    "The PI Agent is the dialogue orchestrator. The backend only stores context and accepts results.",
+    "Use reply for pure conversational turns or focused clarification questions.",
+    "Use init when the user is defining or replacing the target in the latest frame.",
+    "Use track when an active target already exists and the session should continue on the latest frame.",
+    "Use rewrite_memory after a successful init or track when you want to refresh the compact tracking memory before posting the final result."
+  ],
+  "tools": [
+    {
+      "name": "reply",
+      "description": "Format a conversational or clarification response into a backend agent-result payload without changing the tracked target.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Short natural-language answer to the user."
+          },
+          "needs_clarification": {
+            "type": "boolean",
+            "description": "Whether the response is asking the user to clarify."
+          },
+          "clarification_question": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Focused follow-up question when clarification is required."
+          },
+          "found": {
+            "type": "boolean",
+            "description": "Optional override for whether the target is currently considered found."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "init",
+      "description": "Run the skill localization capability on the latest frame to bind a new target from the current user description.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "target_description": {
+            "type": "string",
+            "description": "Concise user-facing description of the new target to initialize."
+          }
+        },
+        "required": [
+          "target_description"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "track",
+      "description": "Run the skill localization capability on the latest frame to continue tracking the active target.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "user_text": {
+            "type": "string",
+            "description": "Optional latest user note for this tracking turn. Defaults to a generic continuation."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "rewrite_memory",
+      "description": "Rewrite compact tracking memory after a successful init or track result. Prefer using the rewrite_memory_input returned by init or track.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "enum": [
+              "init",
+              "update"
+            ]
+          },
+          "crop_path": {
+            "type": "string"
+          },
+          "frame_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "frame_id": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "task",
+          "crop_path",
+          "frame_paths",
+          "frame_id",
+          "target_id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

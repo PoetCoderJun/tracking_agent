@@ -22,6 +22,8 @@ def test_skill_package_contains_expected_files() -> None:
         SKILL_ROOT / "references" / "prompting-guidelines.md",
         SKILL_ROOT / "references" / "interaction-policy.md",
         SKILL_ROOT / "references" / "agent-config.json",
+        SKILL_ROOT / "references" / "pi-agent-tools.json",
+        SKILL_ROOT / "references" / "pi-host-agent-config.json",
         SKILL_ROOT / "scripts" / "build_query_plan.py",
         SKILL_ROOT / "scripts" / "track_from_description.py",
         SKILL_ROOT / "scripts" / "frame_manifest_reader.py",
@@ -36,6 +38,9 @@ def test_skill_package_contains_expected_files() -> None:
         SKILL_ROOT / "scripts" / "memory_rewriter.py",
         SKILL_ROOT / "scripts" / "output_validator.py",
         SKILL_ROOT / "scripts" / "agent_common.py",
+        SKILL_ROOT / "scripts" / "pi_agent_adapter.py",
+        SKILL_ROOT / "scripts" / "pi_backend_bridge.py",
+        SKILL_ROOT / "scripts" / "pi_host_turn.py",
     ]
 
     for path in expected_paths:

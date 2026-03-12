@@ -19,5 +19,5 @@ Use this flow when the target remains ambiguous or the user needs to correct the
 
 - `scripts/session_store.py` to inspect the active session
 - `scripts/session_store.py --action add-clarification` to persist the note
-- `scripts/main_agent_locate.py --clarification-note ...` to re-run localization with the user correction
+- `scripts/main_agent_locate.py --clarification-note ... --detections-json ...` to re-run localization with the user correction
 - `scripts/runtime_state.py --action reuse` if the clarification reruns the same batch

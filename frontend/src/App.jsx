@@ -12,6 +12,9 @@ function getTrackingStatus(latestResult) {
   if (!latestResult) {
     return { label: "idle", tone: "neutral" };
   }
+  if (latestResult.behavior === "error") {
+    return { label: "error", tone: "warn" };
+  }
   if (latestResult.needs_clarification) {
     return { label: "clarify", tone: "warn" };
   }
@@ -35,36 +38,84 @@ function MetricTile({ label, value, accent = false }) {
   );
 }
 
+function getRawBoundingBoxId(source) {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+
+  return source.bounding_box_id ?? source.bbox_id ?? source.box_id ?? source.track_id ?? source.target_id ?? null;
+}
+
+function formatBoundingBoxIdValue(rawId) {
+  return rawId === null || rawId === undefined || rawId === "" ? "?" : String(rawId);
+}
+
 function DetectionOverlay({ frame, latestResult, imageSize }) {
   if (!frame || !imageSize.width || !imageSize.height) {
     return null;
   }
 
+  const detections = Array.isArray(frame.detections) ? frame.detections : [];
   const found = Boolean(latestResult?.found);
   const bbox = Array.isArray(latestResult?.bbox) ? latestResult.bbox : null;
-  const targetId = latestResult?.target_id ?? null;
+  const targetId = getRawBoundingBoxId(latestResult);
+  const viewBox = `0 0 ${imageSize.width} ${imageSize.height}`;
+  const hasTargetBox = found && bbox !== null;
 
-  if (!found || bbox === null) {
+  if (!detections.length && !hasTargetBox) {
     return null;
   }
 
-  const [x1, y1, x2, y2] = bbox;
-  const viewBox = `0 0 ${imageSize.width} ${imageSize.height}`;
-
   return (
     <svg className="overlay" viewBox={viewBox} preserveAspectRatio="none">
-      <g>
-        <rect
-          x={x1}
-          y={y1}
-          width={Math.max(1, x2 - x1)}
-          height={Math.max(1, y2 - y1)}
-          className="bbox bbox-target"
-        />
-        <text x={x1 + 6} y={Math.max(18, y1 - 8)} className="bbox-label bbox-label-target">
-          {targetId === null ? "TARGET" : `TARGET ${targetId}`}
-        </text>
-      </g>
+      {detections.map((detection) => {
+        const detectionBbox = Array.isArray(detection?.bbox) ? detection.bbox : null;
+        if (detectionBbox === null) {
+          return null;
+        }
+        const detectionTrackId = getRawBoundingBoxId(detection);
+        if (
+          hasTargetBox &&
+          targetId !== null &&
+          detectionTrackId !== null &&
+          String(detectionTrackId) === String(targetId)
+        ) {
+          return null;
+        }
+        const [x1, y1, x2, y2] = detectionBbox;
+        return (
+          <g key={`candidate-${detectionTrackId ?? "unknown"}-${x1}-${y1}-${x2}-${y2}`}>
+            <rect
+              x={x1}
+              y={y1}
+              width={Math.max(1, x2 - x1)}
+              height={Math.max(1, y2 - y1)}
+              className="bbox bbox-candidate"
+            />
+            <text x={x1 + 6} y={Math.max(18, y1 - 8)} className="bbox-label">
+              {formatBoundingBoxIdValue(detectionTrackId)}
+            </text>
+          </g>
+        );
+      })}
+      {hasTargetBox ? (
+        <g>
+          <rect
+            x={bbox[0]}
+            y={bbox[1]}
+            width={Math.max(1, bbox[2] - bbox[0])}
+            height={Math.max(1, bbox[3] - bbox[1])}
+            className="bbox bbox-target"
+          />
+          <text
+            x={bbox[0] + 6}
+            y={Math.max(18, bbox[1] - 8)}
+            className="bbox-label bbox-label-target"
+          >
+            {formatBoundingBoxIdValue(targetId)}
+          </text>
+        </g>
+      ) : null}
     </svg>
   );
 }
@@ -82,8 +133,8 @@ function HistoryEntry({ entry }) {
         <StatusPill latestResult={entry} />
       </div>
       <div className="history-line">
-        <strong>Frame</strong> {entry.frame_id || "n/a"} | <strong>Target ID</strong>{" "}
-        {entry.target_id ?? "n/a"}
+        <strong>Frame</strong> {entry.frame_id || "n/a"} | <strong>Bounding Box ID</strong>{" "}
+        {formatBoundingBoxIdValue(getRawBoundingBoxId(entry))}
       </div>
       <div className="history-text">{entry.text || "No agent reply."}</div>
       {entry.memory ? <div className="timeline-memory">{entry.memory}</div> : null}
@@ -108,9 +159,7 @@ function ConversationEntry({ entry }) {
 }
 
 export default function App() {
-  const [sessions, setSessions] = useState([]);
-  const [selectedSessionId, setSelectedSessionId] = useState("");
-  const [autoFollowLatest, setAutoFollowLatest] = useState(true);
+  const [activeSession, setActiveSession] = useState(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
@@ -143,22 +192,10 @@ export default function App() {
         if (cancelled) {
           return;
         }
-        setSessions(nextSessions);
+        const nextActiveSession = nextSessions[0] ?? null;
+        setActiveSession(nextActiveSession);
 
-        const selectedStillExists = nextSessions.some(
-          (session) => session.session_id === selectedSessionId
-        );
-        const nextSelectedSessionId = nextSessions.length === 0
-          ? ""
-          : (autoFollowLatest || !selectedSessionId || !selectedStillExists)
-            ? nextSessions[0].session_id
-            : selectedSessionId;
-
-        if (nextSelectedSessionId !== selectedSessionId) {
-          setSelectedSessionId(nextSelectedSessionId);
-        }
-
-        if (!nextSelectedSessionId) {
+        if (!nextActiveSession) {
           if (!cancelled) {
             setState(null);
             setError("");
@@ -167,11 +204,11 @@ export default function App() {
         }
 
         const stateResp = await fetch(
-          `/api/v1/sessions/${nextSelectedSessionId}/frontend-state`,
+          `/api/v1/sessions/${nextActiveSession.session_id}/frontend-state`,
           NO_STORE_FETCH_OPTIONS
         );
         if (!stateResp.ok) {
-          throw new Error(`Failed to load session ${nextSelectedSessionId}`);
+          throw new Error(`Failed to load session ${nextActiveSession.session_id}`);
         }
         const statePayload = await stateResp.json();
         if (!cancelled) {
@@ -190,7 +227,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [autoFollowLatest, refreshToken, selectedSessionId]);
+  }, [refreshToken]);
 
   useEffect(() => {
     let disposed = false;
@@ -291,6 +328,8 @@ export default function App() {
 
   const latestResult = state?.latest_result ?? null;
   const latestFrame = state?.latest_frame ?? null;
+  const activeSessionId = state?.session_id || activeSession?.session_id || "";
+  const activeSessionLabel = state?.device_id || activeSession?.device_id || "No active session";
   const resultHistory = state?.result_history ?? [];
   const lastUpdate = useMemo(() => {
     if (!state?.updated_at) {
@@ -335,43 +374,33 @@ export default function App() {
   }, [imageSize.height, imageSize.width, viewerHostSize.height, viewerHostSize.width]);
 
   async function handleClearSession() {
-    if (!selectedSessionId || isClearing) {
+    if (!activeSessionId || isClearing) {
       return;
     }
-    const confirmed = window.confirm(`确认清空会话 ${selectedSessionId} 吗？`);
+    const confirmed = window.confirm(`确认清空当前会话 ${activeSessionId} 吗？`);
     if (!confirmed) {
       return;
     }
 
     setIsClearing(true);
     try {
-      const clearResp = await fetch(`/api/v1/sessions/${selectedSessionId}/clear`, {
+      const clearResp = await fetch(`/api/v1/sessions/${activeSessionId}/clear`, {
         method: "POST"
       });
       if (!clearResp.ok) {
-        throw new Error(`Failed to clear session ${selectedSessionId}`);
+        throw new Error(`Failed to clear session ${activeSessionId}`);
       }
       const clearedState = await clearResp.json();
       setState(clearedState);
+      setActiveSession((current) => current ? { ...current, ...clearedState } : clearedState);
       setError("");
-
-      const sessionsResp = await fetch("/api/v1/sessions", NO_STORE_FETCH_OPTIONS);
-      if (!sessionsResp.ok) {
-        throw new Error("Failed to refresh sessions");
-      }
-      const sessionsPayload = await sessionsResp.json();
-      setSessions(sessionsPayload.sessions || []);
+      setRefreshToken((value) => value + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsClearing(false);
     }
   }
-
-  const sessionOptions = sessions.map(s => ({
-    value: s.session_id,
-    label: s.device_id || s.session_id.slice(-12)
-  }));
 
   return (
     <div className="shell">
@@ -388,27 +417,18 @@ export default function App() {
             <StatusPill latestResult={latestResult} />
           </div>
 
-          <div className="session-selector">
-            <select
-              value={selectedSessionId}
-              onChange={(e) => {
-                setSelectedSessionId(e.target.value);
-                setAutoFollowLatest(false);
-              }}
-            >
-              {sessionOptions.length === 0 && (
-                <option value="">No sessions</option>
-              )}
-              {sessionOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+          <div className="session-toolbar">
+            <div className="session-current">
+              <span className="session-current-label">Current session</span>
+              <strong>{activeSessionLabel}</strong>
+              <span>{activeSessionId || "Waiting for session"}</span>
+            </div>
             <button
               className="icon-btn"
               type="button"
-              disabled={!selectedSessionId || isClearing}
+              disabled={!activeSessionId || isClearing}
               onClick={handleClearSession}
-              title="清空会话"
+              title="清空当前会话"
             >
               {isClearing ? "⋯" : "↺"}
             </button>
@@ -418,9 +438,7 @@ export default function App() {
             <span className={health === "online" ? "health-chip health-online" : "health-chip health-offline"}>
               {health}
             </span>
-            <span className="summary-chip">
-              {autoFollowLatest ? "Auto follow" : "Manual view"}
-            </span>
+            <span className="summary-chip">Single session</span>
           </div>
         </div>
 
@@ -459,7 +477,13 @@ export default function App() {
             </div>
           </div>
           <div className="stats-grid">
-            <MetricTile label="Target" value={state?.latest_target_id ?? "—"} accent={activeStatus.tone === "good"} />
+            <MetricTile
+              label="Bounding Box ID"
+              value={formatBoundingBoxIdValue(
+                state?.latest_result ? getRawBoundingBoxId(state.latest_result) : state?.latest_target_id
+              )}
+              accent={activeStatus.tone === "good"}
+            />
             <MetricTile label="Frame" value={latestFrame?.frame_id ?? "—"} />
             <MetricTile label="Detections" value={detectionCount} />
             <MetricTile label="Updated" value={lastUpdate} />
@@ -549,7 +573,10 @@ export default function App() {
                     <HistoryEntry key={`${entry.updated_at || "entry"}-${index}`} entry={entry} />
                   ))
                 ) : (
-                  <div className="empty-state">No agent history yet.</div>
+                  <div className="empty-state">
+                    No agent turns yet. 如果 backend 没配自动 agent，就需要外部 agent 回写
+                    <code>/agent-result</code>。
+                  </div>
                 )}
               </div>
             </div>

@@ -12,6 +12,7 @@ def test_parse_args_defaults_interval_to_three_seconds(monkeypatch) -> None:
     )
     args = parse_args()
     assert args.interval_seconds == 3.0
+    assert args.backend_timeout_seconds == 310.0
     assert args.ongoing_text == "持续跟踪"
 
 

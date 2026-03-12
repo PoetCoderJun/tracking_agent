@@ -45,42 +45,28 @@ def denormalize_bbox_from_1000_scale(
     return [left, top, right, bottom]
 
 
-def _normalize_autonomous_inference(raw_value: Any) -> Optional[Dict[str, Any]]:
-    if raw_value in (None, {}):
+def _normalize_bounding_box_id(raw_value: Any) -> Optional[int]:
+    if raw_value in (None, ""):
         return None
-    if not isinstance(raw_value, dict):
-        raise ValueError(
-            "autonomous_inference must be an object or null, "
-            f"got: {raw_value!r}"
-        )
-    likely_whereabouts = raw_value.get("likely_whereabouts") or []
-    priority_regions = raw_value.get("priority_search_regions") or []
-    if not isinstance(likely_whereabouts, list) or not isinstance(priority_regions, list):
-        raise ValueError("autonomous_inference list fields must be lists")
-    return {
-        "likely_whereabouts": [str(item) for item in likely_whereabouts],
-        "likely_action": str(raw_value.get("likely_action", "")).strip(),
-        "priority_search_regions": [str(item) for item in priority_regions],
-    }
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"bounding_box_id must be numeric, got: {raw_value!r}") from exc
 
 
 def validate_locate_result(result: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(result, dict):
         raise ValueError(f"Locate result must be a dict, got: {type(result)!r}")
 
-    if "found" not in result or "confidence" not in result or "reason" not in result:
+    if "found" not in result or "reason" not in result:
         raise ValueError(f"Locate result missing required keys: {result!r}")
 
     found = bool(result["found"])
-    bbox = _normalize_bbox(result.get("bbox"))
-    if found and bbox is None:
-        raise ValueError("Locate result returned found=true but bbox=null")
+    bounding_box_id = _normalize_bounding_box_id(result.get("bounding_box_id"))
+    if found and bounding_box_id is None:
+        raise ValueError("Locate result returned found=true but bounding_box_id=null")
     if not found:
-        bbox = None
-
-    confidence = float(result["confidence"])
-    if confidence < 0 or confidence > 1:
-        raise ValueError(f"confidence must be within [0, 1], got: {confidence}")
+        bounding_box_id = None
 
     needs_clarification = bool(result.get("needs_clarification", False))
     clarification_question = result.get("clarification_question")
@@ -91,12 +77,9 @@ def validate_locate_result(result: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "found": found,
-        "bbox": bbox,
-        "confidence": confidence,
+        "bounding_box_id": bounding_box_id,
+        "target_id": bounding_box_id,
         "reason": str(result["reason"]).strip(),
-        "autonomous_inference": _normalize_autonomous_inference(
-            result.get("autonomous_inference")
-        ),
         "needs_clarification": needs_clarification,
         "clarification_question": clarification_question,
     }

@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Callable, List, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from tracking_agent.backend_store import BackendSession, BackendStore
 from tracking_agent.cloud_agent import CloudTrackingAgent, MemoryRewriteRequest
-
-
-LOGGER = logging.getLogger(__name__)
+from tracking_agent.config import load_settings
 
 
 class FrontendUpdateBroker:
@@ -95,11 +92,31 @@ class RobotIngestRequest(BaseModel):
 
 class AgentResultRequest(BaseModel):
     text: str
+    behavior: str = "reply"
     target_id: Optional[int] = None
+    bounding_box_id: Optional[int] = None
+    bbox_id: Optional[int] = None
     found: bool = False
     needs_clarification: bool = False
     clarification_question: Optional[str] = None
     memory: str = ""
+    target_description: str = ""
+    pending_question: Optional[str] = None
+    latest_target_crop: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_target_id_aliases(cls, raw_value: Any) -> Any:
+        if not isinstance(raw_value, dict):
+            return raw_value
+        payload = dict(raw_value)
+        if payload.get("target_id") is None:
+            alias_value = payload.get("bounding_box_id")
+            if alias_value is None:
+                alias_value = payload.get("bbox_id")
+            if alias_value is not None:
+                payload["target_id"] = alias_value
+        return payload
 
 
 class AgentRunRequest(BaseModel):
@@ -116,12 +133,25 @@ def create_app(
     state_root: Path,
     frame_buffer_size: int = 3,
     env_path: Path = Path(".ENV"),
+    auto_run_agent: bool = True,
+    agent_factory: Optional[Callable[[Path], Any]] = None,
+    external_agent_wait_seconds: float = 0.0,
+    external_agent_poll_seconds: float = 0.1,
 ) -> FastAPI:
+    if external_agent_wait_seconds < 0:
+        raise ValueError("external_agent_wait_seconds must be non-negative")
+    if external_agent_poll_seconds <= 0:
+        raise ValueError("external_agent_poll_seconds must be positive")
+
     store = BackendStore(state_root=state_root, frame_buffer_size=frame_buffer_size)
-    agent = CloudTrackingAgent(env_path=env_path)
-    memory_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="memory-rewrite")
     broker = FrontendUpdateBroker()
     app = FastAPI(title="Tracking Agent Backend", version="0.1.0")
+    auto_agent = None
+    if auto_run_agent:
+        if agent_factory is not None:
+            auto_agent = agent_factory(env_path)
+        elif load_settings(env_path).api_key:
+            auto_agent = CloudTrackingAgent(env_path=env_path)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -138,7 +168,13 @@ def create_app(
                 "frame_id": latest_frame.frame_id,
                 "timestamp_ms": latest_frame.timestamp_ms,
                 "image_url": f"/api/v1/sessions/{session.session_id}/frames/{latest_frame.frame_id}/image",
-                "detections": [_model_to_dict(DetectionPayload(**detection.__dict__)) for detection in latest_frame.detections],
+                "detections": [
+                    {
+                        **_model_to_dict(DetectionPayload(**detection.__dict__)),
+                        "bounding_box_id": int(detection.track_id),
+                    }
+                    for detection in latest_frame.detections
+                ],
             }
 
         return {
@@ -147,6 +183,7 @@ def create_app(
             "target_description": session.target_description,
             "latest_memory": session.latest_memory,
             "latest_target_id": session.latest_target_id,
+            "latest_bounding_box_id": session.latest_target_id,
             "latest_result": session.latest_result,
             "result_history": session.result_history,
             "clarification_notes": session.clarification_notes,
@@ -155,34 +192,6 @@ def create_app(
             "latest_frame": latest_frame_payload,
             "updated_at": session.updated_at,
         }
-
-    def schedule_memory_rewrite(session_id: str, result: dict) -> None:
-        payload = result.get("memory_rewrite")
-        if not payload:
-            return
-
-        request = MemoryRewriteRequest(**payload)
-
-        def worker() -> None:
-            try:
-                rewritten_memory = agent.rewrite_memory(request)
-                updated = store.apply_memory_update(
-                    session_id=session_id,
-                    memory=rewritten_memory,
-                    expected_frame_id=request.frame_id,
-                    expected_target_id=request.target_id,
-                    expected_target_crop=request.crop_path,
-                )
-                publish_session_update(updated, source="memory_rewrite")
-            except Exception as exc:  # pragma: no cover - background failures are integration concerns
-                LOGGER.warning(
-                    "Background memory rewrite failed for session %s frame %s: %s",
-                    session_id,
-                    request.frame_id,
-                    exc,
-                )
-
-        memory_executor.submit(worker)
 
     def publish_session_update(session: BackendSession, source: str) -> None:
         broker.publish(
@@ -194,6 +203,75 @@ def create_app(
             }
         )
 
+    def wait_for_external_agent_result(
+        session_id: str,
+        expected_frame_id: str,
+    ) -> Optional[BackendSession]:
+        if external_agent_wait_seconds == 0:
+            return None
+
+        deadline = time.monotonic() + external_agent_wait_seconds
+        while True:
+            session = store.load_session(session_id)
+            latest_result = session.latest_result or {}
+            if latest_result.get("frame_id") == expected_frame_id:
+                return session
+
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                return None
+
+            time.sleep(min(external_agent_poll_seconds, remaining_seconds))
+
+    def maybe_run_auto_agent(session: BackendSession, text: str) -> tuple[BackendSession, Optional[str]]:
+        if auto_agent is None:
+            return session, None
+
+        try:
+            result = auto_agent.run(
+                session=session,
+                session_dir=store.session_dir(session.session_id),
+                text=text,
+            )
+            updated_session = store.apply_agent_result(session.session_id, result)
+            publish_session_update(updated_session, source="agent_result")
+
+            rewrite_payload = result.get("memory_rewrite")
+            if rewrite_payload:
+                memory = auto_agent.rewrite_memory(MemoryRewriteRequest(**rewrite_payload))
+                updated_session = store.apply_memory_update(
+                    session_id=session.session_id,
+                    memory=memory,
+                    expected_frame_id=str(rewrite_payload["frame_id"]),
+                    expected_target_id=int(rewrite_payload["target_id"]),
+                    expected_target_crop=(
+                        None
+                        if rewrite_payload.get("crop_path") in (None, "")
+                        else str(rewrite_payload["crop_path"])
+                    ),
+                )
+                publish_session_update(updated_session, source="memory_update")
+            return updated_session, None
+        except Exception as exc:
+            error_message = str(exc).strip() or exc.__class__.__name__
+            updated_session = store.apply_agent_result(
+                session.session_id,
+                {
+                    "behavior": "error",
+                    "text": f"Agent request failed: {error_message}",
+                    "target_id": session.latest_target_id,
+                    "found": False,
+                    "needs_clarification": False,
+                    "clarification_question": None,
+                    "memory": session.latest_memory,
+                    "target_description": session.target_description,
+                    "pending_question": session.pending_question,
+                    "latest_target_crop": session.latest_target_crop,
+                },
+            )
+            publish_session_update(updated_session, source="agent_error")
+            return updated_session, error_message
+
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
@@ -203,8 +281,7 @@ def create_app(
         broker.attach_loop(asyncio.get_running_loop())
 
     @app.on_event("shutdown")
-    async def shutdown_executor() -> None:
-        memory_executor.shutdown(wait=False)
+    async def shutdown_broker() -> None:
         await broker.close()
 
     @app.websocket("/ws/frontend-updates")
@@ -240,30 +317,32 @@ def create_app(
             text=payload.text,
         )
         publish_session_update(session, source="ingest")
-        agent_error = None
-        agent_behavior = None
-        try:
-            result = agent.run(
-                session=session,
-                session_dir=store.session_dir(payload.session_id),
-                text=payload.text,
-            )
-            session = store.apply_agent_result(payload.session_id, result)
-            publish_session_update(session, source="agent_result")
-            schedule_memory_rewrite(payload.session_id, result)
-            agent_behavior = result["behavior"]
-        except Exception as exc:  # pragma: no cover - network/model failures are integration concerns
-            agent_error = str(exc)
+        session, agent_error = maybe_run_auto_agent(session, payload.text)
         latest_frame = session.recent_frames[-1]
+        if auto_agent is None:
+            waited_session = wait_for_external_agent_result(
+                session_id=session.session_id,
+                expected_frame_id=latest_frame.frame_id,
+            )
+            if waited_session is not None:
+                session = waited_session
+
+        latest_result = session.latest_result
+        matched_agent_result = None
+        if latest_result is not None and latest_result.get("frame_id") == latest_frame.frame_id:
+            matched_agent_result = latest_result
         return {
             "session_id": session.session_id,
             "frame_id": latest_frame.frame_id,
             "recent_frame_count": len(session.recent_frames),
             "latest_memory": session.latest_memory,
             "latest_target_id": session.latest_target_id,
-            "latest_result": session.latest_result,
-            "agent_behavior": agent_behavior,
+            "latest_result": matched_agent_result,
+            "agent_behavior": None if matched_agent_result is None else matched_agent_result.get("behavior"),
             "agent_error": agent_error,
+            "agent_required": matched_agent_result is None or agent_error is not None,
+            "agent_context": store.build_agent_context(session.session_id),
+            "agent_result_path": f"/api/v1/sessions/{session.session_id}/agent-result",
         }
 
     @app.get("/api/v1/sessions/{session_id}")
@@ -326,28 +405,12 @@ def create_app(
 
     @app.post("/api/v1/sessions/{session_id}/run-agent")
     def run_agent(session_id: str, payload: AgentRunRequest) -> dict:
-        try:
-            session = store.load_session(session_id)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
-        try:
-            result = agent.run(
-                session=session,
-                session_dir=store.session_dir(session_id),
-                text=payload.text,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        updated = store.apply_agent_result(session_id, result)
-        publish_session_update(updated, source="agent_result")
-        schedule_memory_rewrite(session_id, result)
-        return {
-            "session_id": updated.session_id,
-            "behavior": result["behavior"],
-            "latest_result": updated.latest_result,
-            "latest_target_id": updated.latest_target_id,
-            "latest_target_crop": updated.latest_target_crop,
-            "latest_memory": updated.latest_memory,
-        }
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Local backend agent execution has been removed. "
+                "Use /agent-context with the PI Agent, then submit the result to /agent-result."
+            ),
+        )
 
     return app
