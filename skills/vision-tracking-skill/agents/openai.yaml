@@ -1,0 +1,7 @@
+interface:
+  display_name: "Vision Tracking"
+  short_description: "Session-based visual tracking with memory and clarification."
+  default_prompt: "Use $vision-tracking-skill to run or inspect a session-based visual tracking workflow."
+
+policy:
+  allow_implicit_invocation: true
