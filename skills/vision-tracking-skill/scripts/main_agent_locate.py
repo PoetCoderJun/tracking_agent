@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _build_track_instruction(config: dict[str, object], memory: str, notes: list[str]) -> str:
-    prompt = str(config["prompts"]["main_track"]).format(memory=memory)
+    prompt = str(config["prompts"]["track_skill_prompt"]).format(memory=memory)
     if not notes:
         return prompt
     note_block = "\n".join(f"- {note}" for note in notes if note.strip())
@@ -49,7 +49,7 @@ def main() -> int:
     if args.task == "init":
         if args.target_description is None:
             raise ValueError("--target-description is required for init")
-        instruction = config["prompts"]["main_init"].format(target_description=args.target_description)
+        instruction = config["prompts"]["init_skill_prompt"].format(target_description=args.target_description)
         max_tokens = int(config["limits"]["main_max_tokens"])
     else:
         instruction = _build_track_instruction(config, args.memory, args.clarification_note)

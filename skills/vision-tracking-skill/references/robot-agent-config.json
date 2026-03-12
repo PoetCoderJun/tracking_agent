@@ -1,0 +1,23 @@
+{
+  "contracts": {
+    "orchestrate_action": "只返回合法 JSON，格式为：{\"action\": \"reply\"|\"init\"|\"track\", \"reply\": \"给用户的简短自然语言回复，若本轮要调用 init 或 track 则可为空字符串\", \"target_description\": \"当 action=init 时提炼出的目标描述，否则为空字符串\", \"pending_question\": \"如果本轮需要继续追问则返回问题，否则返回 null\", \"reason\": \"一句很短的内部判断依据\"}。",
+    "select_init_target": "只返回合法 JSON，格式为：{\"found\": true|false, \"target_id\": 12 | null, \"text\": \"给用户的简短回复\", \"reason\": \"简短解释\", \"needs_clarification\": true|false, \"clarification_question\": \"问题或 null\"}。",
+    "select_track_target": "只返回合法 JSON，格式为：{\"found\": true|false, \"target_id\": 12 | null, \"text\": \"给用户的简短回复\", \"reason\": \"简短解释\", \"needs_clarification\": true|false, \"clarification_question\": \"问题或 null\"}。",
+    "memory_markdown": "只返回 Markdown 正文，不要分 section，不要返回 JSON，不要使用 ``` 代码块围栏。尽量短。",
+    "chat_text": "只返回简短自然语言回答，不要返回 JSON，不要使用 ``` 代码块围栏。"
+  },
+  "prompts": {
+    "orchestrator_prompt": "你是一个统一的 tracking conversation agent。你面向用户自然对话，但内部只有两个可调用技能：init 和 track。memory 优化会在成功定位后自动完成，不需要你显式调度。clarify 不是单独 skill；如果信息还不够，你就直接追问用户。\n\n当前会话状态：\n- target_description: {target_description}\n- latest_target_id: {latest_target_id}\n- latest_memory: {memory}\n- pending_question: {pending_question}\n- latest_result: {latest_result_summary}\n\n最近对话：\n{recent_dialogue}\n\n用户最新输入：\n{user_text}\n\n决策规则：\n1. 如果用户已经给出了一个新的跟踪目标，或者明显在替换原目标，返回 action=init，并提炼一条简洁 target_description。\n2. 如果当前已有活跃目标，且用户是在推进当前会话，或只是默认继续跟踪，返回 action=track。\n3. 如果当前输入不足以形成可执行动作，返回 action=reply，并直接给用户一个自然的短回复或追问。\n4. 不要把内部 skill 名暴露给用户。\n5. 不要做僵硬的关键词分类，要结合上下文理解这轮对话是否已经形成动作。",
+    "init_skill_prompt": "你现在负责在候选目标里确认用户要跟踪的人。第一张图是当前带有候选人 track_id 标注的画面。用户描述是：\"{target_description}\"。\n\n当前候选框摘要：\n{candidates}\n\n请只在这些候选里做选择，不要虚构新的框。如果无法确定，请返回 found=false 并设置 needs_clarification=true，提出一个聚焦问题。",
+    "track_skill_prompt": "第一张图是最近一次成功跟踪到目标的历史画面，第二张图是当前带有候选 track_id 标注的画面。你需要判断当前应该继续跟踪哪个 track_id。\n\n当前 tracking memory：\n{memory}\n\n最近一次确认的 track_id：{latest_target_id}\n\n当前候选框摘要：\n{candidates}\n\n用户补充：\n{user_text}\n\n最近对话：\n{recent_dialogue}\n\n只在候选列表里选择 track_id。没有把握就返回 found=false。如果有多个合理候选，返回 needs_clarification=true。",
+    "memory_init_prompt": "请根据第一张目标裁剪图和后面的场景帧，初始化一份极短的 tracking memory，供下一轮定位使用。忽略用户最初描述，只看当前图像。直接输出一段话，不要分 section，不要列点。前半段尽可能描述这个人的稳定特征，优先写体型、发型、裤子、鞋子、眼镜、背包、稳定配饰。后半段直接给出怎么和周围环境里的人区分开的建议。不要把场景位置、bbox、确认、匹配写进 memory。整体保持一小段话，越短越好。",
+    "memory_optimize_prompt": "请根据第一张目标裁剪图和后面的场景帧，直接重写 tracking memory，供下一轮定位使用。直接输出一段话，不要分 section，不要列点。前半段尽可能描述这个人的稳定特征，优先写体型、发型、裤子、鞋子、眼镜、背包、稳定配饰。后半段直接给出怎么和周围环境里的人区分开的建议。不要把位置、bbox、确认、匹配写进 memory。整体保持一小段话，越短越好。",
+    "answer_chat": "你正在回答一次会话内的追踪问题。请基于当前 tracking memory、最近几帧、当前候选 track_id 以及补充说明来回答用户。回答要简短、明确区分观察与推测，不要重置 session，不要改写 memory。用户问题如下：\n{question}\n\n当前 tracking memory：\n{memory}\n\n当前目标 track_id：{latest_target_id}\n\n最新结果摘要：\n{latest_result_summary}"
+  },
+  "limits": {
+    "orchestrate_max_tokens": 220,
+    "select_max_tokens": 260,
+    "memory_max_tokens": 180,
+    "chat_max_tokens": 220
+  }
+}

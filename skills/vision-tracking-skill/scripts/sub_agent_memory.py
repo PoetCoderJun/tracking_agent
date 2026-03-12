@@ -33,7 +33,7 @@ def main() -> int:
     settings = load_settings(Path(args.env_file))
     config = load_agent_config(Path(args.config_path))
     image_paths = [Path(path) for path in args.image_path]
-    prompt_key = "sub_init_memory" if args.task == "init" else "sub_update_memory"
+    prompt_key = "memory_init_prompt" if args.task == "init" else "memory_optimize_prompt"
 
     output = call_model(
         api_key=settings.api_key,

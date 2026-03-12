@@ -4,7 +4,7 @@
 
 - `core/`: session 存储与 runtime state 存储。
 - `pipeline/`: 抽帧、query plan、历史 batch 读取。
-- 根目录保留通用模块: 图像处理、memory 格式、配置、输出校验。
+- 根目录保留通用模块: 图像处理、memory 格式、配置、输出校验，以及轻量 robot 端事件格式化。
 
 导入约定：
 
