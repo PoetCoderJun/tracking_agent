@@ -23,5 +23,10 @@ dist/
 *.egg-info/
 .idea/
 .vscode/
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
 logs/
 sessions/
