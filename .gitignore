@@ -32,4 +32,4 @@ node_modules/
 logs/
 sessions/
 runtime/
-yolov8n.pt
+*.pt
