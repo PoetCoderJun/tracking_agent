@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import asyncio
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -20,12 +22,17 @@ from tracking_agent.robot_stream import (
     current_timestamp_ms,
     generate_session_id,
     is_camera_source,
+    is_websocket_url,
     normalize_source,
+    open_robot_backend_websocket,
     post_event,
+    post_event_ws,
     probe_video_fps,
     save_frame_image,
     video_timestamp_seconds,
 )
+
+DEFAULT_PERSON_MODEL = "yolo11m.pt"
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,17 +61,32 @@ def parse_args() -> argparse.Namespace:
         default="持续跟踪",
         help="Text payload attached to follow-up events after the first initialization event.",
     )
-    parser.add_argument("--backend-url", default="http://127.0.0.1:8001/api/v1/robot/ingest")
+    parser.add_argument("--backend-url", default="ws://127.0.0.1:8001/ws/robot-ingest")
     parser.add_argument(
         "--backend-timeout-seconds",
         type=float,
         default=310.0,
         help="HTTP timeout used when waiting for backend to reply after agent processing.",
     )
-    parser.add_argument("--model", default="yolov8n.pt")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_PERSON_MODEL,
+        help="Ultralytics model weights for person tracking inference. Defaults to YOLO11m Person via yolo11m.pt.",
+    )
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Ultralytics inference device, for example 'mps', 'cpu', or '0'.",
+    )
     parser.add_argument("--tracker", default=None)
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument(
+        "--vid-stride",
+        type=int,
+        default=1,
+        help="Run inference on every Nth frame for video files. Higher values reduce compute.",
+    )
     parser.add_argument("--sample-every", type=int, default=1)
     parser.add_argument(
         "--interval-seconds",
@@ -88,6 +110,24 @@ def _load_yolo():
     return YOLO
 
 
+def _load_cv2():
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing robot-side dependencies. Install ultralytics and opencv-python "
+            "before running scaffold/cli/run_robot_stream.py."
+        ) from exc
+    return cv2
+
+
+def _normalize_xyxy_bbox(bbox: List[int]) -> List[int]:
+    x1, y1, x2, y2 = [int(value) for value in bbox]
+    left, right = sorted((x1, x2))
+    top, bottom = sorted((y1, y2))
+    return [left, top, right, bottom]
+
+
 def _extract_person_detections(result: Any, person_class_id: int) -> List[RobotDetection]:
     boxes = getattr(result, "boxes", None)
     if boxes is None or boxes.xyxy is None or boxes.conf is None or boxes.cls is None:
@@ -105,7 +145,7 @@ def _extract_person_detections(result: Any, person_class_id: int) -> List[RobotD
         detections.append(
             RobotDetection(
                 track_id=int(track_ids[index]),
-                bbox=[int(value) for value in bbox],
+                bbox=_normalize_xyxy_bbox(bbox),
                 score=float(confidences[index]),
             )
         )
@@ -134,10 +174,192 @@ def _should_emit_video_sample(
     return video_timestamp_seconds(frame_index, fps) >= next_video_emit_at
 
 
-def main() -> int:
+def _configure_device_runtime(device: str | None) -> None:
+    normalized = (device or "").strip().lower()
+    if normalized != "mps":
+        return
+    if os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK"):
+        return
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+    print(
+        "Enabled PYTORCH_ENABLE_MPS_FALLBACK=1 for MPS unsupported ops such as torchvision NMS.",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _video_frame_step(
+    fps: float,
+    interval_seconds: float,
+    sample_every: int,
+    vid_stride: int,
+) -> int:
+    base_step = max(1, round(fps * interval_seconds))
+    return max(1, base_step * sample_every * vid_stride)
+
+
+def _track_kwargs(
+    *,
+    source: Any,
+    args: argparse.Namespace,
+    stream: bool,
+    persist: bool,
+) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {
+        "source": source,
+        "conf": args.conf,
+        "imgsz": args.imgsz,
+        "persist": persist,
+        "stream": stream,
+        "verbose": False,
+        # Restrict detection to people to reduce detector workload.
+        "classes": [args.person_class_id],
+    }
+    if args.device:
+        kwargs["device"] = args.device
+    if args.tracker:
+        kwargs["tracker"] = args.tracker
+    return kwargs
+
+
+def _results_for_video_file(
+    *,
+    model: Any,
+    video_path: Path,
+    fps: float,
+    args: argparse.Namespace,
+):
+    cv2 = _load_cv2()
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise RuntimeError(f"Unable to open video source: {video_path}")
+
+    try:
+        step = _video_frame_step(
+            fps=fps,
+            interval_seconds=args.interval_seconds,
+            sample_every=args.sample_every,
+            vid_stride=args.vid_stride,
+        )
+        next_frame_number = 0
+        frame_number = 0
+        while True:
+            if frame_number < next_frame_number:
+                ok = capture.grab()
+                if not ok:
+                    break
+                frame_number += 1
+                continue
+
+            ok, frame = capture.read()
+            if not ok:
+                break
+            results = model.track(
+                **_track_kwargs(
+                    source=frame,
+                    args=args,
+                    stream=False,
+                    persist=True,
+                )
+            )
+            if not results:
+                break
+            yield frame_number + 1, results[0]
+            frame_number += 1
+            next_frame_number += step
+    finally:
+        capture.release()
+
+
+async def _run_backend_stream(args: argparse.Namespace, result_stream, output_dir: Path, session_id: str) -> int:
+    frames_dir = output_dir / "frames"
+    events_path = output_dir / "events.jsonl"
+    emitted_events = 0
+    next_emit_at = 0.0
+    source_is_camera = is_camera_source(normalize_source(args.source))
+    backend_is_websocket = bool(args.backend_url) and is_websocket_url(args.backend_url)
+    websocket_context = None if not backend_is_websocket else await open_robot_backend_websocket(
+        args.backend_url,
+        timeout_seconds=args.backend_timeout_seconds,
+    )
+
+    if websocket_context is None:
+        websocket = None
+        websocket_manager = None
+    else:
+        websocket_manager = websocket_context
+        websocket = await websocket_manager.__aenter__()
+
+    try:
+        for frame_index, result in result_stream:
+            now_monotonic = time.monotonic()
+            if source_is_camera:
+                if not _should_emit_event(
+                    frame_index=frame_index,
+                    sample_every=args.sample_every,
+                    now_monotonic=now_monotonic,
+                    next_emit_at=next_emit_at,
+                ):
+                    continue
+            frame_id = f"frame_{emitted_events:06d}"
+            frame_path = frames_dir / f"{frame_id}.jpg"
+            save_frame_image(result.orig_img, frame_path)
+
+            event = RobotIngestEvent(
+                session_id=session_id,
+                device_id=args.device_id,
+                frame=RobotFrame(
+                    frame_id=frame_id,
+                    timestamp_ms=current_timestamp_ms(),
+                    image_path=str(frame_path),
+                ),
+                detections=_extract_person_detections(result, person_class_id=args.person_class_id),
+                text=args.text if emitted_events == 0 else args.ongoing_text,
+            )
+            append_event_jsonl(events_path, event)
+
+            backend_status = None
+            if args.backend_url:
+                if websocket is not None:
+                    backend_response = await post_event_ws(
+                        websocket,
+                        event,
+                        timeout_seconds=args.backend_timeout_seconds,
+                    )
+                else:
+                    backend_response = post_event(
+                        args.backend_url,
+                        event,
+                        timeout_seconds=args.backend_timeout_seconds,
+                    )
+                backend_status = backend_response["status"]
+
+            summary = {
+                "session_id": session_id,
+                "frame_id": frame_id,
+                "image_path": str(frame_path),
+                "detection_count": len(event.detections),
+                "backend_status": backend_status,
+            }
+            print(json.dumps(summary, ensure_ascii=True), flush=True)
+
+            emitted_events += 1
+            next_emit_at = now_monotonic + args.interval_seconds
+            if args.max_events is not None and emitted_events >= args.max_events:
+                break
+    finally:
+        if websocket_manager is not None:
+            await websocket_manager.__aexit__(None, None, None)
+
+    return 0
+
+
+async def _async_main() -> int:
     args = parse_args()
     if args.sample_every <= 0:
         raise ValueError("--sample-every must be positive")
+    if args.vid_stride <= 0:
+        raise ValueError("--vid-stride must be positive")
     if args.interval_seconds <= 0:
         raise ValueError("--interval-seconds must be positive")
     if args.backend_timeout_seconds <= 0:
@@ -146,10 +368,9 @@ def main() -> int:
         raise ValueError("--max-events must be positive when provided")
 
     output_dir = Path(args.output_dir)
-    frames_dir = output_dir / "frames"
-    events_path = output_dir / "events.jsonl"
     session_id = args.session_id or generate_session_id()
 
+    _configure_device_runtime(args.device)
     YOLO = _load_yolo()
     model = YOLO(args.model)
 
@@ -157,84 +378,33 @@ def main() -> int:
     source_is_camera = is_camera_source(source)
     video_fps = None if source_is_camera else probe_video_fps(Path(str(source)))
 
-    track_kwargs = {
-        "source": source,
-        "conf": args.conf,
-        "imgsz": args.imgsz,
-        "persist": True,
-        "stream": True,
-        "verbose": False,
-    }
-    if args.tracker:
-        track_kwargs["tracker"] = args.tracker
-
-    emitted_events = 0
-    next_emit_at = 0.0
-    next_video_emit_at = 0.0
-    for frame_index, result in enumerate(model.track(**track_kwargs), start=1):
-        now_monotonic = time.monotonic()
-        if source_is_camera:
-            if not _should_emit_event(
-                frame_index=frame_index,
-                sample_every=args.sample_every,
-                now_monotonic=now_monotonic,
-                next_emit_at=next_emit_at,
-            ):
-                continue
-        else:
-            if video_fps is None:
-                raise RuntimeError("Video FPS must be available for file playback mode")
-            if not _should_emit_video_sample(
-                frame_index=frame_index,
-                sample_every=args.sample_every,
-                fps=video_fps,
-                next_video_emit_at=next_video_emit_at,
-            ):
-                continue
-
-        frame_id = f"frame_{emitted_events:06d}"
-        frame_path = frames_dir / f"{frame_id}.jpg"
-        save_frame_image(result.orig_img, frame_path)
-
-        event = RobotIngestEvent(
-            session_id=session_id,
-            device_id=args.device_id,
-            frame=RobotFrame(
-                frame_id=frame_id,
-                timestamp_ms=current_timestamp_ms(),
-                image_path=str(frame_path),
+    if source_is_camera:
+        result_stream = enumerate(
+            model.track(
+                **_track_kwargs(
+                    source=source,
+                    args=args,
+                    stream=True,
+                    persist=True,
+                )
             ),
-            detections=_extract_person_detections(result, person_class_id=args.person_class_id),
-            text=args.text if emitted_events == 0 else args.ongoing_text,
+            start=1,
         )
-        append_event_jsonl(events_path, event)
+    else:
+        if video_fps is None:
+            raise RuntimeError("Video FPS must be available for file playback mode")
+        result_stream = _results_for_video_file(
+            model=model,
+            video_path=Path(str(source)),
+            fps=video_fps,
+            args=args,
+        )
 
-        backend_status = None
-        if args.backend_url:
-            backend_response = post_event(
-                args.backend_url,
-                event,
-                timeout_seconds=args.backend_timeout_seconds,
-            )
-            backend_status = backend_response["status"]
+    return await _run_backend_stream(args, result_stream, output_dir, session_id)
 
-        summary = {
-            "session_id": session_id,
-            "frame_id": frame_id,
-            "image_path": str(frame_path),
-            "detection_count": len(event.detections),
-            "backend_status": backend_status,
-        }
-        print(json.dumps(summary, ensure_ascii=True), flush=True)
 
-        emitted_events += 1
-        next_emit_at = now_monotonic + args.interval_seconds
-        if not source_is_camera:
-            next_video_emit_at += args.interval_seconds
-        if args.max_events is not None and emitted_events >= args.max_events:
-            break
-
-    return 0
+def main() -> int:
+    return asyncio.run(_async_main())
 
 
 if __name__ == "__main__":

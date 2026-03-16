@@ -135,7 +135,6 @@ class BackendStore:
         self,
         session_id: str,
         device_id: str,
-        target_description: str = "",
     ) -> BackendSession:
         with self._lock:
             session_path = self.session_path(session_id)
@@ -146,7 +145,7 @@ class BackendStore:
             session = BackendSession(
                 session_id=session_id,
                 device_id=device_id,
-                target_description=target_description.strip(),
+                target_description="",
                 latest_memory="",
                 latest_target_id=None,
                 latest_target_crop=None,
@@ -186,7 +185,7 @@ class BackendStore:
                         "device_id": session.device_id,
                         "updated_at": session.updated_at,
                         "latest_target_id": session.latest_target_id,
-                        "latest_result": self._with_result_aliases(session.latest_result),
+                        "latest_result": session.latest_result,
                     }
                 )
             sessions.sort(key=lambda item: item["updated_at"], reverse=True)
@@ -218,7 +217,6 @@ class BackendStore:
             session = self.load_or_create_session(
                 session_id=session_id,
                 device_id=device_id,
-                target_description=cleaned_text,
             )
             stored_image_path = self._store_frame_image(session_id, frame)
             stored_frame = BackendFrame(
@@ -239,7 +237,7 @@ class BackendStore:
             updated = BackendSession(
                 session_id=session.session_id,
                 device_id=session.device_id or device_id,
-                target_description=session.target_description or cleaned_text,
+                target_description=session.target_description,
                 latest_memory=session.latest_memory,
                 latest_target_id=session.latest_target_id,
                 latest_target_crop=session.latest_target_crop,
@@ -260,34 +258,6 @@ class BackendStore:
             self._write_session(updated)
             return updated
 
-    def build_agent_context(self, session_id: str) -> Dict[str, Any]:
-        session = self.load_session(session_id)
-        return {
-            "session_id": session.session_id,
-            "target_description": session.target_description,
-            "memory": session.latest_memory,
-            "latest_target_id": session.latest_target_id,
-            "latest_bounding_box_id": session.latest_target_id,
-            "latest_target_crop": session.latest_target_crop,
-            "latest_confirmed_frame_path": session.latest_confirmed_frame_path,
-            "clarification_notes": session.clarification_notes,
-            "conversation_history": session.conversation_history,
-            "pending_question": session.pending_question,
-            "latest_result": self._with_result_aliases(session.latest_result),
-            "frames": [
-                {
-                    "frame_id": frame.frame_id,
-                    "timestamp_ms": frame.timestamp_ms,
-                    "image_path": frame.image_path,
-                    "detections": [
-                        self._detection_payload(detection)
-                        for detection in frame.detections
-                    ],
-                }
-                for frame in session.recent_frames
-            ],
-        }
-
     def apply_agent_result(
         self,
         session_id: str,
@@ -296,8 +266,14 @@ class BackendStore:
         with self._lock:
             session = self.load_session(session_id)
             latest_frame = session.recent_frames[-1] if session.recent_frames else None
+            result_frame_id = (
+                None
+                if result.get("frame_id") in (None, "")
+                else str(result.get("frame_id")).strip()
+            )
+            result_frame = self._frame_by_id(session, result_frame_id) or latest_frame
             target_id = _extract_bounding_box_id(result)
-            bbox = self._latest_bbox_for_target(latest_frame, target_id)
+            bbox = self._latest_bbox_for_target(result_frame, target_id)
 
             memory = str(result.get("memory", "")).strip() or session.latest_memory
             target_description = str(result.get("target_description", "")).strip() or session.target_description
@@ -314,11 +290,14 @@ class BackendStore:
             if found and pending_question is None:
                 pending_question = None
             latest_result = {
-                "frame_id": None if latest_frame is None else latest_frame.frame_id,
+                "frame_id": (
+                    result_frame_id
+                    if result_frame_id is not None
+                    else (None if result_frame is None else result_frame.frame_id)
+                ),
                 "behavior": str(result.get("behavior", "reply")),
                 "text": str(result.get("text", "")).strip(),
                 "target_id": None if target_id is None else int(target_id),
-                "bounding_box_id": None if target_id is None else int(target_id),
                 "bbox": visible_bbox,
                 "found": found,
                 "needs_clarification": bool(result.get("needs_clarification", False)),
@@ -344,8 +323,8 @@ class BackendStore:
             ][-RESULT_HISTORY_LIMIT:]
             latest_target_crop = result.get("latest_target_crop") or session.latest_target_crop
             latest_confirmed_frame_path = session.latest_confirmed_frame_path
-            if found and latest_frame is not None:
-                latest_confirmed_frame_path = latest_frame.image_path
+            if found and result_frame is not None:
+                latest_confirmed_frame_path = result_frame.image_path
             updated = BackendSession(
                 session_id=session.session_id,
                 device_id=session.device_id,
@@ -365,28 +344,6 @@ class BackendStore:
             )
             self._write_session(updated)
             return updated
-
-    def _detection_payload(self, detection: BackendDetection) -> Dict[str, Any]:
-        return {
-            "track_id": int(detection.track_id),
-            "bounding_box_id": int(detection.track_id),
-            "bbox": list(detection.bbox),
-            "score": float(detection.score),
-            "label": detection.label,
-        }
-
-    def _with_result_aliases(
-        self,
-        result: Optional[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
-        if result is None:
-            return None
-        payload = dict(result)
-        target_id = _extract_bounding_box_id(payload)
-        if target_id is not None:
-            payload["target_id"] = int(target_id)
-            payload["bounding_box_id"] = int(target_id)
-        return payload
 
     def apply_memory_update(
         self,
@@ -472,33 +429,6 @@ class BackendStore:
             self._write_session(updated)
             return updated
 
-    def clear_session(self, session_id: str) -> BackendSession:
-        with self._lock:
-            session = self.load_session(session_id)
-            session_dir = self.session_dir(session_id)
-            if session_dir.exists():
-                shutil.rmtree(session_dir)
-
-            cleared = BackendSession(
-                session_id=session.session_id,
-                device_id=session.device_id,
-                target_description="",
-                latest_memory="",
-                latest_target_id=None,
-                latest_target_crop=None,
-                latest_confirmed_frame_path=None,
-                latest_result=None,
-                result_history=[],
-                clarification_notes=[],
-                conversation_history=[],
-                pending_question=None,
-                recent_frames=[],
-                created_at=session.created_at,
-                updated_at=_utc_now(),
-            )
-            self._write_session(cleared)
-            return cleared
-
     def _append_conversation_entry(
         self,
         history: List[Dict[str, str]],
@@ -528,6 +458,18 @@ class BackendStore:
         for detection in latest_frame.detections:
             if detection.track_id == target_int:
                 return list(detection.bbox)
+        return None
+
+    def _frame_by_id(
+        self,
+        session: BackendSession,
+        frame_id: Optional[str],
+    ) -> Optional[BackendFrame]:
+        if not frame_id:
+            return None
+        for frame in session.recent_frames:
+            if frame.frame_id == frame_id:
+                return frame
         return None
 
     def _store_frame_image(self, session_id: str, frame: Dict[str, Any]) -> Path:

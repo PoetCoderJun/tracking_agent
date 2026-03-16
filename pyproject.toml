@@ -13,6 +13,7 @@ dependencies = [
   "uvicorn[standard]>=0.29,<1.0",
   "Pillow>=10.0,<12.0",
   "ultralytics>=8.2,<9.0",
+  "websockets>=12,<16",
   "opencv-python==4.9.0.80",
   "numpy<2",
   "torch==2.2.2",
@@ -21,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 tracking-backend = "scaffold.cli.run_backend:main"
+tracking-host-agent = "scaffold.cli.run_host_agent:main"
 tracking-robot-stream = "scaffold.cli.run_robot_stream:main"
 tracking-build-query-plan = "scaffold.cli.build_query_plan:main"
 

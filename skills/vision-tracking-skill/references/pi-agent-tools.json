@@ -2,7 +2,7 @@
   "skill_name": "vision-tracking-skill",
   "adapter_entrypoint": "skills/vision-tracking-skill/scripts/pi_agent_adapter.py",
   "tooling_notes": [
-    "The PI Agent is the dialogue orchestrator. The backend only stores context and accepts results.",
+    "The PI Agent is the dialogue orchestrator. The backend only stores raw session state and accepts results.",
     "Use reply for pure conversational turns or focused clarification questions.",
     "Use init when the user is defining or replacing the target in the latest frame.",
     "Use track when an active target already exists and the session should continue on the latest frame.",

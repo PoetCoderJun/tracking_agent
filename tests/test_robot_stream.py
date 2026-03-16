@@ -13,6 +13,7 @@ from tracking_agent.robot_stream import (
     event_payload,
     generate_session_id,
     is_camera_source,
+    is_websocket_url,
     normalize_source,
     parse_frame_rate,
     video_timestamp_seconds,
@@ -34,6 +35,12 @@ def test_generate_session_id_returns_unique_prefixed_value() -> None:
     assert session_id_a.startswith("session_")
     assert session_id_b.startswith("session_")
     assert session_id_a != session_id_b
+
+
+def test_is_websocket_url_detects_ws_and_wss() -> None:
+    assert is_websocket_url("ws://127.0.0.1:8001/ws/robot-ingest") is True
+    assert is_websocket_url("wss://example.com/ws/robot-ingest") is True
+    assert is_websocket_url("http://127.0.0.1:8001/api/v1/robot/ingest") is False
 
 
 def test_parse_frame_rate_supports_fractional_ffprobe_output() -> None:

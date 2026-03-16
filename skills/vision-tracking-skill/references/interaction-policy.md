@@ -8,7 +8,7 @@ Do not force each user turn into a closed set of labels before thinking.
 
 Instead, for every new user message:
 
-1. Read the active session state, current memory, latest result, and runtime batch state.
+1. Read the active raw session state, derive the working context you need, then inspect current memory, latest result, and runtime batch state.
 2. Interpret the new message in the context of the ongoing tracking session.
 3. Decide what action would move the session forward with the least unnecessary rigidity.
 4. Use the bundled scripts as atomic tools, not as a prewritten workflow.

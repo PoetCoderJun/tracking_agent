@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import subprocess
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Union
+from urllib.parse import urlsplit
 
 from PIL import Image
 
@@ -133,6 +135,20 @@ def append_event_jsonl(path: Path, event: RobotIngestEvent) -> None:
         handle.write("\n")
 
 
+def is_websocket_url(url: str) -> bool:
+    return urlsplit(url).scheme.lower() in {"ws", "wss"}
+
+
+def _load_websocket_connect():
+    try:
+        from websockets.client import connect
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing websocket client dependency. Install the 'websockets' package before running robot streaming."
+        ) from exc
+    return connect
+
+
 def post_event(
     url: str,
     event: RobotIngestEvent,
@@ -153,3 +169,39 @@ def post_event(
         "status": getattr(response, "status", 200),
         "body": body,
     }
+
+
+async def post_event_ws(
+    websocket: Any,
+    event: RobotIngestEvent,
+    timeout_seconds: float = 300,
+) -> Dict[str, Any]:
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    payload = event_payload(event, include_image_base64=True)
+    await asyncio.wait_for(websocket.send(json.dumps(payload, ensure_ascii=False)), timeout=timeout_seconds)
+    message = await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
+    response = json.loads(message)
+    if response.get("type") == "robot_ingest_error":
+        raise RuntimeError(str(response.get("error", "Robot ingest websocket request failed")))
+    return {
+        "status": int(response.get("status", 200)),
+        "body": json.dumps(response.get("payload", {}), ensure_ascii=True),
+    }
+
+
+async def open_robot_backend_websocket(
+    url: str,
+    timeout_seconds: float = 300,
+):
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    connect = _load_websocket_connect()
+    return connect(
+        url,
+        open_timeout=timeout_seconds,
+        close_timeout=min(timeout_seconds, 10.0),
+        ping_interval=20,
+        ping_timeout=timeout_seconds,
+        max_size=None,
+    )

@@ -1,6 +1,11 @@
 from scaffold.cli.run_robot_stream import (
+    DEFAULT_PERSON_MODEL,
+    _configure_device_runtime,
+    _extract_person_detections,
+    _normalize_xyxy_bbox,
     _should_emit_event,
     _should_emit_video_sample,
+    _video_frame_step,
     parse_args,
 )
 
@@ -14,6 +19,61 @@ def test_parse_args_defaults_interval_to_three_seconds(monkeypatch) -> None:
     assert args.interval_seconds == 3.0
     assert args.backend_timeout_seconds == 310.0
     assert args.ongoing_text == "持续跟踪"
+    assert args.model == DEFAULT_PERSON_MODEL
+    assert args.backend_url == "ws://127.0.0.1:8001/ws/robot-ingest"
+    assert args.device is None
+    assert args.vid_stride == 1
+
+
+def test_parse_args_accepts_device_and_vid_stride(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_robot_stream.py", "--source", "demo.mp4", "--device", "mps", "--vid-stride", "3"],
+    )
+    args = parse_args()
+    assert args.device == "mps"
+    assert args.vid_stride == 3
+
+
+def test_configure_device_runtime_enables_mps_fallback(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
+    _configure_device_runtime("mps")
+    assert __import__("os").environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "1"
+    assert capsys.readouterr().err
+
+
+def test_configure_device_runtime_ignores_non_mps(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
+    _configure_device_runtime("cpu")
+    assert not capsys.readouterr().err
+
+
+def test_normalize_xyxy_bbox_sorts_reversed_coordinates() -> None:
+    assert _normalize_xyxy_bbox([384, 101, 305, 384]) == [305, 101, 384, 384]
+
+
+def test_extract_person_detections_normalizes_reversed_bbox_coordinates() -> None:
+    class FakeTensor:
+        def __init__(self, values):
+            self._values = values
+
+        def int(self):
+            return self
+
+        def tolist(self):
+            return self._values
+
+    class FakeBoxes:
+        xyxy = FakeTensor([[384, 101, 305, 384]])
+        conf = FakeTensor([0.92])
+        cls = FakeTensor([0])
+        id = FakeTensor([7])
+
+    class FakeResult:
+        boxes = FakeBoxes()
+
+    detections = _extract_person_detections(FakeResult(), person_class_id=0)
+    assert detections[0].bbox == [305, 101, 384, 384]
 
 
 def test_should_emit_event_respects_frame_and_time_gates() -> None:
@@ -35,3 +95,8 @@ def test_should_emit_video_sample_uses_video_timeline_only() -> None:
         fps=30.0,
         next_video_emit_at=3.0,
     )
+
+
+def test_video_frame_step_samples_one_frame_per_interval() -> None:
+    assert _video_frame_step(fps=30.0, interval_seconds=3.0, sample_every=1, vid_stride=1) == 90
+    assert _video_frame_step(fps=30.0, interval_seconds=3.0, sample_every=1, vid_stride=2) == 180

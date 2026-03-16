@@ -40,7 +40,6 @@ def test_skill_package_contains_expected_files() -> None:
         SKILL_ROOT / "scripts" / "agent_common.py",
         SKILL_ROOT / "scripts" / "pi_agent_adapter.py",
         SKILL_ROOT / "scripts" / "pi_backend_bridge.py",
-        SKILL_ROOT / "scripts" / "pi_host_turn.py",
     ]
 
     for path in expected_paths:

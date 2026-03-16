@@ -826,6 +826,7 @@ dependencies = [
     { name = "torchvision" },
     { name = "ultralytics" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -843,6 +844,7 @@ requires-dist = [
     { name = "torchvision", specifier = "==0.17.2" },
     { name = "ultralytics", specifier = ">=8.2,<9.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29,<1.0" },
+    { name = "websockets", specifier = ">=12,<16" },
 ]
 
 [package.metadata.requires-dev]

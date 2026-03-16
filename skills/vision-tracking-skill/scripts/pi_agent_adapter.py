@@ -80,19 +80,88 @@ def optional_text(value: Any) -> Optional[str]:
     return str(value).strip() or None
 
 
+def extract_bounding_box_id(payload: Dict[str, Any]) -> Optional[int]:
+    raw_value = payload.get("bounding_box_id")
+    if raw_value is None:
+        raw_value = payload.get("bbox_id")
+    if raw_value is None:
+        raw_value = payload.get("target_id")
+    if raw_value is None:
+        return None
+    return int(raw_value)
+
+
+def with_result_aliases(result: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if result is None:
+        return None
+    payload = dict(result)
+    target_id = extract_bounding_box_id(payload)
+    if target_id is not None:
+        payload["target_id"] = target_id
+        payload["bounding_box_id"] = target_id
+    return payload
+
+
+def build_working_context(raw_session: Dict[str, Any]) -> Dict[str, Any]:
+    latest_result = with_result_aliases(raw_session.get("latest_result"))
+    frames: List[Dict[str, Any]] = []
+    for frame in raw_session.get("recent_frames", []):
+        detections = []
+        for detection in frame.get("detections", []):
+            track_id = int(detection["track_id"])
+            detections.append(
+                {
+                    "track_id": track_id,
+                    "bounding_box_id": track_id,
+                    "bbox": [int(value) for value in detection["bbox"]],
+                    "score": float(detection.get("score", 1.0)),
+                    "label": str(detection.get("label", "person")),
+                }
+            )
+        frames.append(
+            {
+                "frame_id": str(frame["frame_id"]),
+                "timestamp_ms": int(frame["timestamp_ms"]),
+                "image_path": str(frame["image_path"]),
+                "detections": detections,
+            }
+        )
+
+    latest_target_id = raw_session.get("latest_target_id")
+    if latest_target_id is not None:
+        latest_target_id = int(latest_target_id)
+
+    return {
+        "session_id": str(raw_session["session_id"]),
+        "device_id": str(raw_session.get("device_id", "")),
+        "target_description": str(raw_session.get("target_description", "")),
+        "memory": str(raw_session.get("latest_memory", "")),
+        "latest_memory": str(raw_session.get("latest_memory", "")),
+        "latest_target_id": latest_target_id,
+        "latest_bounding_box_id": latest_target_id,
+        "latest_target_crop": optional_text(raw_session.get("latest_target_crop")),
+        "latest_confirmed_frame_path": optional_text(raw_session.get("latest_confirmed_frame_path")),
+        "clarification_notes": [str(note) for note in raw_session.get("clarification_notes", [])],
+        "conversation_history": [
+            {
+                "role": str(entry.get("role", "")),
+                "text": str(entry.get("text", "")),
+                "timestamp": str(entry.get("timestamp", "")),
+            }
+            for entry in raw_session.get("conversation_history", [])
+        ],
+        "pending_question": optional_text(raw_session.get("pending_question")),
+        "latest_result": latest_result,
+        "frames": frames,
+        "raw_session": raw_session,
+    }
+
+
 def latest_frame(context: Dict[str, Any]) -> Dict[str, Any]:
     frames = context.get("frames", [])
     if not frames:
         raise ValueError("Agent context does not contain any frames")
     return frames[-1]
-
-
-def recent_frame_paths(context: Dict[str, Any]) -> List[str]:
-    return [
-        str(frame["image_path"])
-        for frame in context.get("frames", [])
-        if frame.get("image_path")
-    ]
 
 
 def session_has_active_target(context: Dict[str, Any]) -> bool:
@@ -198,12 +267,31 @@ def build_rewrite_memory_input(
     }
 
 
+def rewrite_memory_frame_paths(
+    *,
+    behavior: str,
+    current_frame_path: Path,
+    latest_confirmed_frame_path: Optional[str],
+) -> List[str]:
+    if behavior == "init":
+        return [str(current_frame_path)]
+
+    if not latest_confirmed_frame_path:
+        return [str(current_frame_path)]
+
+    previous_frame_path = Path(str(latest_confirmed_frame_path))
+    if previous_frame_path == current_frame_path:
+        return [str(current_frame_path)]
+    return [str(previous_frame_path), str(current_frame_path)]
+
+
 def execute_reply_tool(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
     text = str(arguments.get("text", "")).strip()
     if not text:
         raise ValueError("reply tool requires a non-empty text argument")
 
     latest_result = context.get("latest_result") or {}
+    latest_frame_payload = context.get("frames", [])[-1] if context.get("frames") else None
     clarification_question = optional_text(arguments.get("clarification_question"))
     needs_clarification = bool(arguments.get("needs_clarification", clarification_question is not None))
     pending_question = clarification_question if needs_clarification else None
@@ -211,6 +299,8 @@ def execute_reply_tool(context: Dict[str, Any], arguments: Dict[str, Any]) -> Di
     return {
         "behavior": "reply",
         "text": text,
+        "frame_id": latest_result.get("frame_id")
+        or (None if latest_frame_payload is None else str(latest_frame_payload.get("frame_id", "")) or None),
         "target_id": context.get("latest_target_id"),
         "found": bool(arguments.get("found", latest_result.get("found", False))),
         "needs_clarification": needs_clarification,
@@ -291,7 +381,11 @@ def execute_select_tool(
             rewrite_memory_input = build_rewrite_memory_input(
                 behavior=behavior,
                 crop_path=crop_path,
-                frame_paths=recent_frame_paths(context) or [str(frame_path)],
+                frame_paths=rewrite_memory_frame_paths(
+                    behavior=behavior,
+                    current_frame_path=frame_path,
+                    latest_confirmed_frame_path=context.get("latest_confirmed_frame_path"),
+                ),
                 frame_id=str(frame["frame_id"]),
                 target_id=int(normalized["target_id"]),
             )
@@ -300,6 +394,7 @@ def execute_select_tool(
     return {
         "behavior": behavior,
         "text": normalized["text"],
+        "frame_id": str(frame["frame_id"]),
         "target_id": normalized["target_id"],
         "bounding_box_id": normalized["bounding_box_id"],
         "found": normalized["found"],

@@ -15,7 +15,7 @@ def _tiny_jpeg_base64() -> str:
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def test_ingest_robot_event_saves_frame_and_sets_target_description(tmp_path: Path) -> None:
+def test_ingest_robot_event_saves_frame_without_interpreting_target_description(tmp_path: Path) -> None:
     store = BackendStore(tmp_path / "state", frame_buffer_size=2)
 
     session = store.ingest_robot_event(
@@ -32,7 +32,7 @@ def test_ingest_robot_event_saves_frame_and_sets_target_description(tmp_path: Pa
         text="跟踪穿黑衣服的人",
     )
 
-    assert session.target_description == "跟踪穿黑衣服的人"
+    assert session.target_description == ""
     assert len(session.recent_frames) == 1
     assert Path(session.recent_frames[0].image_path).exists()
     assert session.conversation_history[0]["role"] == "user"
@@ -93,14 +93,62 @@ def test_apply_agent_result_backfills_bbox_from_latest_frame(tmp_path: Path) -> 
     assert session.latest_target_id == 15
     assert session.latest_memory == "短发，黑衣服。"
     assert session.latest_result is not None
-    assert session.latest_result["bounding_box_id"] == 15
+    assert session.latest_result["target_id"] == 15
+    assert "bounding_box_id" not in session.latest_result
     assert session.latest_result["bbox"] == [100, 120, 180, 260]
     assert len(session.result_history) == 1
     assert session.result_history[0]["memory"] == "短发，黑衣服。"
     assert session.latest_confirmed_frame_path is not None
 
 
-def test_build_agent_context_exposes_bounding_box_aliases(tmp_path: Path) -> None:
+def test_apply_agent_result_uses_supplied_frame_id_instead_of_newer_latest_frame(tmp_path: Path) -> None:
+    store = BackendStore(tmp_path / "state", frame_buffer_size=3)
+    store.ingest_robot_event(
+        session_id="sess_001",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[
+            {"track_id": 15, "bbox": [100, 120, 180, 260], "score": 0.94},
+        ],
+        text="",
+    )
+    store.ingest_robot_event(
+        session_id="sess_001",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000002",
+            "timestamp_ms": 1710000003000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[
+            {"track_id": 15, "bbox": [102, 122, 182, 262], "score": 0.95},
+        ],
+        text="持续跟踪",
+    )
+
+    session = store.apply_agent_result(
+        "sess_001",
+        {
+            "frame_id": "frame_000001",
+            "text": "我认为 frame_000001 的目标是 ID 15。",
+            "target_id": 15,
+            "found": True,
+            "needs_clarification": False,
+            "clarification_question": None,
+            "memory": "短发，黑衣服。",
+        },
+    )
+
+    assert session.latest_result is not None
+    assert session.latest_result["frame_id"] == "frame_000001"
+    assert session.latest_result["bbox"] == [100, 120, 180, 260]
+
+
+def test_session_payload_stays_raw_backend_state(tmp_path: Path) -> None:
     store = BackendStore(tmp_path / "state", frame_buffer_size=3)
     store.ingest_robot_event(
         session_id="sess_001",
@@ -127,11 +175,13 @@ def test_build_agent_context_exposes_bounding_box_aliases(tmp_path: Path) -> Non
         },
     )
 
-    context = store.build_agent_context("sess_001")
+    payload = store.session_payload("sess_001")
 
-    assert context["latest_bounding_box_id"] == 15
-    assert context["latest_result"]["bounding_box_id"] == 15
-    assert context["frames"][-1]["detections"][0]["bounding_box_id"] == 15
+    assert "latest_bounding_box_id" not in payload
+    assert payload["latest_result"]["target_id"] == 15
+    assert "bounding_box_id" not in payload["latest_result"]
+    assert payload["recent_frames"][-1]["detections"][0]["track_id"] == 15
+    assert "bounding_box_id" not in payload["recent_frames"][-1]["detections"][0]
 
 
 def test_apply_agent_result_hides_bbox_when_target_not_found(tmp_path: Path) -> None:
@@ -296,47 +346,3 @@ def test_apply_memory_update_skips_stale_background_result(tmp_path: Path) -> No
 
     assert stale.latest_memory == latest.latest_memory
     assert stale.latest_result == latest.latest_result
-
-
-def test_clear_session_resets_runtime_state_and_removes_frame_artifacts(tmp_path: Path) -> None:
-    store = BackendStore(tmp_path / "state", frame_buffer_size=3)
-    store.ingest_robot_event(
-        session_id="sess_001",
-        device_id="robot_01",
-        frame={
-            "frame_id": "frame_000001",
-            "timestamp_ms": 1710000000000,
-            "image_base64": _tiny_jpeg_base64(),
-        },
-        detections=[
-            {"track_id": 15, "bbox": [100, 120, 180, 260], "score": 0.94},
-        ],
-        text="跟踪穿黑衣服的人",
-    )
-    store.apply_agent_result(
-        "sess_001",
-        {
-            "text": "我认为当前目标是 ID 15。",
-            "target_id": 15,
-            "found": True,
-            "needs_clarification": False,
-            "clarification_question": None,
-            "memory": "短发，黑衣服。",
-        },
-    )
-    store.add_clarification_note("sess_001", "目标在画面左侧")
-
-    cleared = store.clear_session("sess_001")
-
-    assert cleared.session_id == "sess_001"
-    assert cleared.device_id == "robot_01"
-    assert cleared.target_description == ""
-    assert cleared.latest_memory == ""
-    assert cleared.latest_target_id is None
-    assert cleared.latest_result is None
-    assert cleared.result_history == []
-    assert cleared.clarification_notes == []
-    assert cleared.conversation_history == []
-    assert cleared.pending_question is None
-    assert cleared.recent_frames == []
-    assert not (store.session_dir("sess_001") / "frames").exists()

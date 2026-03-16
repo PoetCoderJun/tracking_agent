@@ -16,7 +16,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--state-root", default="./runtime/backend")
     parser.add_argument("--frame-buffer-size", type=int, default=3)
-    parser.add_argument("--env-file", default=".ENV")
     parser.add_argument(
         "--external-agent-wait-seconds",
         type=float,
@@ -27,7 +26,7 @@ def parse_args() -> argparse.Namespace:
         "--external-agent-poll-seconds",
         type=float,
         default=0.1,
-        help="Polling interval used while waiting for an external /agent-result.",
+        help="Legacy compatibility flag. Backend now waits for external /agent-result using in-process events.",
     )
     return parser.parse_args()
 
@@ -50,7 +49,6 @@ def main() -> int:
     app = create_app(
         state_root=Path(args.state_root),
         frame_buffer_size=args.frame_buffer_size,
-        env_path=Path(args.env_file),
         external_agent_wait_seconds=args.external_agent_wait_seconds,
         external_agent_poll_seconds=args.external_agent_poll_seconds,
     )

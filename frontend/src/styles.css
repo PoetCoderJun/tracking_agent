@@ -227,32 +227,6 @@ select {
   text-transform: uppercase;
 }
 
-.icon-btn {
-  width: 46px;
-  height: 46px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--card-strong);
-  color: var(--text-soft);
-  cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, color 160ms ease;
-}
-
-.icon-btn:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: rgba(10, 132, 255, 0.18);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.7),
-    0 10px 24px rgba(10, 132, 255, 0.08);
-  transform: translateY(-1px);
-}
-
-.icon-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
 .brand-summary {
   position: relative;
   z-index: 1;

@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-const NO_STORE_FETCH_OPTIONS = { cache: "no-store" };
 const WS_RECONNECT_DELAY_MS = 2000;
 
-function getFrontendUpdatesSocketUrl() {
+function getSessionEventsSocketUrl() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/ws/frontend-updates`;
+  return `${protocol}//${window.location.host}/ws/session-events`;
 }
 
 function getTrackingStatus(latestResult) {
@@ -50,72 +49,37 @@ function formatBoundingBoxIdValue(rawId) {
   return rawId === null || rawId === undefined || rawId === "" ? "?" : String(rawId);
 }
 
-function DetectionOverlay({ frame, latestResult, imageSize }) {
-  if (!frame || !imageSize.width || !imageSize.height) {
+function DetectionOverlay({ displayFrame, imageSize }) {
+  if (!displayFrame || !imageSize.width || !imageSize.height) {
     return null;
   }
 
-  const detections = Array.isArray(frame.detections) ? frame.detections : [];
-  const found = Boolean(latestResult?.found);
-  const bbox = Array.isArray(latestResult?.bbox) ? latestResult.bbox : null;
-  const targetId = getRawBoundingBoxId(latestResult);
+  const targetId = getRawBoundingBoxId(displayFrame);
+  const bbox = Array.isArray(displayFrame?.bbox) ? displayFrame.bbox : null;
   const viewBox = `0 0 ${imageSize.width} ${imageSize.height}`;
-  const hasTargetBox = found && bbox !== null;
 
-  if (!detections.length && !hasTargetBox) {
+  if (bbox === null) {
     return null;
   }
 
   return (
     <svg className="overlay" viewBox={viewBox} preserveAspectRatio="none">
-      {detections.map((detection) => {
-        const detectionBbox = Array.isArray(detection?.bbox) ? detection.bbox : null;
-        if (detectionBbox === null) {
-          return null;
-        }
-        const detectionTrackId = getRawBoundingBoxId(detection);
-        if (
-          hasTargetBox &&
-          targetId !== null &&
-          detectionTrackId !== null &&
-          String(detectionTrackId) === String(targetId)
-        ) {
-          return null;
-        }
-        const [x1, y1, x2, y2] = detectionBbox;
-        return (
-          <g key={`candidate-${detectionTrackId ?? "unknown"}-${x1}-${y1}-${x2}-${y2}`}>
-            <rect
-              x={x1}
-              y={y1}
-              width={Math.max(1, x2 - x1)}
-              height={Math.max(1, y2 - y1)}
-              className="bbox bbox-candidate"
-            />
-            <text x={x1 + 6} y={Math.max(18, y1 - 8)} className="bbox-label">
-              {formatBoundingBoxIdValue(detectionTrackId)}
-            </text>
-          </g>
-        );
-      })}
-      {hasTargetBox ? (
-        <g>
-          <rect
-            x={bbox[0]}
-            y={bbox[1]}
-            width={Math.max(1, bbox[2] - bbox[0])}
-            height={Math.max(1, bbox[3] - bbox[1])}
-            className="bbox bbox-target"
-          />
-          <text
-            x={bbox[0] + 6}
-            y={Math.max(18, bbox[1] - 8)}
-            className="bbox-label bbox-label-target"
-          >
-            {formatBoundingBoxIdValue(targetId)}
-          </text>
-        </g>
-      ) : null}
+      <g>
+        <rect
+          x={bbox[0]}
+          y={bbox[1]}
+          width={Math.max(1, bbox[2] - bbox[0])}
+          height={Math.max(1, bbox[3] - bbox[1])}
+          className="bbox bbox-target"
+        />
+        <text
+          x={bbox[0] + 6}
+          y={Math.max(18, bbox[1] - 8)}
+          className="bbox-label bbox-label-target"
+        >
+          {formatBoundingBoxIdValue(targetId)}
+        </text>
+      </g>
     </svg>
   );
 }
@@ -160,74 +124,13 @@ function ConversationEntry({ entry }) {
 
 export default function App() {
   const [activeSession, setActiveSession] = useState(null);
-  const [refreshToken, setRefreshToken] = useState(0);
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
   const [health, setHealth] = useState("checking");
-  const [isClearing, setIsClearing] = useState(false);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const imageRef = useRef(null);
   const viewerHostRef = useRef(null);
   const [viewerHostSize, setViewerHostSize] = useState({ width: 0, height: 0 });
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function refreshDashboard() {
-      try {
-        const healthResp = await fetch("/healthz", NO_STORE_FETCH_OPTIONS);
-        if (!healthResp.ok) {
-          throw new Error("Backend health check failed");
-        }
-        if (!cancelled) {
-          setHealth("online");
-        }
-
-        const sessionsResp = await fetch("/api/v1/sessions", NO_STORE_FETCH_OPTIONS);
-        if (!sessionsResp.ok) {
-          throw new Error("Failed to load sessions");
-        }
-        const sessionsPayload = await sessionsResp.json();
-        const nextSessions = sessionsPayload.sessions || [];
-        if (cancelled) {
-          return;
-        }
-        const nextActiveSession = nextSessions[0] ?? null;
-        setActiveSession(nextActiveSession);
-
-        if (!nextActiveSession) {
-          if (!cancelled) {
-            setState(null);
-            setError("");
-          }
-          return;
-        }
-
-        const stateResp = await fetch(
-          `/api/v1/sessions/${nextActiveSession.session_id}/frontend-state`,
-          NO_STORE_FETCH_OPTIONS
-        );
-        if (!stateResp.ok) {
-          throw new Error(`Failed to load session ${nextActiveSession.session_id}`);
-        }
-        const statePayload = await stateResp.json();
-        if (!cancelled) {
-          setState(statePayload);
-          setError("");
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-          setHealth("offline");
-        }
-      }
-    }
-
-    refreshDashboard();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshToken]);
 
   useEffect(() => {
     let disposed = false;
@@ -239,10 +142,11 @@ export default function App() {
         return;
       }
 
-      socket = new window.WebSocket(getFrontendUpdatesSocketUrl());
+      socket = new window.WebSocket(getSessionEventsSocketUrl());
 
       socket.addEventListener("open", () => {
-        setRefreshToken((value) => value + 1);
+        setHealth("online");
+        setError("");
       });
 
       socket.addEventListener("message", (event) => {
@@ -252,8 +156,28 @@ export default function App() {
         } catch {
           return;
         }
-        if (payload?.type === "session_update" || payload?.type === "connected") {
-          setRefreshToken((value) => value + 1);
+        if (payload?.type === "connected") {
+          return;
+        }
+        if (payload?.type === "dashboard_state" || payload?.type === "session_update") {
+          const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+          const nextState = payload.frontend_state ?? null;
+          const nextActiveSession =
+            (nextState
+              ? sessions.find((session) => String(session.session_id) === String(nextState.session_id))
+              : null) ??
+            sessions[0] ??
+            null;
+          setActiveSession(nextActiveSession);
+          setState(nextState);
+          setError("");
+          setHealth("online");
+        }
+      });
+
+      socket.addEventListener("error", () => {
+        if (!disposed) {
+          setError("Session event stream disconnected.");
         }
       });
 
@@ -261,6 +185,7 @@ export default function App() {
         if (disposed) {
           return;
         }
+        setHealth("offline");
         reconnectTimer = window.setTimeout(connect, WS_RECONNECT_DELAY_MS);
       });
     }
@@ -293,7 +218,7 @@ export default function App() {
     return () => {
       image.removeEventListener("load", updateSize);
     };
-  }, [state?.latest_frame?.image_url]);
+  }, [state?.display_frame?.frame_id, state?.display_frame?.image_url]);
 
   useEffect(() => {
     const host = viewerHostRef.current;
@@ -328,6 +253,7 @@ export default function App() {
 
   const latestResult = state?.latest_result ?? null;
   const latestFrame = state?.latest_frame ?? null;
+  const displayFrame = state?.display_frame ?? null;
   const activeSessionId = state?.session_id || activeSession?.session_id || "";
   const activeSessionLabel = state?.device_id || activeSession?.device_id || "No active session";
   const resultHistory = state?.result_history ?? [];
@@ -346,6 +272,7 @@ export default function App() {
     [state?.conversation_history]
   );
   const detectionCount = latestFrame?.detections?.length ?? 0;
+  const showTrackedFrame = Boolean(displayFrame?.image_url && Array.isArray(displayFrame?.bbox));
   const activeStatus = getTrackingStatus(latestResult);
   const viewerStageStyle = useMemo(() => {
     if (!imageSize.width || !imageSize.height || !viewerHostSize.width || !viewerHostSize.height) {
@@ -373,35 +300,6 @@ export default function App() {
     };
   }, [imageSize.height, imageSize.width, viewerHostSize.height, viewerHostSize.width]);
 
-  async function handleClearSession() {
-    if (!activeSessionId || isClearing) {
-      return;
-    }
-    const confirmed = window.confirm(`确认清空当前会话 ${activeSessionId} 吗？`);
-    if (!confirmed) {
-      return;
-    }
-
-    setIsClearing(true);
-    try {
-      const clearResp = await fetch(`/api/v1/sessions/${activeSessionId}/clear`, {
-        method: "POST"
-      });
-      if (!clearResp.ok) {
-        throw new Error(`Failed to clear session ${activeSessionId}`);
-      }
-      const clearedState = await clearResp.json();
-      setState(clearedState);
-      setActiveSession((current) => current ? { ...current, ...clearedState } : clearedState);
-      setError("");
-      setRefreshToken((value) => value + 1);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsClearing(false);
-    }
-  }
-
   return (
     <div className="shell">
       <aside className="left-rail">
@@ -423,22 +321,13 @@ export default function App() {
               <strong>{activeSessionLabel}</strong>
               <span>{activeSessionId || "Waiting for session"}</span>
             </div>
-            <button
-              className="icon-btn"
-              type="button"
-              disabled={!activeSessionId || isClearing}
-              onClick={handleClearSession}
-              title="清空当前会话"
-            >
-              {isClearing ? "⋯" : "↺"}
-            </button>
           </div>
 
           <div className="brand-summary">
             <span className={health === "online" ? "health-chip health-online" : "health-chip health-offline"}>
               {health}
             </span>
-            <span className="summary-chip">Single session</span>
+            <span className="summary-chip">Read-only view</span>
           </div>
         </div>
 
@@ -509,24 +398,19 @@ export default function App() {
                 className={viewerStageStyle ? "viewer-stage viewer-stage-fitted" : "viewer-stage"}
                 style={viewerStageStyle || undefined}
               >
-                {latestFrame ? (
+                {showTrackedFrame ? (
                   <>
                     <img
-                      key={latestFrame.image_url}
+                      key={displayFrame.frame_id || displayFrame.image_url}
                       ref={imageRef}
                       className="frame-image"
-                      src={`${latestFrame.image_url}?t=${encodeURIComponent(state?.updated_at || "")}`}
-                      alt={latestFrame.frame_id}
+                      src={`${displayFrame.image_url}?t=${encodeURIComponent(displayFrame.frame_id || state?.updated_at || "")}`}
+                      alt={displayFrame.frame_id || "tracked-frame"}
                     />
-                    <DetectionOverlay frame={latestFrame} latestResult={latestResult} imageSize={imageSize} />
+                    <DetectionOverlay displayFrame={displayFrame} imageSize={imageSize} />
                   </>
                 ) : (
-                  <div className="empty-stage">
-                    <div className="empty-stage-copy">
-                      <strong>Waiting for frame</strong>
-                      <span>Robot ingest 开始后，最新画面会出现在这里。</span>
-                    </div>
-                  </div>
+                  <div className="empty-stage" />
                 )}
               </div>
             </div>

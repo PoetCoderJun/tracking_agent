@@ -54,7 +54,7 @@ The host agent should expose and combine these skill-level tools:
 - `track`: continue binding the active target on the latest frame using memory and recent session context
 - `rewrite_memory`: optionally rewrite memory after a successful `init` or `track`
 
-The backend in this repository is not the dialogue orchestrator. It only stores session state, serves frame/context payloads, and accepts agent results. The host agent should read `/api/v1/sessions/{session_id}/agent-context`, run this skill externally, then post the chosen tool result to `/api/v1/sessions/{session_id}/agent-result`.
+The backend in this repository is not the dialogue orchestrator. It only stores raw session state, serves frame assets, and accepts agent results. The host agent should read `/api/v1/sessions/{session_id}`, build its own working context locally, run this skill externally, then post the chosen tool result to `/api/v1/sessions/{session_id}/agent-result`.
 
 Reusable flow patterns:
 
@@ -88,7 +88,6 @@ Reusable flow patterns:
 - Tracking chat answer call: [answer_tracking_chat.py](./scripts/answer_tracking_chat.py)
 - PI Agent skill adapter: [pi_agent_adapter.py](./scripts/pi_agent_adapter.py)
 - Backend bridge for PI execution: [pi_backend_bridge.py](./scripts/pi_backend_bridge.py)
-- Model-driven PI host turn: [pi_host_turn.py](./scripts/pi_host_turn.py)
 - Target crop writer: [target_crop.py](./scripts/target_crop.py)
 - BBox visualization writer: [bbox_visualization.py](./scripts/bbox_visualization.py)
 - Memory normalizer: [memory_rewriter.py](./scripts/memory_rewriter.py)

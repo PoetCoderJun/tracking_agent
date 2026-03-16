@@ -110,35 +110,6 @@ def call_model(
     )
 
 
-def call_model_with_tools(
-    api_key: str,
-    base_url: str,
-    timeout_seconds: int,
-    model: str,
-    messages: List[Dict[str, Any]],
-    tools: List[Dict[str, Any]],
-    max_tokens: int,
-    tool_choice: Any = "auto",
-    parallel_tool_calls: bool = False,
-) -> Dict[str, Any]:
-    payload = {
-        "model": model,
-        "temperature": 0,
-        "max_tokens": max_tokens,
-        "enable_thinking": False,
-        "messages": messages,
-        "tools": tools,
-        "tool_choice": tool_choice,
-        "parallel_tool_calls": parallel_tool_calls,
-    }
-    return _request_chat_completion(
-        api_key=api_key,
-        base_url=base_url,
-        timeout_seconds=timeout_seconds,
-        payload=payload,
-    )
-
-
 def parse_json_block(text: str) -> Dict[str, Any]:
     cleaned = text.strip()
     if cleaned.startswith("```"):
