@@ -1,119 +1,233 @@
 # Tracking Agent
 
-接口文档见 [ROBOT_CLOUD_INTERFACE.md](./ROBOT_CLOUD_INTERFACE.md)。
+一个最小可运行的人体跟踪 Agent 工程，包含 3 个部分：
 
-## 安装
+- Backend：接收机器人帧、保存会话状态、提供 API 和 WebSocket
+- Host Agent：读取 backend 上下文，调用 `skills/vision-tracking-skill/`，再把结果回写给 backend
+- Frontend：展示当前画面、检测框、会话结果和历史记录
+
+## 1. 安装指南
+
+### 环境要求
+
+- Python `3.9.x`
+- Node.js `20.x`
+- `uv`
+
+### 本地安装
 
 ```bash
-uv sync
-cd frontend && npm install
+git clone <your-repo-url>
+cd tracking_agent
+uv python install 3.9
+uv sync --python 3.9
+cd frontend
+npm install
+cd ..
 ```
 
-如果要运行外部 host agent，仓库根目录需要 `.ENV`，至少包含：
+### `.ENV`
+
+如果你要运行 `tracking-host-agent`，仓库根目录需要 `.ENV`：
 
 ```bash
-DASHSCOPE_API_KEY=...
+DASHSCOPE_API_KEY=your_api_key
 ```
 
-## 启动
-
-推荐固定同一个 `session-id` 跑完整闭环，否则 `tracking-robot-stream` 会自动生成新 session，`tracking-host-agent --session-id default` 将看不到那一轮数据。
+可选项：
 
 ```bash
-uv run tracking-backend
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_MODEL=qwen3.5-plus
+DASHSCOPE_SUB_MODEL=qwen3.5-flash
+DASHSCOPE_CHAT_MODEL=qwen3.5-flash
 ```
 
+## 2. 服务器安装指南
+
+下面是一台全新 Ubuntu 机器的最小安装步骤。
+
+### 安装系统依赖
+
 ```bash
+sudo apt update
+sudo apt install -y git curl ca-certificates build-essential
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+uv python install 3.9
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+### 拉代码并安装依赖
+
+```bash
+git clone <your-repo-url> /srv/tracking_agent
+cd /srv/tracking_agent
+uv sync --python 3.9
+cd frontend
+npm install
+cd ..
+```
+
+### 配置 `.ENV`
+
+```bash
+cd /srv/tracking_agent
+cat > .ENV <<'EOF'
+DASHSCOPE_API_KEY=your_api_key
+EOF
+```
+
+## 3. 如何让服务器运转起来
+
+### 先用 3 个终端跑通
+
+终端 1，启动 backend：
+
+```bash
+cd /srv/tracking_agent
+uv run tracking-backend --host 0.0.0.0 --port 8001
+```
+
+终端 2，启动 host agent：
+
+```bash
+cd /srv/tracking_agent
 uv run tracking-host-agent --session-id default
 ```
 
-```bash
-cd frontend && npm run dev
-```
+终端 3，启动前端：
 
 ```bash
-uv run tracking-robot-stream --session-id default --source test_data/0045.mp4 --text "跟踪穿黑衣服的人" --device mps --tracker bytetrack.yaml
+cd /srv/tracking_agent/frontend
+npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
-摄像头输入：
+访问地址：
+
+```text
+http://<server-ip>:5173
+```
+
+健康检查：
 
 ```bash
-uv run tracking-robot-stream --session-id default --source 0 --text "跟踪穿黑衣服的人" --device mps --tracker bytetrack.yaml
+curl http://127.0.0.1:8001/healthz
 ```
 
-如果你不想固定 `session-id`，也可以让 host agent 自动扫描所有 session：
+### 发送一段测试视频
 
 ```bash
-uv run tracking-host-agent
+cd /srv/tracking_agent
+uv run tracking-robot-stream \
+  --session-id default \
+  --source test_data/0045.mp4 \
+  --text "跟踪穿黑衣服的人" \
+  --device cpu \
+  --tracker bytetrack.yaml
 ```
 
-页面地址：
+如果是本机摄像头：
 
 ```bash
-http://127.0.0.1:5173
+cd /srv/tracking_agent
+uv run tracking-robot-stream \
+  --session-id default \
+  --source 0 \
+  --text "跟踪穿黑衣服的人" \
+  --device cpu \
+  --tracker bytetrack.yaml
 ```
 
-## 边界
+注意：
 
-- Agent: 只通过 `skills/vision-tracking-skill/` 暴露的 skill tools 推进会话。目标绑定、memory 更新、澄清提问都由 Agent 决定。
-- Backend: 只接收 Robot 事件、保存会话状态、提供 `agent-context` 给 Agent、接收 `agent-result`。Backend 不解释 Robot 文本，不做本地意图识别，不做本地 agent 编排。
-- Frontend: 只读展示 Backend 当前状态、历史结果、会话日志和画面。
-- Robot: 只发送图片、文本和 bounding box/detection 数据，不参与 memory、target 选择或对话决策。
+- `tracking-host-agent --session-id default` 和 `tracking-robot-stream --session-id default` 必须一致
+- 服务器没有 GPU 时，`tracking-robot-stream` 用 `--device cpu`
+- 前端默认代理 backend：`127.0.0.1:8001`
 
-## 默认值
+### 需要常驻运行时，用 systemd
 
-- Backend: `127.0.0.1:8001`，状态目录 `./runtime/backend`
-- Host agent: 通过 websocket 订阅 backend 的 session 事件，自动为新帧执行 `init / track / reply`；默认断线重连间隔 `2` 秒
-- Robot: 输出目录 `./runtime/robot-run`，默认每次运行自动生成新的 session，device `robot_01`
-- Robot 默认检测模型是 `YOLOv8m`，底层权重为 `yolov8m.pt`，并只推理 `person` 类别
-- Robot 默认每 `3` 秒发送一次当前帧事件到 backend
-- Robot 只上传原始帧、候选 detections 和文本；backend 不会把这些文本解释成 `target_description`，也不会在 ingest 后自动调用本地 agent，只会等待外部 PI Agent 把同一帧的 `/agent-result` 回写后再回复 robot
-- `ws://.../ws/robot-agent` 现在对齐 Robot <-> Cloud 规范：robot 在同一个 websocket 上发送 `tracking/chat` 请求，backend 直接返回带 `request_id` 的结果；同一 `session_id` 下按 latest-wins 处理，旧请求结果会被丢弃
-- 如果需要本仓库内的自动闭环，额外启动 `uv run tracking-host-agent --session-id <session_id>`；它会调用 `skills/vision-tracking-skill/scripts/pi_backend_bridge.py`
-- 文件回放模式下，会按视频时间每 `3` 秒取一帧；robot 在收到 backend 对上一帧的回复后，才会继续发送下一条，不再额外 `sleep`；首帧文本默认作为初始化描述，后续事件默认发送 `持续跟踪`
-- Robot 默认会通过 websocket 把数据发到 `ws://127.0.0.1:8001/ws/robot-agent`
-- 如果需要复用同一个会话，显式传 `--session-id <your_session_id>`
-- 如果 `tracking-host-agent` 指定了 `--session-id default`，那 `tracking-robot-stream` 也必须传同一个 `--session-id default`；否则 host agent 只会订阅并处理 `default`，robot 实际发到自动生成的新 session，表现就是“没有报错，但完全不推进”
-- Backend 默认最多等待外部 agent `300` 秒，可用 `uv run tracking-backend --external-agent-wait-seconds 0` 关闭等待
-- Robot 默认等待 backend websocket 应答的超时是 `310` 秒，可用 `--backend-timeout-seconds` 调整；如果显式传 HTTP URL，也会兼容回退到旧的 `POST /api/v1/robot/ingest`
+把下面 3 个服务文件中的路径和用户名改成你自己的。
 
-## PI Agent 对接
+`/etc/systemd/system/tracking-backend.service`
 
-- 工具契约：`skills/vision-tracking-skill/references/pi-agent-tools.json`
-- Host agent 配置：`skills/vision-tracking-skill/references/pi-host-agent-config.json`
-- Skill adapter：`skills/vision-tracking-skill/scripts/pi_agent_adapter.py`
-- Backend bridge：`skills/vision-tracking-skill/scripts/pi_backend_bridge.py`
-- 本地常驻 host agent：`scaffold/cli/run_host_agent.py`
-- backend 只提供 `agent-context` / `agent-result` 契约；仓库内不再提供本地回合编排器
-- 查看工具定义：
+```ini
+[Unit]
+Description=Tracking Agent Backend
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/srv/tracking_agent
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/.local/bin/uv run tracking-backend --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/systemd/system/tracking-host-agent.service`
+
+```ini
+[Unit]
+Description=Tracking Host Agent
+After=network.target tracking-backend.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/srv/tracking_agent
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/.local/bin/uv run tracking-host-agent --session-id default
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/systemd/system/tracking-frontend.service`
+
+```ini
+[Unit]
+Description=Tracking Agent Frontend
+After=network.target tracking-backend.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/srv/tracking_agent/frontend
+Environment=PATH=/usr/bin:/bin
+ExecStart=/usr/bin/npm run dev -- --host 0.0.0.0 --port 5173
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+加载并启动：
 
 ```bash
-python skills/vision-tracking-skill/scripts/pi_agent_adapter.py describe
+sudo systemctl daemon-reload
+sudo systemctl enable --now tracking-backend
+sudo systemctl enable --now tracking-host-agent
+sudo systemctl enable --now tracking-frontend
 ```
 
-- 执行某个工具时，PI Agent 先读取 `/api/v1/sessions/{session_id}/agent-context`，再把该 JSON 作为 `--context-file` 输入给 adapter，最后把 adapter 输出回写到 `/api/v1/sessions/{session_id}/agent-result`
-- 如果你想在本仓库内自动处理每一帧，直接启动：
+查看状态：
 
 ```bash
-uv run tracking-host-agent --session-id default
+sudo systemctl status tracking-backend
+sudo systemctl status tracking-host-agent
+sudo systemctl status tracking-frontend
 ```
 
-- 常见卡住原因：host agent 和 robot 的 `session-id` 不一致。例如 host agent 监听 `default`，但 robot 没传 `--session-id`，这时 robot 会发到类似 `session_20260316T034923567075Z` 的新 session，backend 会等待这个新 session 的 `/agent-result`，而 host agent 仍只会处理 `default`
-
-- 如果你只想走通某个固定工具，也可以直接用 bridge：
+查看日志：
 
 ```bash
-python skills/vision-tracking-skill/scripts/pi_backend_bridge.py \
-  --session-id <session_id> \
-  --tool track
+journalctl -u tracking-backend -f
+journalctl -u tracking-host-agent -f
+journalctl -u tracking-frontend -f
 ```
-
-## 页面内容
-
-- 当前画面
-- 候选框和选中框
-- 当前 Agent 回复
-- 当前 memory
-- 最近几轮结果时间线
-- 最近几轮对话日志
-- 展示页不提供前端指令输入，也不提供会话控制；PI Agent 应从 `/api/v1/sessions/{session_id}/agent-context` 读取上下文，并将结果回写到 `/api/v1/sessions/{session_id}/agent-result`

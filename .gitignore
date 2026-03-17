@@ -29,7 +29,15 @@ node_modules/
 *.mkv
 *.avi
 *.webm
+*.log
 logs/
 sessions/
 runtime/
 *.pt
+
+# Generated weekly deck artifacts and local media scratch files.
+docs/weekly_ppt_deck/*.pptx
+docs/weekly_ppt_deck/quicklook/
+docs/weekly_ppt_deck/video_frames/
+docs/weekly_ppt_deck/video_frames_montage.png
+docs/weekly_ppt_deck/frame_*_crop.jpg
