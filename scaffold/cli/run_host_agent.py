@@ -63,9 +63,22 @@ def _latest_frame_id(raw_session: Dict[str, Any]) -> Optional[str]:
     return _optional_text(frames[-1].get("frame_id"))
 
 
+def _latest_request_id(raw_session: Dict[str, Any]) -> Optional[str]:
+    return _optional_text(raw_session.get("latest_request_id"))
+
+
+def _latest_request_function(raw_session: Dict[str, Any]) -> Optional[str]:
+    return _optional_text(raw_session.get("latest_request_function"))
+
+
 def _latest_result_frame_id(raw_session: Dict[str, Any]) -> Optional[str]:
     latest_result = raw_session.get("latest_result") or {}
     return _optional_text(latest_result.get("frame_id"))
+
+
+def _latest_result_request_id(raw_session: Dict[str, Any]) -> Optional[str]:
+    latest_result = raw_session.get("latest_result") or {}
+    return _optional_text(latest_result.get("request_id"))
 
 
 def latest_user_text(raw_session: Dict[str, Any]) -> Optional[str]:
@@ -94,7 +107,60 @@ def is_ongoing_text(text: Optional[str], ongoing_text: str) -> bool:
     return normalized_text == normalized_ongoing
 
 
+def is_explicit_init_text(text: Optional[str], ongoing_text: str) -> bool:
+    normalized_text = _optional_text(text)
+    if normalized_text is None or is_ongoing_text(normalized_text, ongoing_text):
+        return False
+
+    init_prefixes = (
+        "跟踪",
+        "重新跟踪",
+        "开始跟踪",
+        "改跟踪",
+        "改为跟踪",
+        "换成跟踪",
+    )
+    init_keywords = (
+        "换目标",
+        "换一个",
+        "换人",
+        "重新跟踪",
+        "改跟踪",
+        "改为跟踪",
+        "换成跟踪",
+    )
+    return normalized_text.startswith(init_prefixes) or any(keyword in normalized_text for keyword in init_keywords)
+
+
+def is_reset_context_text(text: Optional[str]) -> bool:
+    normalized_text = _optional_text(text)
+    if normalized_text is None:
+        return False
+
+    lowered = normalized_text.lower()
+    exact_matches = {
+        "clear context",
+        "reset context",
+        "clear memory",
+        "reset memory",
+    }
+    keyword_matches = (
+        "清空上下文",
+        "重置上下文",
+        "清空context",
+        "重置context",
+        "清空记忆",
+        "重置记忆",
+        "清空memory",
+        "重置memory",
+    )
+    return lowered in exact_matches or any(keyword in normalized_text for keyword in keyword_matches)
+
+
 def session_needs_processing(raw_session: Dict[str, Any]) -> bool:
+    latest_request_id = _latest_request_id(raw_session)
+    if latest_request_id is not None:
+        return latest_request_id != _latest_result_request_id(raw_session)
     latest_frame_id = _latest_frame_id(raw_session)
     if latest_frame_id is None:
         return False
@@ -102,11 +168,28 @@ def session_needs_processing(raw_session: Dict[str, Any]) -> bool:
 
 
 def select_tool_request(raw_session: Dict[str, Any], ongoing_text: str) -> Optional[ToolRequest]:
+    latest_user = latest_user_text(raw_session)
+    latest_result = raw_session.get("latest_result") or {}
+    latest_request_function = _latest_request_function(raw_session)
+    if is_reset_context_text(latest_user) and latest_result.get("behavior") != "reset":
+        return ToolRequest(
+            tool_name="reset_context",
+            arguments={},
+        )
+
     if not session_needs_processing(raw_session):
         return None
 
-    latest_user = latest_user_text(raw_session)
     pending_question = _optional_text(raw_session.get("pending_question"))
+
+    if latest_request_function == "chat":
+        question_text = latest_user or pending_question or ""
+        if not question_text:
+            return None
+        return ToolRequest(
+            tool_name="reply",
+            arguments={"question": question_text},
+        )
 
     if pending_question and is_ongoing_text(latest_user, ongoing_text):
         return ToolRequest(
@@ -116,6 +199,12 @@ def select_tool_request(raw_session: Dict[str, Any], ongoing_text: str) -> Optio
                 "needs_clarification": True,
                 "clarification_question": pending_question,
             },
+        )
+
+    if session_has_active_target(raw_session) and is_explicit_init_text(latest_user, ongoing_text):
+        return ToolRequest(
+            tool_name="init",
+            arguments={"target_description": latest_user},
         )
 
     if not session_has_active_target(raw_session):
@@ -158,16 +247,6 @@ def reconnect_delay_seconds(args: argparse.Namespace) -> float:
     return args.poll_seconds
 
 
-def list_session_ids(backend_base_url: str) -> List[str]:
-    payload = bridge.fetch_json(f"{backend_base_url.rstrip('/')}/api/v1/sessions")
-    sessions = payload.get("sessions", [])
-    return [
-        str(item["session_id"])
-        for item in sessions
-        if _optional_text(item.get("session_id"))
-    ]
-
-
 def process_session(
     *,
     backend_base_url: str,
@@ -186,6 +265,21 @@ def process_session(
             "session_id": session_id,
             "frame_id": latest_frame_id,
             "status": "idle",
+        }
+
+    if tool_request.tool_name == "reset_context":
+        reset_result = bridge.post_json(
+            bridge.build_session_url(backend_base_url, session_id, "reset-context"),
+            {},
+        )
+        return {
+            "session_id": session_id,
+            "frame_id": latest_frame_id,
+            "status": "processed",
+            "tool": tool_request.tool_name,
+            "found": False,
+            "needs_clarification": False,
+            "text": (reset_result.get("latest_result") or {}).get("text"),
         }
 
     result = bridge.run_bridge(
@@ -209,12 +303,6 @@ def process_session(
         "needs_clarification": tool_output.get("needs_clarification"),
         "text": tool_output.get("text"),
     }
-
-
-def iter_target_session_ids(backend_base_url: str, session_id: Optional[str]) -> Iterable[str]:
-    if session_id:
-        return [session_id]
-    return list_session_ids(backend_base_url)
 
 
 def session_ids_from_event(event: Dict[str, Any], selected_session_id: Optional[str]) -> List[str]:

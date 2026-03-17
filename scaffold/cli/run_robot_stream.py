@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -20,6 +21,7 @@ from tracking_agent.robot_stream import (
     RobotIngestEvent,
     append_event_jsonl,
     current_timestamp_ms,
+    generate_request_id,
     generate_session_id,
     is_camera_source,
     is_websocket_url,
@@ -32,7 +34,8 @@ from tracking_agent.robot_stream import (
     video_timestamp_seconds,
 )
 
-DEFAULT_PERSON_MODEL = "yolo11m.pt"
+DEFAULT_PERSON_MODEL = "yolov8m.pt"
+VIDEO_TRACK_FPS = 8.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,7 +64,7 @@ def parse_args() -> argparse.Namespace:
         default="持续跟踪",
         help="Text payload attached to follow-up events after the first initialization event.",
     )
-    parser.add_argument("--backend-url", default="ws://127.0.0.1:8001/ws/robot-ingest")
+    parser.add_argument("--backend-url", default="ws://127.0.0.1:8001/ws/robot-agent")
     parser.add_argument(
         "--backend-timeout-seconds",
         type=float,
@@ -71,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default=DEFAULT_PERSON_MODEL,
-        help="Ultralytics model weights for person tracking inference. Defaults to YOLO11m Person via yolo11m.pt.",
+        help="Ultralytics model weights for person tracking inference. Defaults to YOLOv8m via yolov8m.pt.",
     )
     parser.add_argument(
         "--device",
@@ -80,7 +83,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--tracker", default=None)
     parser.add_argument("--conf", type=float, default=0.25)
-    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument(
+        "--imgsz",
+        type=int,
+        default=None,
+        help="Optional Ultralytics inference size. Leave unset to use the original frame size.",
+    )
     parser.add_argument(
         "--vid-stride",
         type=int,
@@ -190,12 +198,10 @@ def _configure_device_runtime(device: str | None) -> None:
 
 def _video_frame_step(
     fps: float,
-    interval_seconds: float,
-    sample_every: int,
     vid_stride: int,
 ) -> int:
-    base_step = max(1, round(fps * interval_seconds))
-    return max(1, base_step * sample_every * vid_stride)
+    base_step = max(1, round(fps / VIDEO_TRACK_FPS))
+    return max(1, base_step * vid_stride)
 
 
 def _track_kwargs(
@@ -208,13 +214,14 @@ def _track_kwargs(
     kwargs: Dict[str, Any] = {
         "source": source,
         "conf": args.conf,
-        "imgsz": args.imgsz,
         "persist": persist,
         "stream": stream,
         "verbose": False,
         # Restrict detection to people to reduce detector workload.
         "classes": [args.person_class_id],
     }
+    if args.imgsz is not None:
+        kwargs["imgsz"] = args.imgsz
     if args.device:
         kwargs["device"] = args.device
     if args.tracker:
@@ -237,8 +244,6 @@ def _results_for_video_file(
     try:
         step = _video_frame_step(
             fps=fps,
-            interval_seconds=args.interval_seconds,
-            sample_every=args.sample_every,
             vid_stride=args.vid_stride,
         )
         next_frame_number = 0
@@ -271,13 +276,42 @@ def _results_for_video_file(
         capture.release()
 
 
-async def _run_backend_stream(args: argparse.Namespace, result_stream, output_dir: Path, session_id: str) -> int:
+def _log_backend_event(event: Dict[str, Any]) -> None:
+    event_type = str(event.get("type", "")).strip()
+    if not event_type or event_type == "robot_ingest_result":
+        return
+    summary = {
+        "backend_event": event_type,
+        "session_id": event.get("session_id"),
+        "frame_id": event.get("frame_id"),
+        "stage": event.get("stage"),
+        "status": event.get("status"),
+    }
+    print(json.dumps(summary, ensure_ascii=True), flush=True)
+
+
+def _websocket_protocol(url: str) -> str:
+    path = urlsplit(url).path.rstrip("/")
+    if path.endswith("/ws/robot-agent"):
+        return "robot_agent"
+    return "robot_ingest"
+
+
+async def _run_backend_stream(
+    args: argparse.Namespace,
+    result_stream,
+    output_dir: Path,
+    session_id: str,
+    video_fps: float | None,
+) -> int:
     frames_dir = output_dir / "frames"
     events_path = output_dir / "events.jsonl"
     emitted_events = 0
     next_emit_at = 0.0
+    next_video_emit_at = 0.0
     source_is_camera = is_camera_source(normalize_source(args.source))
     backend_is_websocket = bool(args.backend_url) and is_websocket_url(args.backend_url)
+    websocket_protocol = None if not backend_is_websocket else _websocket_protocol(args.backend_url)
     websocket_context = None if not backend_is_websocket else await open_robot_backend_websocket(
         args.backend_url,
         timeout_seconds=args.backend_timeout_seconds,
@@ -301,6 +335,16 @@ async def _run_backend_stream(args: argparse.Namespace, result_stream, output_di
                     next_emit_at=next_emit_at,
                 ):
                     continue
+            else:
+                if video_fps is None:
+                    raise RuntimeError("Video FPS must be available for file playback mode")
+                if not _should_emit_video_sample(
+                    frame_index=frame_index,
+                    sample_every=args.sample_every,
+                    fps=video_fps,
+                    next_video_emit_at=next_video_emit_at,
+                ):
+                    continue
             frame_id = f"frame_{emitted_events:06d}"
             frame_path = frames_dir / f"{frame_id}.jpg"
             save_frame_image(result.orig_img, frame_path)
@@ -321,10 +365,15 @@ async def _run_backend_stream(args: argparse.Namespace, result_stream, output_di
             backend_status = None
             if args.backend_url:
                 if websocket is not None:
+                    request_id = generate_request_id()
                     backend_response = await post_event_ws(
                         websocket,
                         event,
                         timeout_seconds=args.backend_timeout_seconds,
+                        on_event=_log_backend_event,
+                        request_id=request_id,
+                        function="tracking",
+                        protocol=str(websocket_protocol),
                     )
                 else:
                     backend_response = post_event(
@@ -345,6 +394,8 @@ async def _run_backend_stream(args: argparse.Namespace, result_stream, output_di
 
             emitted_events += 1
             next_emit_at = now_monotonic + args.interval_seconds
+            if not source_is_camera:
+                next_video_emit_at += args.interval_seconds
             if args.max_events is not None and emitted_events >= args.max_events:
                 break
     finally:
@@ -400,7 +451,7 @@ async def _async_main() -> int:
             args=args,
         )
 
-    return await _run_backend_stream(args, result_stream, output_dir, session_id)
+    return await _run_backend_stream(args, result_stream, output_dir, session_id, video_fps)
 
 
 def main() -> int:

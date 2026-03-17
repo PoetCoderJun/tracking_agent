@@ -55,6 +55,11 @@ def generate_session_id(prefix: str = "session") -> str:
     return f"{prefix}_{timestamp}"
 
 
+def generate_request_id(prefix: str = "req") -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{prefix}_{timestamp}"
+
+
 def is_camera_source(source: SourceValue) -> bool:
     return isinstance(source, int)
 
@@ -128,6 +133,33 @@ def event_payload(
     return payload
 
 
+def robot_agent_request_payload(
+    event: RobotIngestEvent,
+    *,
+    request_id: str,
+    function: str = "tracking",
+) -> Dict[str, Any]:
+    normalized_function = function.strip().lower()
+    payload: Dict[str, Any] = {
+        "request_id": request_id.strip(),
+        "session_id": event.session_id,
+        "function": normalized_function,
+        "text": event.text,
+    }
+    if normalized_function == "tracking":
+        image_bytes = Path(event.frame.image_path).read_bytes()
+        payload.update(
+            {
+                "frame_id": event.frame.frame_id,
+                "timestamp_ms": event.frame.timestamp_ms,
+                "device_id": event.device_id,
+                "image_base64": base64.b64encode(image_bytes).decode("ascii"),
+                "detections": [asdict(detection) for detection in event.detections],
+            }
+        )
+    return payload
+
+
 def append_event_jsonl(path: Path, event: RobotIngestEvent) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -175,19 +207,45 @@ async def post_event_ws(
     websocket: Any,
     event: RobotIngestEvent,
     timeout_seconds: float = 300,
+    on_event: Any = None,
+    *,
+    request_id: str | None = None,
+    function: str = "tracking",
+    protocol: str = "robot_ingest",
 ) -> Dict[str, Any]:
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
-    payload = event_payload(event, include_image_base64=True)
+    if protocol == "robot_agent":
+        if not request_id:
+            raise ValueError("request_id is required when protocol='robot_agent'")
+        payload = robot_agent_request_payload(
+            event,
+            request_id=request_id,
+            function=function,
+        )
+    else:
+        payload = event_payload(event, include_image_base64=True)
     await asyncio.wait_for(websocket.send(json.dumps(payload, ensure_ascii=False)), timeout=timeout_seconds)
-    message = await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
-    response = json.loads(message)
-    if response.get("type") == "robot_ingest_error":
-        raise RuntimeError(str(response.get("error", "Robot ingest websocket request failed")))
-    return {
-        "status": int(response.get("status", 200)),
-        "body": json.dumps(response.get("payload", {}), ensure_ascii=True),
-    }
+    while True:
+        message = await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
+        response = json.loads(message)
+        if callable(on_event):
+            on_event(response)
+        if protocol == "robot_agent":
+            if response.get("error"):
+                raise RuntimeError(str(response.get("error")))
+            return {
+                "status": int(response.get("status", 200)),
+                "body": json.dumps(response, ensure_ascii=True),
+            }
+        if response.get("type") == "robot_ingest_error":
+            raise RuntimeError(str(response.get("error", "Robot ingest websocket request failed")))
+        if response.get("type") != "robot_ingest_result":
+            continue
+        return {
+            "status": int(response.get("status", 200)),
+            "body": json.dumps(response.get("payload", {}), ensure_ascii=True),
+        }
 
 
 async def open_robot_backend_websocket(

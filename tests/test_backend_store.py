@@ -74,6 +74,7 @@ def test_apply_agent_result_backfills_bbox_from_latest_frame(tmp_path: Path) -> 
         },
         detections=[
             {"track_id": 15, "bbox": [100, 120, 180, 260], "score": 0.94},
+            {"track_id": 27, "bbox": [200, 140, 280, 300], "score": 0.88},
         ],
         text="",
     )
@@ -113,6 +114,7 @@ def test_apply_agent_result_uses_supplied_frame_id_instead_of_newer_latest_frame
         },
         detections=[
             {"track_id": 15, "bbox": [100, 120, 180, 260], "score": 0.94},
+            {"track_id": 27, "bbox": [200, 140, 280, 300], "score": 0.88},
         ],
         text="",
     )
@@ -126,6 +128,7 @@ def test_apply_agent_result_uses_supplied_frame_id_instead_of_newer_latest_frame
         },
         detections=[
             {"track_id": 15, "bbox": [102, 122, 182, 262], "score": 0.95},
+            {"track_id": 31, "bbox": [220, 150, 300, 310], "score": 0.84},
         ],
         text="持续跟踪",
     )
@@ -160,6 +163,7 @@ def test_session_payload_stays_raw_backend_state(tmp_path: Path) -> None:
         },
         detections=[
             {"track_id": 15, "bbox": [100, 120, 180, 260], "score": 0.94},
+            {"track_id": 27, "bbox": [200, 140, 280, 300], "score": 0.88},
         ],
         text="",
     )
@@ -196,6 +200,7 @@ def test_apply_agent_result_hides_bbox_when_target_not_found(tmp_path: Path) -> 
         },
         detections=[
             {"track_id": 15, "bbox": [100, 120, 180, 260], "score": 0.94},
+            {"track_id": 27, "bbox": [200, 140, 280, 300], "score": 0.88},
         ],
         text="",
     )
@@ -221,6 +226,7 @@ def test_apply_agent_result_hides_bbox_when_target_not_found(tmp_path: Path) -> 
         },
         detections=[
             {"track_id": 15, "bbox": [102, 122, 182, 262], "score": 0.95},
+            {"track_id": 31, "bbox": [220, 150, 300, 310], "score": 0.84},
         ],
         text="持续跟踪",
     )
@@ -242,6 +248,7 @@ def test_apply_agent_result_hides_bbox_when_target_not_found(tmp_path: Path) -> 
     assert missing.latest_result["found"] is False
     assert missing.latest_result["bbox"] is None
     assert missing.latest_confirmed_frame_path == confirmed.latest_confirmed_frame_path
+    assert [detection.track_id for detection in missing.latest_confirmed_detections] == [15, 27]
 
 
 def test_apply_memory_update_rewrites_latest_memory_for_matching_result(tmp_path: Path) -> None:
@@ -346,3 +353,116 @@ def test_apply_memory_update_skips_stale_background_result(tmp_path: Path) -> No
 
     assert stale.latest_memory == latest.latest_memory
     assert stale.latest_result == latest.latest_result
+
+
+def test_apply_agent_result_init_clears_previous_target_context(tmp_path: Path) -> None:
+    store = BackendStore(tmp_path / "state", frame_buffer_size=3)
+    store.ingest_robot_event(
+        session_id="sess_001",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[
+            {"track_id": 15, "bbox": [100, 120, 180, 260], "score": 0.94},
+        ],
+        text="跟踪穿黑衣服的人",
+    )
+    store.apply_agent_result(
+        "sess_001",
+        {
+            "behavior": "track",
+            "text": "继续跟踪原目标。",
+            "target_id": 15,
+            "found": True,
+            "needs_clarification": False,
+            "clarification_question": None,
+            "memory": "黑衣短发，优先看鞋子。",
+            "target_description": "跟踪穿黑衣服的人",
+            "latest_target_crop": "/tmp/original-crop.jpg",
+        },
+    )
+
+    store.ingest_robot_event(
+        session_id="sess_001",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000002",
+            "timestamp_ms": 1710000003000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[
+            {"track_id": 31, "bbox": [210, 130, 290, 310], "score": 0.92},
+        ],
+        text="跟踪穿红衣服的人",
+    )
+    updated = store.apply_agent_result(
+        "sess_001",
+        {
+            "behavior": "init",
+            "frame_id": "frame_000002",
+            "text": "请确认是不是右边穿红衣服的人。",
+            "found": False,
+            "needs_clarification": True,
+            "clarification_question": "请确认是不是右边穿红衣服的人。",
+            "target_description": "跟踪穿红衣服的人",
+            "memory": "",
+        },
+    )
+
+    assert updated.target_description == "跟踪穿红衣服的人"
+    assert updated.latest_memory == ""
+    assert updated.latest_target_id is None
+    assert updated.latest_target_crop is None
+    assert updated.latest_confirmed_frame_path is None
+    assert updated.latest_confirmed_detections == []
+    assert updated.pending_question == "请确认是不是右边穿红衣服的人。"
+
+
+def test_reset_tracking_context_clears_memory_and_target_binding(tmp_path: Path) -> None:
+    store = BackendStore(tmp_path / "state", frame_buffer_size=3)
+    store.ingest_robot_event(
+        session_id="sess_001",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[
+            {"track_id": 15, "bbox": [100, 120, 180, 260], "score": 0.94},
+        ],
+        text="跟踪穿黑衣服的人",
+    )
+    store.apply_agent_result(
+        "sess_001",
+        {
+            "behavior": "track",
+            "frame_id": "frame_000001",
+            "text": "继续跟踪原目标。",
+            "target_id": 15,
+            "found": True,
+            "needs_clarification": False,
+            "clarification_question": None,
+            "memory": "黑衣短发，优先看鞋子。",
+            "target_description": "跟踪穿黑衣服的人",
+            "latest_target_crop": "/tmp/original-crop.jpg",
+        },
+    )
+
+    updated = store.reset_tracking_context("sess_001")
+
+    assert updated.target_description == ""
+    assert updated.latest_memory == ""
+    assert updated.latest_target_id is None
+    assert updated.latest_target_crop is None
+    assert updated.latest_confirmed_frame_path is None
+    assert updated.latest_confirmed_detections == []
+    assert updated.pending_question is None
+    assert updated.clarification_notes == []
+    assert updated.result_history == []
+    assert updated.latest_result is not None
+    assert updated.latest_result["behavior"] == "reset"
+    assert updated.latest_result["frame_id"] == "frame_000001"

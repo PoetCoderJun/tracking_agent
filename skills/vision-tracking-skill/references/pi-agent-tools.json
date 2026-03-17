@@ -6,7 +6,7 @@
     "Use reply for pure conversational turns or focused clarification questions.",
     "Use init when the user is defining or replacing the target in the latest frame.",
     "Use track when an active target already exists and the session should continue on the latest frame.",
-    "Use rewrite_memory after a successful init or track when you want to refresh the compact tracking memory before posting the final result."
+    "Use rewrite_memory after a successful init or track when you want to revise the current tracking memory in place before posting the final result."
   ],
   "tools": [
     {
@@ -15,9 +15,13 @@
       "input_schema": {
         "type": "object",
         "properties": {
+          "question": {
+            "type": "string",
+            "description": "User question that should be answered with the chat model using current session context."
+          },
           "text": {
             "type": "string",
-            "description": "Short natural-language answer to the user."
+            "description": "Short natural-language answer to the user. Prefer this for direct pass-through clarification prompts."
           },
           "needs_clarification": {
             "type": "boolean",
@@ -35,9 +39,6 @@
             "description": "Optional override for whether the target is currently considered found."
           }
         },
-        "required": [
-          "text"
-        ],
         "additionalProperties": false
       }
     },
@@ -75,7 +76,7 @@
     },
     {
       "name": "rewrite_memory",
-      "description": "Rewrite compact tracking memory after a successful init or track result. Prefer using the rewrite_memory_input returned by init or track.",
+      "description": "Rewrite compact tracking memory after a successful init or track result. Revise the current session memory in place, and prefer using the rewrite_memory_input returned by init or track.",
       "input_schema": {
         "type": "object",
         "properties": {

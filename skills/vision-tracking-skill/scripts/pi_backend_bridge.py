@@ -60,11 +60,18 @@ def post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def backend_result_payload(tool_output: Dict[str, Any]) -> Dict[str, Any]:
+def backend_result_payload(
+    tool_output: Dict[str, Any],
+    *,
+    request_id: Optional[str] = None,
+    request_function: Optional[str] = None,
+) -> Dict[str, Any]:
     bounding_box_id = tool_output.get("bounding_box_id")
     if bounding_box_id is None:
         bounding_box_id = tool_output.get("target_id")
     payload = {
+        "request_id": request_id,
+        "function": request_function,
         "behavior": str(tool_output.get("behavior", "reply")),
         "text": str(tool_output.get("text", "")).strip(),
         "frame_id": tool_output.get("frame_id"),
@@ -165,9 +172,11 @@ def run_rewrite_worker(
     artifacts_root: Path,
 ) -> Dict[str, Any]:
     rewrite_input = json.loads(rewrite_worker_input_file.read_text(encoding="utf-8"))
+    raw_session = fetch_json(build_session_url(backend_base_url, session_id, ""))
+    context = adapter.build_working_context(raw_session)
     rewrite_output = adapter.execute_tool(
         tool_name="rewrite_memory",
-        context={},
+        context=context,
         arguments=rewrite_input,
         env_file=env_file,
         config_path=config_path,
@@ -179,6 +188,7 @@ def run_rewrite_worker(
     return {
         "session_id": session_id,
         "rewrite_worker_input_file": str(rewrite_worker_input_file),
+        "working_context": context,
         "rewrite_output": rewrite_output,
         "memory_update_payload": memory_update_payload,
         "memory_update_result": memory_update_result,
@@ -211,7 +221,11 @@ def run_bridge(
         config_path=config_path,
         artifacts_root=artifacts_root,
     )
-    payload = backend_result_payload(tool_output)
+    payload = backend_result_payload(
+        tool_output,
+        request_id=raw_session.get("latest_request_id"),
+        request_function=raw_session.get("latest_request_function"),
+    )
     posted = None if dry_run else post_json(result_url, payload)
     rewrite_output = None
     rewrite_worker = None

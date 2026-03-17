@@ -25,6 +25,9 @@ from agent_common import call_model, load_agent_config, parse_json_block
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = SKILL_ROOT / "references" / "robot-agent-config.json"
 DEFAULT_TOOLS_PATH = SKILL_ROOT / "references" / "pi-agent-tools.json"
+TRACKING_HISTORY_LIMIT = 1
+CHAT_HISTORY_LIMIT = 12
+CHAT_FRAME_CONTEXT_LIMIT = 3
 
 
 @dataclass(frozen=True)
@@ -102,8 +105,39 @@ def with_result_aliases(result: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     return payload
 
 
+def recent_chat_history(raw_session: Dict[str, Any], limit: int = CHAT_HISTORY_LIMIT) -> List[Dict[str, str]]:
+    history = raw_session.get("conversation_history", [])
+    return [
+        {
+            "role": str(entry.get("role", "")),
+            "text": str(entry.get("text", "")),
+            "timestamp": str(entry.get("timestamp", "")),
+        }
+        for entry in history[-limit:]
+    ]
+
+
+def tracking_history(raw_session: Dict[str, Any], limit: int = TRACKING_HISTORY_LIMIT) -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    for entry in reversed(raw_session.get("result_history", [])):
+        payload = with_result_aliases(entry)
+        if payload is None:
+            continue
+        if str(payload.get("behavior", "")).strip() not in {"init", "track", "reset"}:
+            continue
+        entries.append(payload)
+        if len(entries) >= limit:
+            break
+    if not entries:
+        latest_result = with_result_aliases(raw_session.get("latest_result"))
+        if latest_result is not None and str(latest_result.get("behavior", "")).strip() in {"init", "track", "reset"}:
+            entries.append(latest_result)
+    return list(reversed(entries))
+
+
 def build_working_context(raw_session: Dict[str, Any]) -> Dict[str, Any]:
     latest_result = with_result_aliases(raw_session.get("latest_result"))
+    latest_tracking = tracking_history(raw_session)
     frames: List[Dict[str, Any]] = []
     for frame in raw_session.get("recent_frames", []):
         detections = []
@@ -142,14 +176,10 @@ def build_working_context(raw_session: Dict[str, Any]) -> Dict[str, Any]:
         "latest_target_crop": optional_text(raw_session.get("latest_target_crop")),
         "latest_confirmed_frame_path": optional_text(raw_session.get("latest_confirmed_frame_path")),
         "clarification_notes": [str(note) for note in raw_session.get("clarification_notes", [])],
-        "conversation_history": [
-            {
-                "role": str(entry.get("role", "")),
-                "text": str(entry.get("text", "")),
-                "timestamp": str(entry.get("timestamp", "")),
-            }
-            for entry in raw_session.get("conversation_history", [])
-        ],
+        "conversation_history": recent_chat_history(raw_session),
+        "chat_history": recent_chat_history(raw_session),
+        "tracking_history": latest_tracking,
+        "latest_tracking_result": latest_tracking[-1] if latest_tracking else None,
         "pending_question": optional_text(raw_session.get("pending_question")),
         "latest_result": latest_result,
         "frames": frames,
@@ -178,17 +208,17 @@ def candidate_summary(detections: List[Dict[str, Any]]) -> str:
 
 
 def recent_dialogue(context: Dict[str, Any]) -> str:
-    history = context.get("conversation_history", [])
+    history = context.get("chat_history") or context.get("conversation_history", [])
     if not history:
         return "- 无"
     return "\n".join(
         f"- {entry.get('role', 'unknown')}: {entry.get('text', '')}"
-        for entry in history[-6:]
+        for entry in history
     )
 
 
 def latest_result_summary(context: Dict[str, Any]) -> str:
-    latest_result = context.get("latest_result")
+    latest_result = context.get("latest_tracking_result") or context.get("latest_result")
     if not latest_result:
         return "无"
     return (
@@ -197,6 +227,44 @@ def latest_result_summary(context: Dict[str, Any]) -> str:
         f"found={latest_result.get('found')}, "
         f"text={latest_result.get('text')}"
     )
+
+
+def chat_image_paths(context: Dict[str, Any]) -> List[Path]:
+    image_paths: List[Path] = []
+    seen: set[Path] = set()
+    latest_confirmed = optional_text(context.get("latest_confirmed_frame_path"))
+    if latest_confirmed:
+        confirmed_path = Path(latest_confirmed)
+        if confirmed_path.exists():
+            image_paths.append(confirmed_path)
+            seen.add(confirmed_path)
+    for frame in context.get("frames", [])[-CHAT_FRAME_CONTEXT_LIMIT:]:
+        frame_path = Path(str(frame.get("image_path", "")))
+        if not frame_path.exists() or frame_path in seen:
+            continue
+        image_paths.append(frame_path)
+        seen.add(frame_path)
+    return image_paths
+
+
+def build_chat_instruction(config: Dict[str, Any], context: Dict[str, Any], question: str) -> str:
+    prompt = str(config["prompts"]["answer_chat"]).format(
+        question=question,
+        memory=str(context.get("memory", "")) or "无",
+        latest_target_id=context.get("latest_target_id"),
+        latest_result_summary=latest_result_summary(context),
+    )
+    latest_candidates = "- 无"
+    if context.get("frames"):
+        latest_candidates = candidate_summary(latest_frame(context).get("detections", []))
+    sections = [
+        prompt,
+        f"最近对话：\n{recent_dialogue(context)}",
+        f"最近一次 tracking 状态：\n{latest_result_summary(context)}",
+        f"当前目标描述：\n{str(context.get('target_description', '')).strip() or '无'}",
+        f"当前候选框摘要：\n{latest_candidates}",
+    ]
+    return "\n\n".join(sections)
 
 
 def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -285,10 +353,33 @@ def rewrite_memory_frame_paths(
     return [str(previous_frame_path), str(current_frame_path)]
 
 
-def execute_reply_tool(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
+def execute_reply_tool(
+    context: Dict[str, Any],
+    arguments: Dict[str, Any],
+    *,
+    env_file: Optional[Path] = None,
+    config_path: Optional[Path] = None,
+) -> Dict[str, Any]:
     text = str(arguments.get("text", "")).strip()
+    question = str(arguments.get("question", "")).strip()
+    if question:
+        if env_file is None or config_path is None:
+            raise ValueError("reply tool requires env_file and config_path when question is provided")
+        settings = load_settings(env_file)
+        config = load_agent_config(config_path)
+        output = call_model(
+            api_key=settings.api_key,
+            base_url=settings.base_url,
+            timeout_seconds=settings.timeout_seconds,
+            model=settings.chat_model,
+            instruction=build_chat_instruction(config, context, question),
+            image_paths=chat_image_paths(context),
+            output_contract=str(config["contracts"]["chat_text"]),
+            max_tokens=int(config["limits"]["chat_max_tokens"]),
+        )
+        text = str(output["response_text"]).strip()
     if not text:
-        raise ValueError("reply tool requires a non-empty text argument")
+        raise ValueError("reply tool requires a non-empty text or question argument")
 
     latest_result = context.get("latest_result") or {}
     latest_frame_payload = context.get("frames", [])[-1] if context.get("frames") else None
@@ -299,14 +390,15 @@ def execute_reply_tool(context: Dict[str, Any], arguments: Dict[str, Any]) -> Di
     return {
         "behavior": "reply",
         "text": text,
-        "frame_id": latest_result.get("frame_id")
-        or (None if latest_frame_payload is None else str(latest_frame_payload.get("frame_id", "")) or None),
+        "frame_id": (None if latest_frame_payload is None else str(latest_frame_payload.get("frame_id", "")) or None)
+        or latest_result.get("frame_id"),
         "target_id": context.get("latest_target_id"),
         "found": bool(arguments.get("found", latest_result.get("found", False))),
         "needs_clarification": needs_clarification,
         "clarification_question": clarification_question,
         "memory": str(context.get("memory", "")),
         "pending_question": pending_question,
+        "elapsed_seconds": None if not question else output["elapsed_seconds"],
     }
 
 
@@ -417,6 +509,7 @@ def execute_select_tool(
 
 def execute_rewrite_memory_tool(
     *,
+    context: Dict[str, Any],
     arguments: Dict[str, Any],
     env_file: Path,
     config_path: Path,
@@ -435,12 +528,16 @@ def execute_rewrite_memory_tool(
     settings = load_settings(env_file)
     config = load_agent_config(config_path)
     prompt_key = "memory_init_prompt" if task == "init" else "memory_optimize_prompt"
+    current_memory = str(context.get("memory", "")).strip()
+    prompt = str(config["prompts"][prompt_key]).format(
+        current_memory=current_memory or "(空)"
+    )
     output = call_model(
         api_key=settings.api_key,
         base_url=settings.base_url,
         timeout_seconds=settings.timeout_seconds,
         model=settings.sub_model,
-        instruction=config["prompts"][prompt_key],
+        instruction=prompt,
         image_paths=[crop_path, *frame_paths],
         output_contract=config["contracts"]["memory_markdown"],
         max_tokens=int(config["limits"]["memory_max_tokens"]),
@@ -473,7 +570,12 @@ def execute_tool(
     artifacts_root: Path,
 ) -> Dict[str, Any]:
     if tool_name == "reply":
-        return execute_reply_tool(context, arguments)
+        return execute_reply_tool(
+            context,
+            arguments,
+            env_file=env_file,
+            config_path=config_path,
+        )
     if tool_name == "init":
         return execute_select_tool(
             behavior="init",
@@ -494,6 +596,7 @@ def execute_tool(
         )
     if tool_name == "rewrite_memory":
         return execute_rewrite_memory_tool(
+            context=context,
             arguments=arguments,
             env_file=env_file,
             config_path=config_path,

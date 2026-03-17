@@ -52,11 +52,14 @@ class BackendFrame:
 class BackendSession:
     session_id: str
     device_id: str
+    latest_request_id: Optional[str]
+    latest_request_function: Optional[str]
     target_description: str
     latest_memory: str
     latest_target_id: Optional[int]
     latest_target_crop: Optional[str]
     latest_confirmed_frame_path: Optional[str]
+    latest_confirmed_detections: List[BackendDetection]
     latest_result: Optional[Dict[str, Any]]
     result_history: List[Dict[str, Any]]
     clarification_notes: List[str]
@@ -105,6 +108,8 @@ class BackendStore:
             return BackendSession(
                 session_id=str(payload["session_id"]),
                 device_id=str(payload.get("device_id", "")),
+                latest_request_id=payload.get("latest_request_id"),
+                latest_request_function=payload.get("latest_request_function"),
                 target_description=str(payload.get("target_description", "")),
                 latest_memory=str(payload.get("latest_memory", "")),
                 latest_target_id=(
@@ -114,6 +119,15 @@ class BackendStore:
                 ),
                 latest_target_crop=payload.get("latest_target_crop"),
                 latest_confirmed_frame_path=payload.get("latest_confirmed_frame_path"),
+                latest_confirmed_detections=[
+                    BackendDetection(
+                        track_id=int(detection["track_id"]),
+                        bbox=[int(value) for value in detection["bbox"]],
+                        score=float(detection.get("score", 1.0)),
+                        label=str(detection.get("label", "person")),
+                    )
+                    for detection in payload.get("latest_confirmed_detections", [])
+                ],
                 latest_result=payload.get("latest_result"),
                 result_history=list(payload.get("result_history", [])),
                 clarification_notes=[str(note) for note in payload.get("clarification_notes", [])],
@@ -145,11 +159,14 @@ class BackendStore:
             session = BackendSession(
                 session_id=session_id,
                 device_id=device_id,
+                latest_request_id=None,
+                latest_request_function=None,
                 target_description="",
                 latest_memory="",
                 latest_target_id=None,
                 latest_target_crop=None,
                 latest_confirmed_frame_path=None,
+                latest_confirmed_detections=[],
                 latest_result=None,
                 result_history=[],
                 clarification_notes=[],
@@ -211,6 +228,8 @@ class BackendStore:
         frame: Dict[str, Any],
         detections: List[Dict[str, Any]],
         text: str,
+        request_id: Optional[str] = None,
+        request_function: Optional[str] = None,
     ) -> BackendSession:
         with self._lock:
             cleaned_text = text.strip()
@@ -237,11 +256,16 @@ class BackendStore:
             updated = BackendSession(
                 session_id=session.session_id,
                 device_id=session.device_id or device_id,
+                latest_request_id=None if request_id in (None, "") else str(request_id).strip(),
+                latest_request_function=(
+                    None if request_function in (None, "") else str(request_function).strip()
+                ),
                 target_description=session.target_description,
                 latest_memory=session.latest_memory,
                 latest_target_id=session.latest_target_id,
                 latest_target_crop=session.latest_target_crop,
                 latest_confirmed_frame_path=session.latest_confirmed_frame_path,
+                latest_confirmed_detections=session.latest_confirmed_detections,
                 latest_result=session.latest_result,
                 result_history=session.result_history,
                 clarification_notes=session.clarification_notes,
@@ -258,6 +282,46 @@ class BackendStore:
             self._write_session(updated)
             return updated
 
+    def append_chat_request(
+        self,
+        session_id: str,
+        device_id: str,
+        text: str,
+        request_id: str,
+    ) -> BackendSession:
+        with self._lock:
+            cleaned_text = text.strip()
+            session = self.load_or_create_session(
+                session_id=session_id,
+                device_id=device_id,
+            )
+            updated = BackendSession(
+                session_id=session.session_id,
+                device_id=session.device_id or device_id,
+                latest_request_id=str(request_id).strip(),
+                latest_request_function="chat",
+                target_description=session.target_description,
+                latest_memory=session.latest_memory,
+                latest_target_id=session.latest_target_id,
+                latest_target_crop=session.latest_target_crop,
+                latest_confirmed_frame_path=session.latest_confirmed_frame_path,
+                latest_confirmed_detections=session.latest_confirmed_detections,
+                latest_result=session.latest_result,
+                result_history=session.result_history,
+                clarification_notes=session.clarification_notes,
+                conversation_history=self._append_conversation_entry(
+                    session.conversation_history,
+                    role="user",
+                    text=cleaned_text,
+                ),
+                pending_question=session.pending_question,
+                recent_frames=session.recent_frames,
+                created_at=session.created_at,
+                updated_at=_utc_now(),
+            )
+            self._write_session(updated)
+            return updated
+
     def apply_agent_result(
         self,
         session_id: str,
@@ -266,6 +330,24 @@ class BackendStore:
         with self._lock:
             session = self.load_session(session_id)
             latest_frame = session.recent_frames[-1] if session.recent_frames else None
+            request_id = (
+                None
+                if result.get("request_id") in (None, "")
+                else str(result.get("request_id")).strip()
+            )
+            if request_id is None:
+                request_id = session.latest_request_id
+            if session.latest_request_id and request_id and request_id != session.latest_request_id:
+                return session
+            request_function = (
+                None
+                if result.get("function") in (None, "")
+                else str(result.get("function")).strip()
+            )
+            if request_function is None:
+                request_function = session.latest_request_function
+            behavior = str(result.get("behavior", "reply"))
+            is_reinitializing = behavior == "init"
             result_frame_id = (
                 None
                 if result.get("frame_id") in (None, "")
@@ -275,7 +357,8 @@ class BackendStore:
             target_id = _extract_bounding_box_id(result)
             bbox = self._latest_bbox_for_target(result_frame, target_id)
 
-            memory = str(result.get("memory", "")).strip() or session.latest_memory
+            raw_memory = str(result.get("memory", "")).strip()
+            memory = raw_memory if is_reinitializing else (raw_memory or session.latest_memory)
             target_description = str(result.get("target_description", "")).strip() or session.target_description
             found = bool(result.get("found", False)) and bbox is not None
             visible_bbox = bbox if found else None
@@ -290,12 +373,14 @@ class BackendStore:
             if found and pending_question is None:
                 pending_question = None
             latest_result = {
+                "request_id": request_id,
+                "function": request_function,
                 "frame_id": (
                     result_frame_id
                     if result_frame_id is not None
                     else (None if result_frame is None else result_frame.frame_id)
                 ),
-                "behavior": str(result.get("behavior", "reply")),
+                "behavior": behavior,
                 "text": str(result.get("text", "")).strip(),
                 "target_id": None if target_id is None else int(target_id),
                 "bbox": visible_bbox,
@@ -321,21 +406,34 @@ class BackendStore:
                     **latest_result,
                 },
             ][-RESULT_HISTORY_LIMIT:]
-            latest_target_crop = result.get("latest_target_crop") or session.latest_target_crop
-            latest_confirmed_frame_path = session.latest_confirmed_frame_path
+            latest_target_crop = (
+                result.get("latest_target_crop")
+                if is_reinitializing
+                else (result.get("latest_target_crop") or session.latest_target_crop)
+            )
+            latest_confirmed_frame_path = None if is_reinitializing else session.latest_confirmed_frame_path
+            latest_confirmed_detections = [] if is_reinitializing else session.latest_confirmed_detections
             if found and result_frame is not None:
                 latest_confirmed_frame_path = result_frame.image_path
+                latest_confirmed_detections = result_frame.detections
             updated = BackendSession(
                 session_id=session.session_id,
                 device_id=session.device_id,
+                latest_request_id=session.latest_request_id,
+                latest_request_function=session.latest_request_function,
                 target_description=target_description,
                 latest_memory=memory,
-                latest_target_id=session.latest_target_id if not found else int(target_id),
+                latest_target_id=(
+                    None
+                    if is_reinitializing and not found
+                    else (session.latest_target_id if not found else int(target_id))
+                ),
                 latest_target_crop=None if latest_target_crop is None else str(latest_target_crop),
                 latest_confirmed_frame_path=latest_confirmed_frame_path,
+                latest_confirmed_detections=latest_confirmed_detections,
                 latest_result=latest_result,
                 result_history=result_history,
-                clarification_notes=session.clarification_notes,
+                clarification_notes=[] if is_reinitializing else session.clarification_notes,
                 conversation_history=conversation_history,
                 pending_question=pending_question,
                 recent_frames=session.recent_frames,
@@ -389,11 +487,14 @@ class BackendStore:
             updated = BackendSession(
                 session_id=session.session_id,
                 device_id=session.device_id,
+                latest_request_id=session.latest_request_id,
+                latest_request_function=session.latest_request_function,
                 target_description=session.target_description,
                 latest_memory=updated_memory,
                 latest_target_id=session.latest_target_id,
                 latest_target_crop=session.latest_target_crop,
                 latest_confirmed_frame_path=session.latest_confirmed_frame_path,
+                latest_confirmed_detections=session.latest_confirmed_detections,
                 latest_result=updated_latest_result,
                 result_history=updated_history,
                 clarification_notes=session.clarification_notes,
@@ -412,11 +513,14 @@ class BackendStore:
             updated = BackendSession(
                 session_id=session.session_id,
                 device_id=session.device_id,
+                latest_request_id=session.latest_request_id,
+                latest_request_function=session.latest_request_function,
                 target_description=session.target_description,
                 latest_memory=session.latest_memory,
                 latest_target_id=session.latest_target_id,
                 latest_target_crop=session.latest_target_crop,
                 latest_confirmed_frame_path=session.latest_confirmed_frame_path,
+                latest_confirmed_detections=session.latest_confirmed_detections,
                 latest_result=session.latest_result,
                 result_history=session.result_history,
                 clarification_notes=[*session.clarification_notes, note.strip()],
@@ -425,6 +529,48 @@ class BackendStore:
                 recent_frames=session.recent_frames,
                 created_at=session.created_at,
                 updated_at=_utc_now(),
+            )
+            self._write_session(updated)
+            return updated
+
+    def reset_tracking_context(self, session_id: str) -> BackendSession:
+        with self._lock:
+            session = self.load_session(session_id)
+            latest_frame = session.recent_frames[-1] if session.recent_frames else None
+            updated_at = _utc_now()
+            latest_result = None
+            if latest_frame is not None:
+                latest_result = {
+                    "frame_id": latest_frame.frame_id,
+                    "behavior": "reset",
+                    "text": "Tracking context cleared.",
+                    "target_id": None,
+                    "bbox": None,
+                    "found": False,
+                    "needs_clarification": False,
+                    "clarification_question": None,
+                    "memory": "",
+                }
+
+            updated = BackendSession(
+                session_id=session.session_id,
+                device_id=session.device_id,
+                latest_request_id=session.latest_request_id,
+                latest_request_function=session.latest_request_function,
+                target_description="",
+                latest_memory="",
+                latest_target_id=None,
+                latest_target_crop=None,
+                latest_confirmed_frame_path=None,
+                latest_confirmed_detections=[],
+                latest_result=latest_result,
+                result_history=[],
+                clarification_notes=[],
+                conversation_history=session.conversation_history,
+                pending_question=None,
+                recent_frames=session.recent_frames,
+                created_at=session.created_at,
+                updated_at=updated_at,
             )
             self._write_session(updated)
             return updated

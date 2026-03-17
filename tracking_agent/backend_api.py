@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -119,6 +118,8 @@ class RobotIngestRequest(BaseModel):
 
 
 class AgentResultRequest(BaseModel):
+    request_id: Optional[str] = None
+    function: Optional[str] = None
     text: str
     behavior: str = "reply"
     frame_id: Optional[str] = None
@@ -147,12 +148,44 @@ class AgentResultRequest(BaseModel):
                 payload["target_id"] = alias_value
         return payload
 
-
 class MemoryUpdateRequest(BaseModel):
     memory: str
     expected_frame_id: str
     expected_target_id: int
     expected_target_crop: Optional[str] = None
+
+
+class RobotAgentRequest(BaseModel):
+    request_id: str
+    session_id: str
+    function: str
+    text: str = ""
+    frame_id: Optional[str] = None
+    timestamp_ms: Optional[int] = None
+    device_id: str = ""
+    image_base64: Optional[str] = None
+    detections: List[DetectionPayload] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_request(self) -> "RobotAgentRequest":
+        normalized_function = self.function.strip().lower()
+        if normalized_function not in {"tracking", "chat"}:
+            raise ValueError("function must be one of: tracking, chat")
+        if normalized_function == "tracking":
+            if not self.frame_id:
+                raise ValueError("tracking request requires frame_id")
+            if self.timestamp_ms is None:
+                raise ValueError("tracking request requires timestamp_ms")
+            if not self.image_base64:
+                raise ValueError("tracking request requires image_base64")
+            if not self.device_id.strip():
+                raise ValueError("tracking request requires device_id")
+        self.function = normalized_function
+        self.request_id = self.request_id.strip()
+        self.session_id = self.session_id.strip()
+        self.device_id = self.device_id.strip()
+        self.text = self.text.strip()
+        return self
 
 
 def _model_to_dict(model: BaseModel) -> dict:
@@ -170,6 +203,21 @@ def _displayable_result(session: BackendSession) -> Optional[dict]:
         bbox = entry.get("bbox")
         if bool(entry.get("found")) and isinstance(bbox, list) and len(bbox) == 4:
             return entry
+    return None
+
+
+def _matched_agent_result(
+    session: BackendSession,
+    frame_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> Optional[dict]:
+    latest_result = session.latest_result
+    if latest_result is None:
+        return None
+    if request_id is not None and latest_result.get("request_id") == request_id:
+        return latest_result
+    if frame_id is not None and latest_result.get("frame_id") == frame_id:
+        return latest_result
     return None
 
 
@@ -219,6 +267,13 @@ def create_app(
                 "frame_id": display_result.get("frame_id"),
                 "image_url": f"/api/v1/sessions/{session.session_id}/latest-confirmed-frame/image",
                 "bbox": [int(value) for value in display_result["bbox"]],
+                "detections": [
+                    {
+                        **_model_to_dict(DetectionPayload(**detection.__dict__)),
+                        "bounding_box_id": int(detection.track_id),
+                    }
+                    for detection in session.latest_confirmed_detections
+                ],
                 "target_id": (
                     None
                     if display_result.get("target_id") is None
@@ -230,6 +285,8 @@ def create_app(
         return {
             "session_id": session.session_id,
             "device_id": session.device_id,
+            "latest_request_id": session.latest_request_id,
+            "latest_request_function": session.latest_request_function,
             "target_description": session.target_description,
             "latest_memory": session.latest_memory,
             "latest_target_id": session.latest_target_id,
@@ -273,32 +330,184 @@ def create_app(
             )
         )
 
+    def ingest_robot_event_to_session(
+        payload: RobotIngestRequest,
+        *,
+        request_id: Optional[str] = None,
+        request_function: Optional[str] = None,
+    ) -> tuple[BackendSession, str]:
+        if not (payload.frame.image_base64 or payload.frame.image_path or payload.frame.image_url):
+            raise ValueError("frame must include one of image_base64, image_path, or image_url")
+        session = store.ingest_robot_event(
+            session_id=payload.session_id,
+            device_id=payload.device_id,
+            frame=_model_to_dict(payload.frame),
+            detections=[_model_to_dict(item) for item in payload.detections],
+            text=payload.text,
+            request_id=request_id,
+            request_function=request_function,
+        )
+        publish_session_update(session, source="ingest")
+        latest_frame = session.recent_frames[-1]
+        return session, latest_frame.frame_id
+
+    def robot_ingest_response_payload(session: BackendSession, frame_id: str) -> dict:
+        matched_agent_result = _matched_agent_result(session, frame_id)
+        return {
+            "session_id": session.session_id,
+            "frame_id": frame_id,
+            "recent_frame_count": len(session.recent_frames),
+            "latest_memory": session.latest_memory,
+            "latest_target_id": session.latest_target_id,
+            "latest_result": matched_agent_result,
+            "agent_behavior": None if matched_agent_result is None else matched_agent_result.get("behavior"),
+            "agent_error": None,
+            "agent_required": matched_agent_result is None,
+            "session_path": f"/api/v1/sessions/{session.session_id}",
+            "agent_result_path": f"/api/v1/sessions/{session.session_id}/agent-result",
+        }
+
+    def robot_agent_response_payload(
+        session: BackendSession,
+        request: RobotAgentRequest,
+    ) -> dict:
+        matched_agent_result = _matched_agent_result(session, request_id=request.request_id)
+        if request.function == "chat":
+            if matched_agent_result is None:
+                return {
+                    "request_id": request.request_id,
+                    "session_id": request.session_id,
+                    "function": "chat",
+                    "text": "等待云端结果。",
+                }
+            return {
+                "request_id": request.request_id,
+                "session_id": request.session_id,
+                "function": "chat",
+                "text": str(matched_agent_result.get("text", "")).strip(),
+            }
+
+        action = "wait"
+        text = "等待云端结果。"
+        target_id = None
+        if matched_agent_result is not None:
+            behavior = str(matched_agent_result.get("behavior", "")).strip().lower()
+            if behavior in {"stop", "reset"}:
+                action = "stop"
+                text = str(matched_agent_result.get("text", "")).strip() or "结束当前跟踪。"
+            elif (
+                bool(matched_agent_result.get("needs_clarification"))
+                or session.pending_question
+                or matched_agent_result.get("clarification_question")
+            ):
+                action = "ask"
+                text = (
+                    session.pending_question
+                    or str(matched_agent_result.get("clarification_question", "")).strip()
+                    or str(matched_agent_result.get("text", "")).strip()
+                )
+            elif bool(matched_agent_result.get("found")) and matched_agent_result.get("target_id") is not None:
+                action = "track"
+                target_id = int(matched_agent_result["target_id"])
+                text = str(matched_agent_result.get("text", "")).strip() or f"正在持续跟踪 id 为 {target_id} 的目标。"
+            else:
+                text = str(matched_agent_result.get("text", "")).strip() or "暂时无法确认目标。"
+        payload = {
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "function": "tracking",
+            "frame_id": request.frame_id,
+            "action": action,
+            "text": text,
+        }
+        if action == "track" and target_id is not None:
+            payload["target_id"] = target_id
+        return payload
+
+    def handle_robot_agent_request(payload: RobotAgentRequest) -> dict:
+        if payload.function == "tracking":
+            ingest_payload = RobotIngestRequest(
+                session_id=payload.session_id,
+                device_id=payload.device_id,
+                frame=FramePayload(
+                    frame_id=str(payload.frame_id),
+                    timestamp_ms=int(payload.timestamp_ms),
+                    image_base64=payload.image_base64,
+                ),
+                detections=payload.detections,
+                text=payload.text,
+            )
+            session, frame_id = ingest_robot_event_to_session(
+                ingest_payload,
+                request_id=payload.request_id,
+                request_function=payload.function,
+            )
+            waited_session = wait_for_external_agent_result(
+                session_id=session.session_id,
+                expected_frame_id=frame_id,
+                expected_request_id=payload.request_id,
+            )
+            if waited_session is not None:
+                session = waited_session
+            return robot_agent_response_payload(session, payload)
+
+        session = store.append_chat_request(
+            session_id=payload.session_id,
+            device_id=payload.device_id or "robot_01",
+            text=payload.text,
+            request_id=payload.request_id,
+        )
+        publish_session_update(session, source="chat")
+        waited_session = wait_for_external_agent_result(
+            session_id=session.session_id,
+            expected_request_id=payload.request_id,
+        )
+        if waited_session is not None:
+            session = waited_session
+        return robot_agent_response_payload(session, payload)
+
     def wait_for_external_agent_result(
         session_id: str,
-        expected_frame_id: str,
+        expected_frame_id: Optional[str] = None,
+        expected_request_id: Optional[str] = None,
     ) -> Optional[BackendSession]:
         if external_agent_wait_seconds == 0:
             return None
 
         session = store.load_session(session_id)
-        latest_result = session.latest_result or {}
-        if latest_result.get("frame_id") == expected_frame_id:
+        latest_result = _matched_agent_result(
+            session,
+            frame_id=expected_frame_id,
+            request_id=expected_request_id,
+        )
+        if latest_result is not None:
             return session
 
-        waiter = waiters.register(session_id, expected_frame_id)
+        waiter_key = expected_request_id or expected_frame_id
+        if waiter_key is None:
+            return None
+        waiter = waiters.register(session_id, waiter_key)
         try:
             session = store.load_session(session_id)
-            latest_result = session.latest_result or {}
-            if latest_result.get("frame_id") == expected_frame_id:
+            latest_result = _matched_agent_result(
+                session,
+                frame_id=expected_frame_id,
+                request_id=expected_request_id,
+            )
+            if latest_result is not None:
                 return session
             waiter.wait(timeout=external_agent_wait_seconds)
             session = store.load_session(session_id)
-            latest_result = session.latest_result or {}
-            if latest_result.get("frame_id") == expected_frame_id:
+            latest_result = _matched_agent_result(
+                session,
+                frame_id=expected_frame_id,
+                request_id=expected_request_id,
+            )
+            if latest_result is not None:
                 return session
             return None
         finally:
-            waiters.unregister(session_id, expected_frame_id, waiter)
+            waiters.unregister(session_id, waiter_key, waiter)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -344,41 +553,14 @@ def create_app(
         return {"sessions": store.list_sessions()}
 
     def handle_robot_ingest(payload: RobotIngestRequest) -> dict:
-        if not (payload.frame.image_base64 or payload.frame.image_path or payload.frame.image_url):
-            raise ValueError("frame must include one of image_base64, image_path, or image_url")
-        session = store.ingest_robot_event(
-            session_id=payload.session_id,
-            device_id=payload.device_id,
-            frame=_model_to_dict(payload.frame),
-            detections=[_model_to_dict(item) for item in payload.detections],
-            text=payload.text,
-        )
-        publish_session_update(session, source="ingest")
-        latest_frame = session.recent_frames[-1]
+        session, frame_id = ingest_robot_event_to_session(payload)
         waited_session = wait_for_external_agent_result(
             session_id=session.session_id,
-            expected_frame_id=latest_frame.frame_id,
+            expected_frame_id=frame_id,
         )
         if waited_session is not None:
             session = waited_session
-
-        latest_result = session.latest_result
-        matched_agent_result = None
-        if latest_result is not None and latest_result.get("frame_id") == latest_frame.frame_id:
-            matched_agent_result = latest_result
-        return {
-            "session_id": session.session_id,
-            "frame_id": latest_frame.frame_id,
-            "recent_frame_count": len(session.recent_frames),
-            "latest_memory": session.latest_memory,
-            "latest_target_id": session.latest_target_id,
-            "latest_result": matched_agent_result,
-            "agent_behavior": None if matched_agent_result is None else matched_agent_result.get("behavior"),
-            "agent_error": None,
-            "agent_required": matched_agent_result is None,
-            "session_path": f"/api/v1/sessions/{session.session_id}",
-            "agent_result_path": f"/api/v1/sessions/{session.session_id}/agent-result",
-        }
+        return robot_ingest_response_payload(session, frame_id)
 
     @app.post("/api/v1/robot/ingest")
     def ingest_robot_event(payload: RobotIngestRequest) -> dict:
@@ -395,7 +577,7 @@ def create_app(
                 payload_raw = await websocket.receive_json()
                 try:
                     payload = RobotIngestRequest(**payload_raw)
-                    result = await asyncio.to_thread(handle_robot_ingest, payload)
+                    session, frame_id = await asyncio.to_thread(ingest_robot_event_to_session, payload)
                 except ValidationError as exc:
                     await websocket.send_json(
                         {
@@ -417,6 +599,55 @@ def create_app(
 
                 await websocket.send_json(
                     {
+                        "type": "robot_ingest_ack",
+                        "status": 202,
+                        "session_id": session.session_id,
+                        "frame_id": frame_id,
+                    }
+                )
+
+                if _matched_agent_result(session, frame_id) is None and external_agent_wait_seconds > 0:
+                    await websocket.send_json(
+                        {
+                            "type": "robot_ingest_status",
+                            "status": 202,
+                            "stage": "waiting_for_agent",
+                            "session_id": session.session_id,
+                            "frame_id": frame_id,
+                            "timeout_seconds": external_agent_wait_seconds,
+                        }
+                    )
+
+                waited_session = await asyncio.to_thread(
+                    wait_for_external_agent_result,
+                    session.session_id,
+                    frame_id,
+                )
+                if waited_session is not None:
+                    session = waited_session
+                    await websocket.send_json(
+                        {
+                            "type": "robot_ingest_status",
+                            "status": 200,
+                            "stage": "agent_result_received",
+                            "session_id": session.session_id,
+                            "frame_id": frame_id,
+                        }
+                    )
+                elif _matched_agent_result(session, frame_id) is None and external_agent_wait_seconds > 0:
+                    await websocket.send_json(
+                        {
+                            "type": "robot_ingest_status",
+                            "status": 204,
+                            "stage": "agent_timeout",
+                            "session_id": session.session_id,
+                            "frame_id": frame_id,
+                        }
+                    )
+
+                result = robot_ingest_response_payload(session, frame_id)
+                await websocket.send_json(
+                    {
                         "type": "robot_ingest_result",
                         "status": 200,
                         "payload": result,
@@ -424,6 +655,76 @@ def create_app(
                 )
         except (RuntimeError, WebSocketDisconnect):
             pass
+
+    @app.websocket("/ws/robot-agent")
+    async def robot_agent_stream(websocket: WebSocket) -> None:
+        await websocket.accept()
+        send_lock = asyncio.Lock()
+        pending_tasks: dict[str, asyncio.Task[None]] = {}
+
+        async def send_json(payload: dict) -> None:
+            async with send_lock:
+                await websocket.send_json(payload)
+
+        async def process_request(payload: RobotAgentRequest) -> None:
+            try:
+                response = await asyncio.to_thread(handle_robot_agent_request, payload)
+                latest_session = store.load_session(payload.session_id)
+                if latest_session.latest_request_id != payload.request_id:
+                    return
+                await send_json(response)
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                latest_request_id = None
+                try:
+                    latest_request_id = store.load_session(payload.session_id).latest_request_id
+                except FileNotFoundError:
+                    latest_request_id = payload.request_id
+                if latest_request_id != payload.request_id:
+                    return
+                await send_json(
+                    {
+                        "request_id": payload.request_id,
+                        "session_id": payload.session_id,
+                        "function": payload.function,
+                        "error": str(exc),
+                    }
+                )
+            finally:
+                current = pending_tasks.get(payload.session_id)
+                if current is asyncio.current_task():
+                    pending_tasks.pop(payload.session_id, None)
+
+        try:
+            while True:
+                payload_raw = await websocket.receive_json()
+                try:
+                    payload = RobotAgentRequest(**payload_raw)
+                except ValidationError as exc:
+                    await send_json(
+                        {
+                            "request_id": payload_raw.get("request_id"),
+                            "session_id": payload_raw.get("session_id"),
+                            "function": payload_raw.get("function"),
+                            "error": str(exc),
+                        }
+                    )
+                    continue
+
+                previous_task = pending_tasks.get(payload.session_id)
+                if previous_task is not None:
+                    previous_task.cancel()
+
+                pending_tasks[payload.session_id] = asyncio.create_task(process_request(payload))
+        except (RuntimeError, WebSocketDisconnect):
+            pass
+        finally:
+            tasks = list(pending_tasks.values())
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     @app.get("/api/v1/sessions/{session_id}")
     def get_session(session_id: str) -> dict:
@@ -468,19 +769,29 @@ def create_app(
 
     @app.post("/api/v1/sessions/{session_id}/agent-result")
     def post_agent_result(session_id: str, payload: AgentResultRequest) -> dict:
+        raw_payload = _model_to_dict(payload)
         try:
-            session = store.apply_agent_result(session_id, _model_to_dict(payload))
+            session = store.apply_agent_result(session_id, raw_payload)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+        request_id = raw_payload.get("request_id")
         latest_result = session.latest_result or {}
-        if latest_result.get("frame_id") not in (None, ""):
-            waiters.notify(session.session_id, str(latest_result["frame_id"]))
-        publish_session_update(session, source="agent_result")
+        stale_ignored = bool(
+            request_id not in (None, "")
+            and latest_result.get("request_id") != request_id
+        )
+        if not stale_ignored:
+            if latest_result.get("request_id") not in (None, ""):
+                waiters.notify(session.session_id, str(latest_result["request_id"]))
+            if latest_result.get("frame_id") not in (None, ""):
+                waiters.notify(session.session_id, str(latest_result["frame_id"]))
+            publish_session_update(session, source="agent_result")
         return {
             "session_id": session.session_id,
             "latest_result": session.latest_result,
             "latest_target_id": session.latest_target_id,
             "latest_memory": session.latest_memory,
+            "stale_ignored": stale_ignored,
         }
 
     @app.post("/api/v1/sessions/{session_id}/memory-update")
@@ -500,6 +811,21 @@ def create_app(
             "session_id": session.session_id,
             "latest_memory": session.latest_memory,
             "latest_result": session.latest_result,
+        }
+
+    @app.post("/api/v1/sessions/{session_id}/reset-context")
+    def post_reset_context(session_id: str) -> dict:
+        try:
+            session = store.reset_tracking_context(session_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}") from exc
+        publish_session_update(session, source="reset_context")
+        return {
+            "session_id": session.session_id,
+            "latest_memory": session.latest_memory,
+            "latest_target_id": session.latest_target_id,
+            "latest_result": session.latest_result,
+            "frontend_state": frontend_state_payload(session),
         }
 
     return app

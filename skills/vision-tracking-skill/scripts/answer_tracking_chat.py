@@ -48,7 +48,7 @@ def main() -> int:
         api_key=settings.api_key,
         base_url=settings.base_url,
         timeout_seconds=settings.timeout_seconds,
-        model=settings.main_model,
+        model=settings.chat_model,
         instruction=_build_instruction(config, args.question, args.memory, args.note),
         image_paths=image_paths,
         output_contract="只返回简短自然语言回答，不要返回 JSON，不要使用 ``` 代码块围栏。",

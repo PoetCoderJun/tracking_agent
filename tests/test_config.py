@@ -20,6 +20,7 @@ def test_load_settings_defaults_models_to_qwen35_family(tmp_path: Path) -> None:
 
     assert settings.main_model == "qwen3.5-plus"
     assert settings.sub_model == "qwen3.5-flash"
+    assert settings.chat_model == "qwen3.5-flash"
 
 
 def test_load_settings_prefers_explicit_main_model(tmp_path: Path) -> None:
@@ -30,6 +31,7 @@ def test_load_settings_prefers_explicit_main_model(tmp_path: Path) -> None:
                 "DASHSCOPE_MODEL=qwen-vl-plus-latest",
                 "DASHSCOPE_MAIN_MODEL=qwen3.5-plus",
                 "DASHSCOPE_SUB_MODEL=qwen3.5-plus",
+                "DASHSCOPE_CHAT_MODEL=qwen3.5-flash",
             ]
         ),
         encoding="utf-8",
@@ -39,3 +41,4 @@ def test_load_settings_prefers_explicit_main_model(tmp_path: Path) -> None:
 
     assert settings.main_model == "qwen3.5-plus"
     assert settings.sub_model == "qwen3.5-plus"
+    assert settings.chat_model == "qwen3.5-flash"

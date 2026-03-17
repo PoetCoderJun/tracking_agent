@@ -36,9 +36,13 @@ def test_backend_result_payload_maps_adapter_output() -> None:
             "target_description": "黑衣服的人",
             "pending_question": None,
             "latest_target_crop": "/tmp/crop.jpg",
-        }
+        },
+        request_id="req_001",
+        request_function="tracking",
     )
 
+    assert payload["request_id"] == "req_001"
+    assert payload["function"] == "tracking"
     assert payload["behavior"] == "track"
     assert payload["frame_id"] == "frame_000001"
     assert payload["target_id"] == 12
@@ -69,6 +73,8 @@ def test_run_bridge_posts_result_and_applies_memory_rewrite(tmp_path: Path, monk
 
     raw_session_payload = {
         "session_id": "sess_001",
+        "latest_request_id": "req_001",
+        "latest_request_function": "tracking",
         "latest_memory": "",
         "latest_target_id": None,
         "recent_frames": [],
@@ -155,6 +161,8 @@ def test_run_bridge_posts_result_and_applies_memory_rewrite(tmp_path: Path, monk
     assert result["rewrite_worker"]["pid"] == 123
     assert result["posted_payload"]["memory"] == ""
     assert result["posted_payload"]["frame_id"] == "frame_000001"
+    assert result["posted_payload"]["request_id"] == "req_001"
+    assert result["posted_payload"]["function"] == "tracking"
     assert result["memory_update_payload"] is None
     assert len(started_workers) == 1
     assert posted[0]["url"].endswith("/api/v1/sessions/sess_001/agent-result")
@@ -222,11 +230,33 @@ def test_run_rewrite_worker_posts_memory_update(tmp_path: Path, monkeypatch) -> 
         encoding="utf-8",
     )
     posted: list[dict[str, object]] = []
+    execute_calls: list[dict[str, object]] = []
 
+    monkeypatch.setattr(
+        bridge,
+        "fetch_json",
+        lambda url: {
+            "session_id": "sess_001",
+            "latest_memory": "黑衣服，短发。",
+            "latest_target_id": 15,
+            "recent_frames": [],
+        },
+    )
+    monkeypatch.setattr(
+        bridge.adapter,
+        "build_working_context",
+        lambda raw_session: {
+            "session_id": raw_session["session_id"],
+            "memory": raw_session["latest_memory"],
+            "latest_target_id": raw_session["latest_target_id"],
+            "frames": [],
+        },
+    )
     monkeypatch.setattr(
         bridge.adapter,
         "execute_tool",
-        lambda **kwargs: {
+        lambda **kwargs: execute_calls.append(kwargs)
+        or {
             "task": "update",
             "memory": "更新后的 memory",
             "frame_id": "frame_000002",
@@ -251,5 +281,7 @@ def test_run_rewrite_worker_posts_memory_update(tmp_path: Path, monkeypatch) -> 
     )
 
     assert result["rewrite_output"]["memory"] == "更新后的 memory"
+    assert result["working_context"]["memory"] == "黑衣服，短发。"
     assert result["memory_update_payload"]["expected_frame_id"] == "frame_000002"
+    assert execute_calls[0]["context"]["memory"] == "黑衣服，短发。"
     assert posted[0]["url"].endswith("/api/v1/sessions/sess_001/memory-update")

@@ -1,10 +1,12 @@
 from scaffold.cli.run_robot_stream import (
     DEFAULT_PERSON_MODEL,
+    VIDEO_TRACK_FPS,
     _configure_device_runtime,
     _extract_person_detections,
     _normalize_xyxy_bbox,
     _should_emit_event,
     _should_emit_video_sample,
+    _track_kwargs,
     _video_frame_step,
     parse_args,
 )
@@ -20,8 +22,9 @@ def test_parse_args_defaults_interval_to_three_seconds(monkeypatch) -> None:
     assert args.backend_timeout_seconds == 310.0
     assert args.ongoing_text == "持续跟踪"
     assert args.model == DEFAULT_PERSON_MODEL
-    assert args.backend_url == "ws://127.0.0.1:8001/ws/robot-ingest"
+    assert args.backend_url == "ws://127.0.0.1:8001/ws/robot-agent"
     assert args.device is None
+    assert args.imgsz is None
     assert args.vid_stride == 1
 
 
@@ -98,5 +101,18 @@ def test_should_emit_video_sample_uses_video_timeline_only() -> None:
 
 
 def test_video_frame_step_samples_one_frame_per_interval() -> None:
-    assert _video_frame_step(fps=30.0, interval_seconds=3.0, sample_every=1, vid_stride=1) == 90
-    assert _video_frame_step(fps=30.0, interval_seconds=3.0, sample_every=1, vid_stride=2) == 180
+    assert VIDEO_TRACK_FPS == 8.0
+    assert _video_frame_step(fps=30.0, vid_stride=1) == 4
+    assert _video_frame_step(fps=30.0, vid_stride=2) == 8
+
+
+def test_track_kwargs_omits_imgsz_when_not_set(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_robot_stream.py", "--source", "demo.mp4"],
+    )
+    args = parse_args()
+
+    kwargs = _track_kwargs(source="demo.mp4", args=args, stream=True, persist=True)
+
+    assert "imgsz" not in kwargs

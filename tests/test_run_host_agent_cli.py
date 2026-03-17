@@ -3,6 +3,8 @@ from pathlib import Path
 from scaffold.cli.run_host_agent import (
     ToolRequest,
     build_session_events_url,
+    is_explicit_init_text,
+    is_reset_context_text,
     latest_user_text,
     process_session,
     reconnect_delay_seconds,
@@ -102,6 +104,50 @@ def test_select_tool_request_uses_track_for_active_session() -> None:
     )
 
 
+def test_select_tool_request_uses_reply_for_chat_request() -> None:
+    raw_session = {
+        "latest_request_id": "req_chat_001",
+        "latest_request_function": "chat",
+        "latest_result": None,
+        "recent_frames": [],
+        "pending_question": None,
+        "conversation_history": [{"role": "user", "text": "你是谁"}],
+    }
+
+    assert select_tool_request(raw_session, ongoing_text="持续跟踪") == ToolRequest(
+        tool_name="reply",
+        arguments={"question": "你是谁"},
+    )
+
+
+def test_is_explicit_init_text_detects_target_replacement_message() -> None:
+    assert is_explicit_init_text("跟踪穿红衣服的人", ongoing_text="持续跟踪") is True
+    assert is_explicit_init_text("持续跟踪", ongoing_text="持续跟踪") is False
+
+
+def test_is_reset_context_text_detects_reset_commands() -> None:
+    assert is_reset_context_text("clear context") is True
+    assert is_reset_context_text("重置上下文") is True
+    assert is_reset_context_text("持续跟踪") is False
+
+
+def test_select_tool_request_uses_init_when_active_session_gets_new_target_description() -> None:
+    raw_session = {
+        "recent_frames": [{"frame_id": "frame_000003"}],
+        "latest_result": {"frame_id": "frame_000002"},
+        "latest_target_id": 7,
+        "latest_confirmed_frame_path": "/tmp/frame_000002.jpg",
+        "target_description": "黑衣服的人",
+        "pending_question": None,
+        "conversation_history": [{"role": "user", "text": "跟踪穿红衣服的人"}],
+    }
+
+    assert select_tool_request(raw_session, ongoing_text="持续跟踪") == ToolRequest(
+        tool_name="init",
+        arguments={"target_description": "跟踪穿红衣服的人"},
+    )
+
+
 def test_select_tool_request_repeats_pending_question_during_clarification() -> None:
     raw_session = {
         "recent_frames": [{"frame_id": "frame_000003"}],
@@ -120,6 +166,23 @@ def test_select_tool_request_repeats_pending_question_during_clarification() -> 
             "needs_clarification": True,
             "clarification_question": "请说明是左边还是右边的人？",
         },
+    )
+
+
+def test_select_tool_request_uses_reset_context_for_clear_context_command() -> None:
+    raw_session = {
+        "recent_frames": [{"frame_id": "frame_000003"}],
+        "latest_result": {"frame_id": "frame_000002", "behavior": "track"},
+        "latest_target_id": 7,
+        "latest_confirmed_frame_path": "/tmp/frame_000002.jpg",
+        "target_description": "黑衣服的人",
+        "pending_question": None,
+        "conversation_history": [{"role": "user", "text": "clear context"}],
+    }
+
+    assert select_tool_request(raw_session, ongoing_text="持续跟踪") == ToolRequest(
+        tool_name="reset_context",
+        arguments={},
     )
 
 
@@ -197,3 +260,43 @@ def test_process_session_returns_idle_when_frame_is_already_handled(monkeypatch,
         "frame_id": "frame_000001",
         "status": "idle",
     }
+
+
+def test_process_session_posts_reset_context_for_clear_context_command(monkeypatch, tmp_path: Path) -> None:
+    raw_session = {
+        "session_id": "sess_001",
+        "recent_frames": [{"frame_id": "frame_000001"}],
+        "latest_result": {"frame_id": "frame_000001", "behavior": "track"},
+        "latest_target_id": 12,
+        "latest_confirmed_frame_path": "/tmp/frame_000001.jpg",
+        "target_description": "黑衣服的人",
+        "pending_question": None,
+        "conversation_history": [{"role": "user", "text": "clear context"}],
+    }
+    calls = []
+
+    monkeypatch.setattr(
+        "scaffold.cli.run_host_agent.bridge.fetch_json",
+        lambda url: raw_session,
+    )
+    monkeypatch.setattr(
+        "scaffold.cli.run_host_agent.bridge.post_json",
+        lambda url, payload: calls.append((url, payload)) or {
+            "latest_result": {"text": "Tracking context cleared."}
+        },
+    )
+
+    result = process_session(
+        backend_base_url="http://127.0.0.1:8001",
+        session_id="sess_001",
+        ongoing_text="持续跟踪",
+        env_file=tmp_path / ".ENV",
+        config_path=tmp_path / "config.json",
+        artifacts_root=tmp_path / "artifacts",
+        skip_rewrite_memory=False,
+    )
+
+    assert calls == [("http://127.0.0.1:8001/api/v1/sessions/sess_001/reset-context", {})]
+    assert result["status"] == "processed"
+    assert result["tool"] == "reset_context"
+    assert result["text"] == "Tracking context cleared."

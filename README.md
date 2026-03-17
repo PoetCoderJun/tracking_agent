@@ -1,5 +1,7 @@
 # Tracking Agent
 
+接口文档见 [ROBOT_CLOUD_INTERFACE.md](./ROBOT_CLOUD_INTERFACE.md)。
+
 ## 安装
 
 ```bash
@@ -63,12 +65,13 @@ http://127.0.0.1:5173
 - Backend: `127.0.0.1:8001`，状态目录 `./runtime/backend`
 - Host agent: 通过 websocket 订阅 backend 的 session 事件，自动为新帧执行 `init / track / reply`；默认断线重连间隔 `2` 秒
 - Robot: 输出目录 `./runtime/robot-run`，默认每次运行自动生成新的 session，device `robot_01`
-- Robot 默认检测模型是 `YOLO11m Person`，底层权重为 `yolo11m.pt`，并只推理 `person` 类别
+- Robot 默认检测模型是 `YOLOv8m`，底层权重为 `yolov8m.pt`，并只推理 `person` 类别
 - Robot 默认每 `3` 秒发送一次当前帧事件到 backend
 - Robot 只上传原始帧、候选 detections 和文本；backend 不会把这些文本解释成 `target_description`，也不会在 ingest 后自动调用本地 agent，只会等待外部 PI Agent 把同一帧的 `/agent-result` 回写后再回复 robot
+- `ws://.../ws/robot-agent` 现在对齐 Robot <-> Cloud 规范：robot 在同一个 websocket 上发送 `tracking/chat` 请求，backend 直接返回带 `request_id` 的结果；同一 `session_id` 下按 latest-wins 处理，旧请求结果会被丢弃
 - 如果需要本仓库内的自动闭环，额外启动 `uv run tracking-host-agent --session-id <session_id>`；它会调用 `skills/vision-tracking-skill/scripts/pi_backend_bridge.py`
 - 文件回放模式下，会按视频时间每 `3` 秒取一帧；robot 在收到 backend 对上一帧的回复后，才会继续发送下一条，不再额外 `sleep`；首帧文本默认作为初始化描述，后续事件默认发送 `持续跟踪`
-- Robot 默认会通过 websocket 把数据发到 `ws://127.0.0.1:8001/ws/robot-ingest`
+- Robot 默认会通过 websocket 把数据发到 `ws://127.0.0.1:8001/ws/robot-agent`
 - 如果需要复用同一个会话，显式传 `--session-id <your_session_id>`
 - 如果 `tracking-host-agent` 指定了 `--session-id default`，那 `tracking-robot-stream` 也必须传同一个 `--session-id default`；否则 host agent 只会订阅并处理 `default`，robot 实际发到自动生成的新 session，表现就是“没有报错，但完全不推进”
 - Backend 默认最多等待外部 agent `300` 秒，可用 `uv run tracking-backend --external-agent-wait-seconds 0` 关闭等待

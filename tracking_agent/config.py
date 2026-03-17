@@ -16,6 +16,7 @@ class Settings:
     sample_fps: float
     query_interval_seconds: int
     recent_frame_count: int
+    chat_model: str = "qwen3.5-flash"
 
 
 def _parse_dotenv(env_path: Path) -> Dict[str, str]:
@@ -46,6 +47,7 @@ def load_settings(env_path: Optional[Path] = None) -> Settings:
         model=default_model,
         main_model=values.get("DASHSCOPE_MAIN_MODEL", default_model),
         sub_model=values.get("DASHSCOPE_SUB_MODEL", "qwen3.5-flash"),
+        chat_model=values.get("DASHSCOPE_CHAT_MODEL", "qwen3.5-flash"),
         timeout_seconds=int(values.get("DASHSCOPE_TIMEOUT_SECONDS", "120")),
         sample_fps=float(values.get("FRAME_SAMPLE_FPS", "1")),
         query_interval_seconds=int(values.get("QUERY_INTERVAL_SECONDS", "5")),
