@@ -188,6 +188,75 @@ uv run tracking-host-agent \
 http://<server-ip>:8001
 ```
 
+### 一键启动 / 一键关闭 / 实时看日志
+
+仓库自带 3 个脚本，默认会把 backend 和 host-agent 的日志统一放到同一个目录：
+
+- `./scripts/server_start.sh`
+- `./scripts/server_stop.sh`
+- `./scripts/server_watch.sh`
+
+默认日志和 pid 目录：
+
+```text
+./runtime/server/logs/
+./runtime/server/pids/
+```
+
+其中：
+
+- backend 日志：`./runtime/server/logs/backend.log`
+- agent 日志：`./runtime/server/logs/host-agent.log`
+- 合并日志：`./runtime/server/logs/combined.log`
+
+一键启动：
+
+```bash
+cd /srv/tracking_agent
+./scripts/server_start.sh
+```
+
+一键关闭：
+
+```bash
+cd /srv/tracking_agent
+./scripts/server_stop.sh
+```
+
+实时看合并日志：
+
+```bash
+cd /srv/tracking_agent
+./scripts/server_watch.sh
+```
+
+也可以直接：
+
+```bash
+tail -F /srv/tracking_agent/runtime/server/logs/combined.log
+```
+
+脚本默认行为：
+
+- 启动前会自动执行 `frontend/npm run build`
+- backend 对外监听 `0.0.0.0:8001`
+- backend 内部回环地址默认是 `http://127.0.0.1:8001`
+- host-agent 默认使用 `session_id=default`
+
+如需覆盖默认值，可以在执行前设置这些环境变量：
+
+```bash
+TRACKING_SERVER_HOST=0.0.0.0
+TRACKING_SERVER_PORT=8001
+TRACKING_SERVER_SESSION_ID=default
+TRACKING_SERVER_PUBLIC_BASE_URL=http://<server-ip>:8001
+TRACKING_SERVER_ALLOW_ORIGIN=http://<server-ip>:8001
+TRACKING_SERVER_INTERNAL_BACKEND_URL=http://127.0.0.1:8001
+TRACKING_SERVER_RUNTIME_DIR=/srv/tracking_agent/runtime/server
+TRACKING_SERVER_ENV_FILE=/srv/tracking_agent/.ENV
+TRACKING_SERVER_SKIP_FRONTEND_BUILD=1
+```
+
 如果前端单独部署在别的域名或端口：
 
 - backend 启动时用 `--public-base-url` 生成可被前端直接访问的绝对资源地址
