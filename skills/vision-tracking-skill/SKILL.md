@@ -23,7 +23,7 @@ Use this skill when the host agent needs to maintain an ongoing tracking convers
 
 - Use DashScope via the OpenAI-compatible endpoint configured in `.ENV`
 - Use the local frame queue and query plan already produced by the project runtime
-- Do not introduce face handling in this MVP
+- Do not introduce identity-level face recognition in this MVP; observable facial traits are allowed as ordinary appearance cues
 - Treat ReID as optional weak evidence only, not as the primary decision source
 
 ## Runtime entry points
@@ -102,6 +102,10 @@ Reusable flow patterns:
 - All user-facing runtime entry points referenced by this skill must resolve within the skill folder itself.
 - Do not expose a fixed closed list of user-facing intents. Let the host agent decide how to combine the tool calls from context.
 - Keep memory short, natural-language, and search-oriented.
+- Do not over-compress memory; if a stable feature helps tracking, prefer keeping or expanding it instead of shortening it away.
+- Prefer dense appearance descriptions over sparse summaries, especially for hard cases with similar clothing.
 - Rewrite memory in place instead of appending logs forever.
 - Distinguish observations from hypotheses in wording.
+- Assume future views may be back-facing, side-facing, half-body, or partially occluded, so the skill should keep multiple stable cues rather than a single anchor trait.
+- Do not use action or pose as the main identification basis when stable appearance cues are available.
 - When multiple candidates remain plausible, ask one focused follow-up question instead of guessing.

@@ -14,8 +14,12 @@ Use this flow for every low-frequency tracking turn.
 1. Use the memory as search context, not as ground truth.
 2. Return only the selected `bounding_box_id` for the newest frame in the batch.
 3. Do not invent new boxes or coordinates outside the provided candidate list.
-4. If the target is not confidently visible, return `found=false`.
-5. If more than one candidate remains plausible, return `needs_clarification=true` and ask one focused question.
+4. Match candidates primarily through stable appearance details, not through action, pose, or transient position.
+5. Assume the target may appear in arbitrary pose or only as a partial crop, so cross-check multiple stable cues instead of relying on a single visible trait.
+6. Treat cues that are currently not visible as unknown instead of immediate contradiction.
+7. In confusing side-by-side cases, avoid identity switching unless one candidate matches multiple cue groups and the alternatives show strong conflicts.
+8. If the target is not confidently visible, return `found=false`.
+9. If more than one candidate remains plausible, return `needs_clarification=true` and ask one focused question about stable appearance differences.
 
 ## Runtime mapping
 
