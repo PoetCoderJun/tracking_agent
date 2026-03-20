@@ -33,6 +33,7 @@ from tracking_agent.robot_stream import (
     save_frame_image,
     video_timestamp_seconds,
 )
+from tracking_agent.service_urls import build_backend_service_url
 
 DEFAULT_PERSON_MODEL = "yolov8m.pt"
 VIDEO_TRACK_FPS = 8.0
@@ -64,7 +65,25 @@ def parse_args() -> argparse.Namespace:
         default="持续跟踪",
         help="Text payload attached to follow-up events after the first initialization event.",
     )
-    parser.add_argument("--backend-url", default="ws://127.0.0.1:8001/ws/robot-agent")
+    parser.add_argument(
+        "--backend-url",
+        default=None,
+        help=(
+            "Full backend ingest endpoint. When omitted, the CLI builds one from "
+            "--backend-base-url and --backend-protocol."
+        ),
+    )
+    parser.add_argument(
+        "--backend-base-url",
+        default="http://127.0.0.1:8001",
+        help="Backend base address such as http://192.168.1.8:8001 or tracking.example.com:8001.",
+    )
+    parser.add_argument(
+        "--backend-protocol",
+        choices=("robot-agent", "robot-ingest", "http-ingest"),
+        default="robot-agent",
+        help="Which backend ingest interface to target when --backend-url is omitted.",
+    )
     parser.add_argument(
         "--backend-timeout-seconds",
         type=float,
@@ -105,6 +124,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-events", type=int, default=None)
     parser.add_argument("--person-class-id", type=int, default=0)
     return parser.parse_args()
+
+
+def resolve_backend_url(args: argparse.Namespace) -> str:
+    explicit_url = str(args.backend_url or "").strip()
+    if explicit_url:
+        return explicit_url
+
+    channel = {
+        "robot-agent": "robot_agent",
+        "robot-ingest": "robot_ingest",
+        "http-ingest": "robot_http_ingest",
+    }[args.backend_protocol]
+    return build_backend_service_url(args.backend_base_url, channel=channel)
 
 
 def _load_yolo():
@@ -309,11 +341,12 @@ async def _run_backend_stream(
     emitted_events = 0
     next_emit_at = 0.0
     next_video_emit_at = 0.0
+    backend_url = resolve_backend_url(args)
     source_is_camera = is_camera_source(normalize_source(args.source))
-    backend_is_websocket = bool(args.backend_url) and is_websocket_url(args.backend_url)
-    websocket_protocol = None if not backend_is_websocket else _websocket_protocol(args.backend_url)
+    backend_is_websocket = bool(backend_url) and is_websocket_url(backend_url)
+    websocket_protocol = None if not backend_is_websocket else _websocket_protocol(backend_url)
     websocket_context = None if not backend_is_websocket else await open_robot_backend_websocket(
-        args.backend_url,
+        backend_url,
         timeout_seconds=args.backend_timeout_seconds,
     )
 
@@ -363,7 +396,7 @@ async def _run_backend_stream(
             append_event_jsonl(events_path, event)
 
             backend_status = None
-            if args.backend_url:
+            if backend_url:
                 if websocket is not None:
                     request_id = generate_request_id()
                     backend_response = await post_event_ws(
@@ -377,7 +410,7 @@ async def _run_backend_stream(
                     )
                 else:
                     backend_response = post_event(
-                        args.backend_url,
+                        backend_url,
                         event,
                         timeout_seconds=args.backend_timeout_seconds,
                     )

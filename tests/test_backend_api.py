@@ -695,3 +695,71 @@ def test_reset_context_endpoint_clears_tracking_context(tmp_path: Path) -> None:
     assert payload["frontend_state"]["latest_memory"] == ""
     assert payload["frontend_state"]["latest_target_id"] is None
     assert payload["latest_result"]["memory"] == ""
+
+
+def test_frontend_state_uses_public_base_url_for_asset_paths(tmp_path: Path) -> None:
+    with TestClient(
+        backend_api.create_app(
+            state_root=tmp_path / "state",
+            public_base_url="https://tracking.example.com/base",
+        )
+    ) as client:
+        ingest = client.post(
+            "/api/v1/robot/ingest",
+            json={
+                "session_id": "sess_001",
+                "device_id": "robot_01",
+                "frame": {
+                    "frame_id": "frame_000001",
+                    "timestamp_ms": 1710000000000,
+                    "image_base64": _fake_image_base64(),
+                },
+                "detections": [
+                    {"track_id": 12, "bbox": [10, 20, 30, 40], "score": 0.95},
+                ],
+                "text": "跟踪黑衣服的人",
+            },
+        )
+        assert ingest.status_code == 200
+
+        state = client.get("/api/v1/sessions/sess_001/frontend-state")
+        session = client.get("/api/v1/sessions/sess_001")
+
+    frontend_state = state.json()
+    session_payload = session.json()
+    assert (
+        frontend_state["latest_frame"]["image_url"]
+        == "https://tracking.example.com/base/api/v1/sessions/sess_001/frames/frame_000001/image"
+    )
+    assert session_payload["recent_frames"][0]["frame_id"] == "frame_000001"
+    assert (
+        ingest.json()["session_path"]
+        == "https://tracking.example.com/base/api/v1/sessions/sess_001"
+    )
+
+
+def test_backend_can_serve_built_frontend_with_spa_fallback(tmp_path: Path) -> None:
+    frontend_dist = tmp_path / "frontend-dist"
+    frontend_dist.mkdir()
+    (frontend_dist / "index.html").write_text("<html><body>tracking-app</body></html>", encoding="utf-8")
+    (frontend_dist / "assets").mkdir()
+    (frontend_dist / "assets" / "main.js").write_text("console.log('tracking');", encoding="utf-8")
+
+    with TestClient(
+        backend_api.create_app(
+            state_root=tmp_path / "state",
+            frontend_dist=frontend_dist,
+        )
+    ) as client:
+        index_response = client.get("/")
+        asset_response = client.get("/assets/main.js")
+        route_response = client.get("/sessions/demo")
+        api_response = client.get("/api/unknown")
+
+    assert index_response.status_code == 200
+    assert "tracking-app" in index_response.text
+    assert asset_response.status_code == 200
+    assert "console.log('tracking');" in asset_response.text
+    assert route_response.status_code == 200
+    assert "tracking-app" in route_response.text
+    assert api_response.status_code == 404

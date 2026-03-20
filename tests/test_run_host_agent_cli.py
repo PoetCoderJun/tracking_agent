@@ -31,6 +31,10 @@ def test_build_session_events_url_converts_http_base_url() -> None:
     assert build_session_events_url("https://example.com/base/") == "wss://example.com/base/ws/session-events"
 
 
+def test_build_session_events_url_accepts_host_without_scheme() -> None:
+    assert build_session_events_url("10.0.0.8:8001") == "ws://10.0.0.8:8001/ws/session-events"
+
+
 def test_reconnect_delay_seconds_prefers_explicit_reconnect_value() -> None:
     class Args:
         reconnect_seconds = 5.0

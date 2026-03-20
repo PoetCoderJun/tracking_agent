@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Sequence
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from tracking_agent.backend_store import BackendSession, BackendStore
+from tracking_agent.service_urls import join_url_path, normalize_base_url
 
 
 class FrontendUpdateBroker:
@@ -188,6 +189,24 @@ class RobotAgentRequest(BaseModel):
         return self
 
 
+def _normalize_cors_origins(cors_origins: Optional[Sequence[str]]) -> List[str]:
+    if cors_origins is None:
+        return ["*"]
+    normalized = [str(origin).strip() for origin in cors_origins if str(origin).strip()]
+    return normalized or ["*"]
+
+
+def _safe_frontend_asset(frontend_root: Path, relative_path: str) -> Optional[Path]:
+    candidate = (frontend_root / relative_path.lstrip("/")).resolve()
+    try:
+        candidate.relative_to(frontend_root)
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
 def _model_to_dict(model: BaseModel) -> dict:
     if hasattr(model, "model_dump"):
         return model.model_dump()
@@ -226,11 +245,27 @@ def create_app(
     frame_buffer_size: int = 3,
     external_agent_wait_seconds: float = 0.0,
     external_agent_poll_seconds: float = 0.1,
+    public_base_url: Optional[str] = None,
+    cors_origins: Optional[Sequence[str]] = None,
+    frontend_dist: Optional[Path] = None,
 ) -> FastAPI:
     if external_agent_wait_seconds < 0:
         raise ValueError("external_agent_wait_seconds must be non-negative")
     if external_agent_poll_seconds <= 0:
         raise ValueError("external_agent_poll_seconds must be positive")
+
+    frontend_root: Optional[Path] = None
+    if frontend_dist is not None:
+        frontend_root = Path(frontend_dist).resolve()
+        index_path = frontend_root / "index.html"
+        if not frontend_root.exists():
+            raise ValueError(f"frontend_dist does not exist: {frontend_root}")
+        if not index_path.exists():
+            raise ValueError(f"frontend_dist is missing index.html: {index_path}")
+
+    normalized_public_base_url = None
+    if public_base_url not in (None, ""):
+        normalized_public_base_url = normalize_base_url(str(public_base_url))
 
     store = BackendStore(state_root=state_root, frame_buffer_size=frame_buffer_size)
     broker = FrontendUpdateBroker()
@@ -238,11 +273,16 @@ def create_app(
     app = FastAPI(title="Tracking Agent Backend", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_normalize_cors_origins(cors_origins),
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    def public_url(path: str) -> str:
+        if normalized_public_base_url is None:
+            return path
+        return join_url_path(normalized_public_base_url, path)
 
     def frontend_state_payload(session: BackendSession) -> dict:
         latest_frame = session.recent_frames[-1] if session.recent_frames else None
@@ -252,7 +292,9 @@ def create_app(
             latest_frame_payload = {
                 "frame_id": latest_frame.frame_id,
                 "timestamp_ms": latest_frame.timestamp_ms,
-                "image_url": f"/api/v1/sessions/{session.session_id}/frames/{latest_frame.frame_id}/image",
+                "image_url": public_url(
+                    f"/api/v1/sessions/{session.session_id}/frames/{latest_frame.frame_id}/image"
+                ),
                 "detections": [
                     {
                         **_model_to_dict(DetectionPayload(**detection.__dict__)),
@@ -265,7 +307,9 @@ def create_app(
         if display_result is not None and session.latest_confirmed_frame_path:
             display_frame_payload = {
                 "frame_id": display_result.get("frame_id"),
-                "image_url": f"/api/v1/sessions/{session.session_id}/latest-confirmed-frame/image",
+                "image_url": public_url(
+                    f"/api/v1/sessions/{session.session_id}/latest-confirmed-frame/image"
+                ),
                 "bbox": [int(value) for value in display_result["bbox"]],
                 "detections": [
                     {
@@ -363,8 +407,8 @@ def create_app(
             "agent_behavior": None if matched_agent_result is None else matched_agent_result.get("behavior"),
             "agent_error": None,
             "agent_required": matched_agent_result is None,
-            "session_path": f"/api/v1/sessions/{session.session_id}",
-            "agent_result_path": f"/api/v1/sessions/{session.session_id}/agent-result",
+            "session_path": public_url(f"/api/v1/sessions/{session.session_id}"),
+            "agent_result_path": public_url(f"/api/v1/sessions/{session.session_id}/agent-result"),
         }
 
     def robot_agent_response_payload(
@@ -827,5 +871,21 @@ def create_app(
             "latest_result": session.latest_result,
             "frontend_state": frontend_state_payload(session),
         }
+
+    if frontend_root is not None:
+        frontend_index = frontend_root / "index.html"
+
+        @app.get("/")
+        def serve_frontend_index():
+            return FileResponse(frontend_index)
+
+        @app.get("/{full_path:path}")
+        def serve_frontend_app(full_path: str):
+            if full_path == "healthz" or full_path.startswith("api/") or full_path.startswith("ws/"):
+                raise HTTPException(status_code=404, detail=f"Unknown path: /{full_path}")
+            asset_path = _safe_frontend_asset(frontend_root, full_path)
+            if asset_path is not None:
+                return FileResponse(asset_path)
+            return FileResponse(frontend_index)
 
     return app

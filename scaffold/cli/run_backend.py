@@ -15,6 +15,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--state-root", default="./runtime/backend")
+    parser.add_argument(
+        "--public-base-url",
+        default=None,
+        help="Public backend base URL used in API payloads, for example https://tracking.example.com.",
+    )
+    parser.add_argument(
+        "--allow-origin",
+        action="append",
+        dest="allow_origins",
+        default=None,
+        help="Allowed frontend origin. Repeat the flag to allow multiple origins. Defaults to '*'.",
+    )
+    parser.add_argument(
+        "--frontend-dist",
+        default=None,
+        help="Optional built frontend directory to serve from the backend, for example ./frontend/dist.",
+    )
     parser.add_argument("--frame-buffer-size", type=int, default=3)
     parser.add_argument(
         "--external-agent-wait-seconds",
@@ -51,6 +68,9 @@ def main() -> int:
         frame_buffer_size=args.frame_buffer_size,
         external_agent_wait_seconds=args.external_agent_wait_seconds,
         external_agent_poll_seconds=args.external_agent_poll_seconds,
+        public_base_url=args.public_base_url,
+        cors_origins=args.allow_origins,
+        frontend_dist=None if args.frontend_dist in (None, "") else Path(args.frontend_dist),
     )
     uvicorn.run(app, host=args.host, port=args.port)
     return 0

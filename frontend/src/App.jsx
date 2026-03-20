@@ -1,8 +1,46 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const WS_RECONNECT_DELAY_MS = 2000;
+const CONFIGURED_BACKEND_BASE_URL = normalizeConfiguredBaseUrl(import.meta.env.VITE_BACKEND_BASE_URL);
+const CONFIGURED_BACKEND_WS_BASE_URL = normalizeConfiguredBaseUrl(import.meta.env.VITE_BACKEND_WS_BASE_URL);
+
+function normalizeConfiguredBaseUrl(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return "";
+  }
+  if (/^[a-z]+:\/\//i.test(raw)) {
+    return raw.replace(/\/+$/, "");
+  }
+  const protocol = window.location.protocol === "https:" ? "https://" : "http://";
+  return `${protocol}${raw}`.replace(/\/+$/, "");
+}
+
+function resolveBackendUrl(path, configuredBaseUrl = CONFIGURED_BACKEND_BASE_URL) {
+  if (!path) {
+    return path;
+  }
+  if (/^[a-z]+:\/\//i.test(path)) {
+    return path;
+  }
+  if (!configuredBaseUrl) {
+    return path;
+  }
+  return new URL(path, `${configuredBaseUrl}/`).toString();
+}
 
 function getSessionEventsSocketUrl() {
+  if (CONFIGURED_BACKEND_WS_BASE_URL) {
+    return new URL("/ws/session-events", `${CONFIGURED_BACKEND_WS_BASE_URL}/`).toString();
+  }
+  if (CONFIGURED_BACKEND_BASE_URL) {
+    const parsed = new URL(`${CONFIGURED_BACKEND_BASE_URL}/`);
+    parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+    parsed.pathname = `${parsed.pathname.replace(/\/$/, "")}/ws/session-events`;
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  }
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/ws/session-events`;
 }
@@ -56,6 +94,7 @@ function DetectionOverlay({ displayFrame, imageSize }) {
 
   const targetId = getRawBoundingBoxId(displayFrame);
   const bbox = Array.isArray(displayFrame?.bbox) ? displayFrame.bbox : null;
+  const detections = Array.isArray(displayFrame?.detections) ? displayFrame.detections : [];
   const viewBox = `0 0 ${imageSize.width} ${imageSize.height}`;
 
   if (bbox === null) {
@@ -64,6 +103,35 @@ function DetectionOverlay({ displayFrame, imageSize }) {
 
   return (
     <svg className="overlay" viewBox={viewBox} preserveAspectRatio="none">
+      {detections.map((detection) => {
+        const detectionBbox = Array.isArray(detection?.bbox) ? detection.bbox : null;
+        const detectionTrackId = getRawBoundingBoxId(detection);
+        if (detectionBbox === null) {
+          return null;
+        }
+        if (
+          targetId !== null &&
+          detectionTrackId !== null &&
+          String(detectionTrackId) === String(targetId)
+        ) {
+          return null;
+        }
+        const [x1, y1, x2, y2] = detectionBbox;
+        return (
+          <g key={`candidate-${detectionTrackId ?? "unknown"}-${x1}-${y1}-${x2}-${y2}`}>
+            <rect
+              x={x1}
+              y={y1}
+              width={Math.max(1, x2 - x1)}
+              height={Math.max(1, y2 - y1)}
+              className="bbox bbox-candidate"
+            />
+            <text x={x1 + 6} y={Math.max(18, y1 - 8)} className="bbox-label">
+              {formatBoundingBoxIdValue(detectionTrackId)}
+            </text>
+          </g>
+        );
+      })}
       <g>
         <rect
           x={bbox[0]}
@@ -127,6 +195,7 @@ export default function App() {
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
   const [health, setHealth] = useState("checking");
+  const [resettingContext, setResettingContext] = useState(false);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const imageRef = useRef(null);
   const viewerHostRef = useRef(null);
@@ -300,6 +369,37 @@ export default function App() {
     };
   }, [imageSize.height, imageSize.width, viewerHostSize.height, viewerHostSize.width]);
 
+  async function handleResetContext() {
+    if (!activeSessionId || resettingContext) {
+      return;
+    }
+    if (!window.confirm("清空当前 session 的 tracking context？这会清掉 memory、目标绑定和待确认问题，但保留当前帧。")) {
+      return;
+    }
+
+    setResettingContext(true);
+    setError("");
+    try {
+      const resetContextUrl = resolveBackendUrl(
+        `/api/v1/sessions/${encodeURIComponent(activeSessionId)}/reset-context`
+      );
+      const response = await window.fetch(resetContextUrl, {
+        method: "POST"
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to reset context (${response.status})`);
+      }
+      const payload = await response.json();
+      if (payload?.frontend_state) {
+        setState(payload.frontend_state);
+      }
+    } catch (fetchError) {
+      setError(fetchError instanceof Error ? fetchError.message : "Failed to reset context.");
+    } finally {
+      setResettingContext(false);
+    }
+  }
+
   return (
     <div className="shell">
       <aside className="left-rail">
@@ -321,13 +421,21 @@ export default function App() {
               <strong>{activeSessionLabel}</strong>
               <span>{activeSessionId || "Waiting for session"}</span>
             </div>
+            <button
+              type="button"
+              className="session-action session-action-danger"
+              onClick={handleResetContext}
+              disabled={!activeSessionId || resettingContext}
+            >
+              {resettingContext ? "Clearing..." : "Clear Context"}
+            </button>
           </div>
 
           <div className="brand-summary">
             <span className={health === "online" ? "health-chip health-online" : "health-chip health-offline"}>
               {health}
             </span>
-            <span className="summary-chip">Read-only view</span>
+            <span className="summary-chip">Session controls</span>
           </div>
         </div>
 
@@ -404,7 +512,7 @@ export default function App() {
                       key={displayFrame.frame_id || displayFrame.image_url}
                       ref={imageRef}
                       className="frame-image"
-                      src={`${displayFrame.image_url}?t=${encodeURIComponent(displayFrame.frame_id || state?.updated_at || "")}`}
+                      src={`${resolveBackendUrl(displayFrame.image_url)}?t=${encodeURIComponent(displayFrame.frame_id || state?.updated_at || "")}`}
                       alt={displayFrame.frame_id || "tracked-frame"}
                     />
                     <DetectionOverlay displayFrame={displayFrame} imageSize={imageSize} />

@@ -81,7 +81,7 @@ EOF
 
 ## 3. 如何让服务器运转起来
 
-### 先用 3 个终端跑通
+### 开发模式：先用 3 个终端跑通
 
 终端 1，启动 backend：
 
@@ -94,13 +94,16 @@ uv run tracking-backend --host 0.0.0.0 --port 8001
 
 ```bash
 cd /srv/tracking_agent
-uv run tracking-host-agent --session-id default
+uv run tracking-host-agent \
+  --backend-base-url http://127.0.0.1:8001 \
+  --session-id default
 ```
 
-终端 3，启动前端：
+终端 3，启动前端开发服务器：
 
 ```bash
 cd /srv/tracking_agent/frontend
+export VITE_BACKEND_PROXY_TARGET=http://127.0.0.1:8001
 npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
@@ -144,7 +147,53 @@ uv run tracking-robot-stream \
 
 - `tracking-host-agent --session-id default` 和 `tracking-robot-stream --session-id default` 必须一致
 - 服务器没有 GPU 时，`tracking-robot-stream` 用 `--device cpu`
-- 前端默认代理 backend：`127.0.0.1:8001`
+- 前端开发服务器可用 `VITE_BACKEND_PROXY_TARGET` 和 `VITE_BACKEND_PROXY_WS_TARGET` 改代理地址
+- `tracking-host-agent --backend-base-url` 和 `tracking-robot-stream --backend-base-url` 都可以直接填写服务器 IP 或域名，例如 `10.0.0.8:8001`
+
+### 生产模式：后端直接托管前端
+
+如果你要在一台服务器上直接部署一个可访问的成品，推荐把前端先 build，再由 backend 直接托管静态文件。这样只需要对外暴露 backend 一个端口。
+
+构建前端：
+
+```bash
+cd /srv/tracking_agent/frontend
+npm run build
+```
+
+启动 backend（同时提供 API、WebSocket、前端页面）：
+
+```bash
+cd /srv/tracking_agent
+uv run tracking-backend \
+  --host 0.0.0.0 \
+  --port 8001 \
+  --public-base-url http://<server-ip>:8001 \
+  --frontend-dist ./frontend/dist \
+  --allow-origin http://<server-ip>:8001
+```
+
+启动 host agent：
+
+```bash
+cd /srv/tracking_agent
+uv run tracking-host-agent \
+  --backend-base-url http://127.0.0.1:8001 \
+  --session-id default
+```
+
+此时访问：
+
+```text
+http://<server-ip>:8001
+```
+
+如果前端单独部署在别的域名或端口：
+
+- backend 启动时用 `--public-base-url` 生成可被前端直接访问的绝对资源地址
+- frontend 构建前设置 `VITE_BACKEND_BASE_URL=http://<backend-ip>:8001`
+- 如需显式指定 WebSocket 地址，再设置 `VITE_BACKEND_WS_BASE_URL=ws://<backend-ip>:8001`
+- backend 可用 `--allow-origin http://<frontend-origin>` 只放行指定前端来源
 
 ### 需要常驻运行时，用 systemd
 
@@ -161,7 +210,7 @@ After=network.target
 User=ubuntu
 WorkingDirectory=/srv/tracking_agent
 Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
-ExecStart=/home/ubuntu/.local/bin/uv run tracking-backend --host 127.0.0.1 --port 8001
+ExecStart=/home/ubuntu/.local/bin/uv run tracking-backend --host 0.0.0.0 --port 8001 --public-base-url http://<server-ip>:8001 --frontend-dist ./frontend/dist --allow-origin http://<server-ip>:8001
 Restart=always
 RestartSec=3
 
@@ -180,26 +229,7 @@ After=network.target tracking-backend.service
 User=ubuntu
 WorkingDirectory=/srv/tracking_agent
 Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
-ExecStart=/home/ubuntu/.local/bin/uv run tracking-host-agent --session-id default
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-`/etc/systemd/system/tracking-frontend.service`
-
-```ini
-[Unit]
-Description=Tracking Agent Frontend
-After=network.target tracking-backend.service
-
-[Service]
-User=ubuntu
-WorkingDirectory=/srv/tracking_agent/frontend
-Environment=PATH=/usr/bin:/bin
-ExecStart=/usr/bin/npm run dev -- --host 0.0.0.0 --port 5173
+ExecStart=/home/ubuntu/.local/bin/uv run tracking-host-agent --backend-base-url http://127.0.0.1:8001 --session-id default
 Restart=always
 RestartSec=3
 
@@ -213,7 +243,6 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 sudo systemctl enable --now tracking-backend
 sudo systemctl enable --now tracking-host-agent
-sudo systemctl enable --now tracking-frontend
 ```
 
 查看状态：
@@ -221,7 +250,6 @@ sudo systemctl enable --now tracking-frontend
 ```bash
 sudo systemctl status tracking-backend
 sudo systemctl status tracking-host-agent
-sudo systemctl status tracking-frontend
 ```
 
 查看日志：
@@ -229,5 +257,4 @@ sudo systemctl status tracking-frontend
 ```bash
 journalctl -u tracking-backend -f
 journalctl -u tracking-host-agent -f
-journalctl -u tracking-frontend -f
 ```

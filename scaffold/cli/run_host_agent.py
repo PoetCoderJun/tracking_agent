@@ -8,7 +8,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import urlsplit, urlunsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -19,6 +18,7 @@ if str(SKILL_SCRIPTS_DIR) not in sys.path:
 
 import pi_agent_adapter as adapter
 import pi_backend_bridge as bridge
+from tracking_agent.service_urls import build_backend_service_url, normalize_base_url
 
 
 @dataclass(frozen=True)
@@ -235,10 +235,7 @@ def build_session_url(backend_base_url: str, session_id: str) -> str:
 
 
 def build_session_events_url(backend_base_url: str) -> str:
-    parsed = urlsplit(backend_base_url.rstrip("/"))
-    scheme = "wss" if parsed.scheme == "https" else "ws"
-    path = parsed.path.rstrip("/")
-    return urlunsplit((scheme, parsed.netloc, f"{path}/ws/session-events", "", ""))
+    return build_backend_service_url(backend_base_url, channel="session_events")
 
 
 def reconnect_delay_seconds(args: argparse.Namespace) -> float:
@@ -362,16 +359,17 @@ async def _async_main() -> int:
     env_file = Path(args.env_file)
     config_path = Path(args.config_path)
     artifacts_root = Path(args.artifacts_root)
+    backend_base_url = normalize_base_url(args.backend_base_url)
 
     try:
         while True:
             try:
-                async for event in iter_session_events(args.backend_base_url):
+                async for event in iter_session_events(backend_base_url):
                     for session_id in session_ids_from_event(event, args.session_id):
                         try:
                             outcome = await asyncio.to_thread(
                                 process_session,
-                                backend_base_url=args.backend_base_url,
+                                backend_base_url=backend_base_url,
                                 session_id=session_id,
                                 ongoing_text=args.ongoing_text,
                                 env_file=env_file,

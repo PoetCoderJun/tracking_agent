@@ -17,6 +17,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import pi_agent_adapter as adapter
+from tracking_agent.service_urls import join_url_path, normalize_base_url
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,7 +37,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_session_url(base_url: str, session_id: str, suffix: str) -> str:
-    base_session_url = f"{base_url.rstrip('/')}/api/v1/sessions/{session_id}"
+    base_session_url = join_url_path(
+        normalize_base_url(base_url),
+        f"/api/v1/sessions/{session_id}",
+    )
     normalized_suffix = suffix.lstrip("/")
     if not normalized_suffix:
         return base_session_url
