@@ -7,6 +7,7 @@ RUNTIME_DIR="${TRACKING_SERVER_RUNTIME_DIR:-$ROOT_DIR/runtime/server}"
 LOG_DIR="${TRACKING_SERVER_LOG_DIR:-$RUNTIME_DIR/logs}"
 PID_DIR="${TRACKING_SERVER_PID_DIR:-$RUNTIME_DIR/pids}"
 
+FRONTEND_PID_FILE="$PID_DIR/frontend.pid"
 BACKEND_PID_FILE="$PID_DIR/backend.pid"
 HOST_AGENT_PID_FILE="$PID_DIR/host-agent.pid"
 COMBINED_LOG="$LOG_DIR/combined.log"
@@ -50,6 +51,7 @@ stop_service() {
 
 stop_service "host-agent" "$HOST_AGENT_PID_FILE"
 stop_service "backend" "$BACKEND_PID_FILE"
+stop_service "frontend" "$FRONTEND_PID_FILE"
 
 mkdir -p "$LOG_DIR"
 printf '\n==== %s server_stop ====\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >> "$COMBINED_LOG"
