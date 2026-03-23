@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Disable proxy for local services
-export no_proxy="127.0.0.1,localhost,::1"
-export NO_PROXY="127.0.0.1,localhost,::1"
+export no_proxy="127.0.0.1,localhost,::1,172.16.0.17,172.16.0.0/16,10.0.0.0/8,192.168.0.0/16"
+export NO_PROXY="127.0.0.1,localhost,::1,172.16.0.17,172.16.0.0/16,10.0.0.0/8,192.168.0.0/16"
 
 HOST="${TRACKING_SERVER_HOST:-0.0.0.0}"
 PORT="${TRACKING_SERVER_PORT:-8001}"
