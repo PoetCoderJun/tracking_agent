@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import time
+import uuid
 from pathlib import Path
 
 from websockets.client import connect
@@ -11,6 +12,7 @@ from websockets.client import connect
 
 WS_URL = "ws://114.111.24.158:8001/ws/robot-agent"
 IMAGE_PATH = "./frame.jpg"
+SESSION_ID = f"sess_demo_{uuid.uuid4().hex[:12]}"
 
 
 async def main() -> None:
@@ -18,7 +20,7 @@ async def main() -> None:
 
     payload = {
         "request_id": f"req_{int(time.time() * 1000)}",
-        "session_id": "sess_demo_001",
+        "session_id": SESSION_ID,
         "function": "tracking",
         "frame_id": "frame_000001",
         "timestamp_ms": int(time.time() * 1000),

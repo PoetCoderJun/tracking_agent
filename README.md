@@ -95,8 +95,7 @@ uv run tracking-backend --host 0.0.0.0 --port 8001
 ```bash
 cd /srv/tracking_agent
 uv run tracking-host-agent \
-  --backend-base-url http://127.0.0.1:8001 \
-  --session-id default
+  --backend-base-url http://127.0.0.1:8001
 ```
 
 终端 3，启动前端开发服务器：
@@ -124,7 +123,6 @@ curl http://127.0.0.1:8001/healthz
 ```bash
 cd /srv/tracking_agent
 uv run tracking-robot-stream \
-  --session-id default \
   --source test_data/0045.mp4 \
   --text "跟踪穿黑衣服的人" \
   --device cpu \
@@ -136,7 +134,6 @@ uv run tracking-robot-stream \
 ```bash
 cd /srv/tracking_agent
 uv run tracking-robot-stream \
-  --session-id default \
   --source 0 \
   --text "跟踪穿黑衣服的人" \
   --device cpu \
@@ -145,7 +142,8 @@ uv run tracking-robot-stream \
 
 注意：
 
-- `tracking-host-agent --session-id default` 和 `tracking-robot-stream --session-id default` 必须一致
+- `tracking-host-agent` 默认会处理所有 session；只有你显式传 `--session-id <value>` 时，才会只处理单个 session
+- 如果你希望某个 robot stream 固定复用同一个会话，可以显式给 `tracking-robot-stream --session-id <value>`
 - 服务器没有 GPU 时，`tracking-robot-stream` 用 `--device cpu`
 - 前端开发服务器可用 `VITE_BACKEND_PROXY_TARGET` 和 `VITE_BACKEND_PROXY_WS_TARGET` 改代理地址
 - `tracking-host-agent --backend-base-url` 和 `tracking-robot-stream --backend-base-url` 都可以直接填写服务器 IP 或域名，例如 `10.0.0.8:8001`
@@ -178,8 +176,7 @@ uv run tracking-backend \
 ```bash
 cd /srv/tracking_agent
 uv run tracking-host-agent \
-  --backend-base-url http://127.0.0.1:8001 \
-  --session-id default
+  --backend-base-url http://127.0.0.1:8001
 ```
 
 此时访问：
@@ -241,14 +238,15 @@ tail -F /srv/tracking_agent/runtime/server/logs/combined.log
 - 启动前会自动执行 `frontend/npm run build`
 - backend 对外监听 `0.0.0.0:8001`
 - backend 内部回环地址默认是 `http://127.0.0.1:8001`
-- host-agent 默认使用 `session_id=default`
+- host-agent 默认处理所有 session
 
 如需覆盖默认值，可以在执行前设置这些环境变量：
 
 ```bash
 TRACKING_SERVER_HOST=0.0.0.0
 TRACKING_SERVER_PORT=8001
-TRACKING_SERVER_SESSION_ID=default
+# 可选：只让 host-agent 处理某个固定 session
+TRACKING_SERVER_SESSION_ID=
 TRACKING_SERVER_PUBLIC_BASE_URL=http://<server-ip>:8001
 TRACKING_SERVER_ALLOW_ORIGIN=http://<server-ip>:8001
 TRACKING_SERVER_INTERNAL_BACKEND_URL=http://127.0.0.1:8001
@@ -298,7 +296,7 @@ After=network.target tracking-backend.service
 User=ubuntu
 WorkingDirectory=/srv/tracking_agent
 Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
-ExecStart=/home/ubuntu/.local/bin/uv run tracking-host-agent --backend-base-url http://127.0.0.1:8001 --session-id default
+ExecStart=/home/ubuntu/.local/bin/uv run tracking-host-agent --backend-base-url http://127.0.0.1:8001
 Restart=always
 RestartSec=3
 

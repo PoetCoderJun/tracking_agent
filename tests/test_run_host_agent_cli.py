@@ -6,6 +6,7 @@ from scaffold.cli.run_host_agent import (
     is_explicit_init_text,
     is_reset_context_text,
     latest_user_text,
+    parse_args,
     process_session,
     reconnect_delay_seconds,
     select_tool_request,
@@ -33,6 +34,16 @@ def test_build_session_events_url_converts_http_base_url() -> None:
 
 def test_build_session_events_url_accepts_host_without_scheme() -> None:
     assert build_session_events_url("10.0.0.8:8001") == "ws://10.0.0.8:8001/ws/session-events"
+
+
+def test_parse_args_defaults_to_all_sessions(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_host_agent.py"],
+    )
+    args = parse_args()
+
+    assert args.session_id is None
 
 
 def test_reconnect_delay_seconds_prefers_explicit_reconnect_value() -> None:

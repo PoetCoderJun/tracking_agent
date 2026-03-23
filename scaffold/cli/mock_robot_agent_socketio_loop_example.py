@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import time
+import uuid
 from pathlib import Path
 
 import socketio
@@ -10,7 +11,7 @@ import socketio
 
 BASE_URL = "http://114.111.24.158:8001"
 IMAGE_PATH = "./frame.jpg"
-SESSION_ID = "sess_demo_001"
+SESSION_ID = f"sess_demo_{uuid.uuid4().hex[:12]}"
 DEVICE_ID = "robot_01"
 INTERVAL_SECONDS = 3.0
 TOTAL_REQUESTS = 5
@@ -75,7 +76,19 @@ async def send_tracking_request(
         image_base64=image_base64,
     )
     print(f"\nSending frame={payload['frame_id']} text={payload['text']}")
-    response = await client.call("robot-agent-request", payload, timeout=60)
+    try:
+        response = await client.call("robot-agent-request", payload, timeout=60)
+    except socketio.exceptions.TimeoutError:
+        print(
+            {
+                "session_id": SESSION_ID,
+                "request_id": payload["request_id"],
+                "frame_id": payload["frame_id"],
+                "status": "timeout",
+                "message": "Backend accepted the request but did not return a socket.io response within 60 seconds.",
+            }
+        )
+        return
     print("Received:", response)
 
 

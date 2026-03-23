@@ -9,7 +9,7 @@ export NO_PROXY="127.0.0.1,localhost,::1"
 
 HOST="${TRACKING_SERVER_HOST:-0.0.0.0}"
 PORT="${TRACKING_SERVER_PORT:-8001}"
-SESSION_ID="${TRACKING_SERVER_SESSION_ID:-default}"
+SESSION_ID="${TRACKING_SERVER_SESSION_ID:-}"
 RUNTIME_DIR="${TRACKING_SERVER_RUNTIME_DIR:-$ROOT_DIR/runtime/server}"
 LOG_DIR="${TRACKING_SERVER_LOG_DIR:-$RUNTIME_DIR/logs}"
 PID_DIR="${TRACKING_SERVER_PID_DIR:-$RUNTIME_DIR/pids}"
@@ -155,10 +155,18 @@ start_service \
   "host-agent" \
   "$HOST_AGENT_PID_FILE" \
   "$HOST_AGENT_LOG" \
-  uv run tracking-host-agent \
-    --backend-base-url "$INTERNAL_BACKEND_URL" \
-    --session-id "$SESSION_ID" \
-    --env-file "$ENV_FILE"
+  env TRACKING_SERVER_SELECTED_SESSION_ID="$SESSION_ID" bash -lc '
+    set -euo pipefail
+    args=(
+      uv run tracking-host-agent
+      --backend-base-url "'"$INTERNAL_BACKEND_URL"'"
+      --env-file "'"$ENV_FILE"'"
+    )
+    if [[ -n "${TRACKING_SERVER_SELECTED_SESSION_ID:-}" ]]; then
+      args+=(--session-id "$TRACKING_SERVER_SELECTED_SESSION_ID")
+    fi
+    exec "${args[@]}"
+  '
 
 sleep 1
 
@@ -173,6 +181,11 @@ if [[ "$FRONTEND_DEV" == "1" ]]; then
 fi
 echo "Backend PID: $(cat "$BACKEND_PID_FILE")"
 echo "Host agent PID: $(cat "$HOST_AGENT_PID_FILE")"
+if [[ -n "$SESSION_ID" ]]; then
+  echo "Host agent session filter: $SESSION_ID"
+else
+  echo "Host agent session filter: all sessions"
+fi
 echo "Logs:"
 echo "  $BACKEND_LOG"
 echo "  $HOST_AGENT_LOG"
