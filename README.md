@@ -13,129 +13,67 @@ cd frontend && npm install && cd ..
 echo "DASHSCOPE_API_KEY=your_key" > .ENV
 ```
 
-## 启动
+## 本地调试方式
 
-```bash
-./scripts/server_start.sh
-```
+```Bash
+# 先进入仓库根目录：
 
-访问 http://localhost:8001
+cd /path/to/tracking_agent
 
-## 看日志
+# 终端 1，启动 backend：
 
-```bash
-./scripts/server_watch.sh
-```
+uv run tracking-backend --host 0.0.0.0 --port 8001
+# 终端 2，启动 host agent：
 
-或直接用 tail：
+uv run tracking-host-agent \
+  --backend-base-url http://127.0.0.1:8001
+  
+# 终端 3，启动前端开发服务器：
 
-```bash
-tail -F runtime/server/logs/combined.log
-```
+cd frontend
+export VITE_BACKEND_PROXY_TARGET=http://127.0.0.1:8001
+npm run dev -- --host 0.0.0.0 --port 5173
+cd ..
 
-## 关闭
-
-```bash
-./scripts/server_stop.sh
-```
-
-## 本地 Mock Robot 请求
-
-如果你想在本地模拟 robot 端发送请求来测试 backend，可以使用以下几种方式：
-
-### 1. 使用示例 WebSocket 客户端
-
-```bash
-python scaffold/cli/example_robot_websocket_client.py \
-  --backend-base-url http://127.0.0.1:8001 \
-  --session-id test_session_001 \
-  --image ./frame.jpg \
-  --text "跟踪穿黑衣服的人" \
-  --detections-json '[{"track_id":12,"bbox":[120,80,260,420],"score":0.95},{"track_id":15,"bbox":[300,90,430,410],"score":0.92}]'
-```
-
-### 2. 使用最小化 Socket.IO 示例
-
-```bash
-python scaffold/cli/minimal_robot_agent_socketio_example.py
-```
-
-注意：修改文件中的 `BASE_URL` 为你实际的 backend 地址。
-
-### 3. 使用最小化 WebSocket 示例
-
-```bash
-python scaffold/cli/minimal_robot_agent_ws_example.py
-```
-
-注意：修改文件中的 `WS_URL` 为你实际的 backend 地址。
-
-### 4. 使用循环 Mock 客户端（模拟多帧跟踪）
-
-```bash
-python scaffold/cli/mock_robot_agent_socketio_loop_example.py
-```
-
-这个示例会：
-- 发送首帧请求（带初始指令，如"请跟踪穿黑衣服的人"）
-- 每隔 3 秒发送后续帧（文本为"继续跟踪"）
-- 总共发送 5 帧
-
-注意：修改文件中的 `BASE_URL`、`IMAGE_PATH`、`SESSION_ID` 等参数。
-
-### Mock 请求数据格式
-
-```json
-{
-  "request_id": "req_1234567890",
-  "session_id": "sess_demo_001",
-  "function": "tracking",
-  "frame_id": "frame_000001",
-  "timestamp_ms": 1234567890000,
-  "device_id": "robot_01",
-  "image_base64": "/9j/4AAQ...",
-  "detections": [
-    {"track_id": 12, "bbox": [120, 80, 260, 420], "score": 0.95},
-    {"track_id": 15, "bbox": [300, 90, 430, 410], "score": 0.92}
-  ],
-  "text": "跟踪穿黑衣服的人"
-}
-```
-
-字段说明：
-- `request_id`: 请求唯一标识
-- `session_id`: 会话 ID，相同 session 会共享上下文
-- `function`: 功能类型，`tracking` 或 `chat`
-- `frame_id`: 帧 ID
-- `timestamp_ms`: 时间戳（毫秒）
-- `device_id`: 设备 ID
-- `image_base64`: Base64 编码的图像数据
-- `detections`: 检测结果数组，每个元素包含 `track_id`（跟踪ID）、`bbox`（边界框 `[x1,y1,x2,y2]`）、`score`（置信度）
-- `text`: 自然语言指令
-
-## 使用视频文件或摄像头测试
-
-如果你需要使用 MP4 视频文件或本地摄像头进行端到端测试，可以使用内置的 `tracking-robot-stream` 命令：
-
-### 视频文件测试
-
-```bash
+# 终端 4，发送一段测试视频
 uv run tracking-robot-stream \
-  --source test_data/demo_video.mp4 \
+  --source test_data/0045.mp4 \
   --text "跟踪穿黑衣服的人" \
   --device cpu \
-  --tracker bytetrack.yaml \
-  --session-id test_session_001
-```
+  --tracker bytetrack.yaml
+# 终端 4，如果是本机摄像头：
 
-### 摄像头测试
-
-```bash
 uv run tracking-robot-stream \
   --source 0 \
   --text "跟踪穿黑衣服的人" \
   --device cpu \
   --tracker bytetrack.yaml
+```
+
+
+注意：
+
+tracking-host-agent 默认会处理所有 session；只有你显式传 --session-id <value> 时，才会只处理单个 session
+如果你希望某个 robot stream 固定复用同一个会话，可以显式给 tracking-robot-stream --session-id <value>
+服务器没有 GPU 时，tracking-robot-stream 用 --device cpu
+前端开发服务器可用 VITE_BACKEND_PROXY_TARGET 和 VITE_BACKEND_PROXY_WS_TARGET 改代理地址
+tracking-host-agent --backend-base-url 和 tracking-robot-stream --backend-base-url 都可以直接填写服务器 IP 或域名，例如 10.0.0.8:8001
+
+## 服务端启动方式
+
+```bash
+./scripts/server_start.sh
+./scripts/server_watch.sh
+./scripts/server_stop.sh
+```
+
+## 本地 Mock Robot 请求
+
+如果你想在本地模拟 robot 端发送请求来测试 backend，可以用
+
+
+```bash
+python scaffold/cli/mock_robot_agent_socketio_loop_example.py
 ```
 
 ### 常用参数说明

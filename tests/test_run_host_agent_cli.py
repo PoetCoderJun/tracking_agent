@@ -1,7 +1,9 @@
+import asyncio
 from pathlib import Path
 
 from scaffold.cli.run_host_agent import (
     ToolRequest,
+    _async_main,
     build_session_events_url,
     is_explicit_init_text,
     is_reset_context_text,
@@ -44,6 +46,23 @@ def test_parse_args_defaults_to_all_sessions(monkeypatch) -> None:
     args = parse_args()
 
     assert args.session_id is None
+
+
+def test_async_main_normalizes_backend_base_url(monkeypatch) -> None:
+    async def fake_iter_session_events(backend_base_url: str):
+        assert backend_base_url == "http://10.0.0.8:8001"
+        yield {"type": "dashboard_state", "sessions": []}
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_host_agent.py", "--backend-base-url", "10.0.0.8:8001", "--once"],
+    )
+    monkeypatch.setattr(
+        "scaffold.cli.run_host_agent.iter_session_events",
+        fake_iter_session_events,
+    )
+
+    assert asyncio.run(_async_main()) == 0
 
 
 def test_reconnect_delay_seconds_prefers_explicit_reconnect_value() -> None:

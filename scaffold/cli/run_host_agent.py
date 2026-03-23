@@ -17,7 +17,7 @@ if str(SKILL_SCRIPTS_DIR) not in sys.path:
 
 import pi_agent_adapter as adapter
 import pi_backend_bridge as bridge
-from tracking_agent.service_urls import build_backend_service_url
+from tracking_agent.service_urls import build_backend_service_url, normalize_base_url
 
 
 ToolRequest = adapter.ToolRequest
