@@ -392,6 +392,11 @@ class BackendStore:
                     else str(result.get("clarification_question")).strip()
                 ),
                 "memory": memory,
+                "robot_response": (
+                    dict(result.get("robot_response"))
+                    if isinstance(result.get("robot_response"), dict)
+                    else None
+                ),
             }
             conversation_history = self._append_conversation_entry(
                 session.conversation_history,

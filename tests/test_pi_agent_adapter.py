@@ -42,6 +42,8 @@ def test_execute_reply_tool_formats_backend_payload() -> None:
     adapter = _load_adapter()
     context = {
         "session_id": "sess_001",
+        "latest_request_id": "req_001",
+        "latest_request_function": "tracking",
         "memory": "黑衣服，短发。",
         "latest_target_id": 15,
         "latest_result": {"found": True},
@@ -60,12 +62,15 @@ def test_execute_reply_tool_formats_backend_payload() -> None:
     assert payload["frame_id"] is None
     assert payload["target_id"] == 15
     assert payload["pending_question"] == "你说的是左边那个还是中间那个？"
+    assert payload["robot_response"]["action"] == "ask"
 
 
 def test_execute_reply_tool_prefers_latest_frame_id_over_stale_latest_result() -> None:
     adapter = _load_adapter()
     context = {
         "session_id": "sess_001",
+        "latest_request_id": "req_001",
+        "latest_request_function": "tracking",
         "memory": "",
         "latest_target_id": None,
         "latest_result": {"frame_id": "frame_000000", "found": False},
@@ -89,6 +94,7 @@ def test_execute_reply_tool_prefers_latest_frame_id_over_stale_latest_result() -
     )
 
     assert payload["frame_id"] == "frame_000001"
+    assert payload["robot_response"]["frame_id"] == "frame_000001"
 
 
 def test_build_working_context_shapes_raw_backend_session() -> None:
@@ -98,6 +104,8 @@ def test_build_working_context_shapes_raw_backend_session() -> None:
         {
             "session_id": "sess_001",
             "device_id": "robot_01",
+            "latest_request_id": "req_123",
+            "latest_request_function": "tracking",
             "target_description": "黑衣服的人",
             "latest_memory": "黑衣服，短发。",
             "latest_target_id": 15,
@@ -148,6 +156,8 @@ def test_build_working_context_shapes_raw_backend_session() -> None:
     )
 
     assert context["memory"] == "黑衣服，短发。"
+    assert context["latest_request_id"] == "req_123"
+    assert context["latest_request_function"] == "tracking"
     assert context["latest_bounding_box_id"] == 15
     assert context["latest_result"]["bounding_box_id"] == 15
     assert context["frames"][-1]["detections"][0]["bounding_box_id"] == 15
@@ -189,6 +199,8 @@ def test_execute_reply_tool_uses_chat_model_for_question(tmp_path: Path, monkeyp
     payload = adapter.execute_reply_tool(
         {
             "session_id": "sess_001",
+            "latest_request_id": "req_chat_001",
+            "latest_request_function": "chat",
             "memory": "黑衣服，短发。",
             "target_description": "黑衣服的人",
             "latest_target_id": 15,
@@ -218,6 +230,7 @@ def test_execute_reply_tool_uses_chat_model_for_question(tmp_path: Path, monkeyp
 
     assert payload["behavior"] == "reply"
     assert payload["text"] == "我目前还在跟踪同一个人。"
+    assert payload["robot_response"]["function"] == "chat"
     assert len(calls) == 1
     assert calls[0]["model"] == "qwen3.5-flash"
     assert "最近一次 tracking 状态" in str(calls[0]["instruction"])

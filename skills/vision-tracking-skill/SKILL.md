@@ -1,111 +1,96 @@
 ---
 name: vision-tracking-skill
-description: Conversational visual tracking skill for maintaining a persistent human-in-the-loop tracking session over sampled video frames. Use when Codex or Claude Code should interact naturally with the user, decide how to advance the tracking session from context, and use the bundled scripts only as atomic capabilities.
+description: Use when maintaining a conversational visual tracking session over sampled video frames, especially when the user may clarify, interrupt, replace the target, or ask tracking questions during the same session.
 ---
 
 # Vision Tracking Skill
 
-Use this skill when the host agent needs to maintain an ongoing tracking conversation with the user, localize a described person in sampled video frames, evolve compact tracking memory, and respond naturally to interruptions, corrections, questions, or target changes without collapsing into a rigid workflow.
+## Overview
 
-## What this skill owns
+This skill runs a persistent human-in-the-loop visual tracking conversation. The host agent owns turn-by-turn decisions. The bundled Python scripts are atomic capabilities for reading state, localizing the target, rewriting tracking memory, answering grounded questions, and saving artifacts.
 
-- A unified conversational tracking agent that chooses skill tools in context
-- A VLM-first localization capability for `init` and `track`
-- A memory rewrite capability that rewrites the target memory in Markdown
-- Human-in-the-loop behaviors:
-  - rough initialization from a short user description
-  - interruption and target replacement
-  - clarification when multiple candidates remain plausible
-  - tracking-related chat such as whereabouts or status questions
-- A minimal local file contract for the current frame and recent history
+The core constraint is simple: keep orchestration in the agent, keep deterministic support in the scripts, and do not collapse the session into a fixed menu of user intents.
 
-## MVP boundary
+Semantic rule: `reply`, `init`, `track`, and `rewrite_memory` are tools inside this skill, not standalone skills. The files under `flows/` are tool-flow guides that explain when and how the host agent should use those tools.
 
-- Use DashScope via the OpenAI-compatible endpoint configured in `.ENV`
-- Use the local frame queue and query plan already produced by the project runtime
-- Do not introduce identity-level face recognition in this MVP; observable facial traits are allowed as ordinary appearance cues
-- Treat ReID as optional weak evidence only, not as the primary decision source
+## When to Use
 
-## Runtime entry points
+- The user is tracking one person across sampled video frames.
+- The user may interrupt, ask a question, refine the description, or replace the target mid-session.
+- The latest frame already has candidate detections with stable `bounding_box_id` values.
+- The host agent needs to decide whether the next move is `reply`, `init`, `track`, or `rewrite_memory`.
+- The backend stores raw state, but the agent still needs to assemble working context locally.
 
-- Query plan builder: `scripts/build_query_plan.py`
-- One-shot replay helper: `scripts/track_from_description.py` (requires per-frame candidate detections with stable bounding box IDs)
-- Session store: `scripts/session_store.py`
-- Runtime state helper: `scripts/runtime_state.py`
-- Frame/query readers: `scripts/frame_manifest_reader.py`, `scripts/history_queue.py`
+Do not use this skill for:
 
-## Interaction model
+- One-shot detection tasks that do not need session memory or conversational recovery.
+- Identity-level face recognition workflows.
+- ReID-first pipelines where appearance reasoning is only secondary.
+- Backends that expect a rigid intent taxonomy or a monolithic round runner.
 
-This is one unified conversational skill, not a menu of separate user-facing modes.
+## MVP Boundary
+
+- Use DashScope via the OpenAI-compatible endpoint configured in `.ENV`.
+- Use the local frame queue and query plan already produced by the project runtime.
+- Do not introduce identity-level face recognition in this MVP. Visible facial traits are ordinary appearance cues only.
+- Treat ReID as optional weak evidence, never as the primary decision source.
+
+## Core Pattern
 
 For each new user turn:
 
-1. Read the active session and current runtime context.
-2. Interpret the new message in context instead of forcing an up-front closed-set intent label.
-3. Decide what combination of tool calls best moves the session forward.
-4. Use the flow documents below as reusable patterns, not as a rigid taxonomy.
+1. Read the active session, current runtime batch, memory, and latest result.
+2. Interpret the message in session context instead of forcing an up-front intent label.
+3. Choose the smallest next move that advances the session.
+4. Ask one focused clarification question when ambiguity remains.
+5. Rewrite memory only after a successful `init` or `track`.
 
 Read [interaction-policy.md](./references/interaction-policy.md) before combining tools.
 
-The host agent should expose and combine these skill-level tools:
+## Quick Reference
 
-- `reply`: answer a tracking-related question or ask one focused clarification question without mutating target binding
-- `init`: bind a new target from the latest frame using the current user description
-- `track`: continue binding the active target on the latest frame using memory and recent session context
-- `rewrite_memory`: optionally rewrite memory after a successful `init` or `track`
+| Situation | Preferred move | Primary reference |
+| --- | --- | --- |
+| User defines or replaces a target | `init` | [init-tool.md](./flows/init-tool.md) |
+| Active target should continue on the latest batch | `track` | [track-tool.md](./flows/track-tool.md) |
+| Ambiguity remains or the user says the target is wrong | focused clarification via `reply`, then rerun | [clarify-flow.md](./flows/clarify-flow.md) |
+| User asks a tracking-related question | `reply` | [reply-tool.md](./flows/reply-tool.md) |
+| `init` or `track` succeeds and memory should improve | `rewrite_memory` | [rewrite-memory-tool.md](./flows/rewrite-memory-tool.md) |
 
-The backend in this repository is not the dialogue orchestrator. It only stores raw session state, serves frame assets, and accepts agent results. The host agent should read `/api/v1/sessions/{session_id}`, build its own working context locally, run this skill externally, then post the chosen tool result to `/api/v1/sessions/{session_id}/agent-result`.
+## Canonical References
 
-Reusable flow patterns:
+- [interaction-policy.md](./references/interaction-policy.md): how the host agent should reason about each turn
+- [output-contracts.md](./references/output-contracts.md): the only canonical tool outputs
+- [memory-format.md](./references/memory-format.md): the only canonical memory-writing rules
+- [prompting-guidelines.md](./references/prompting-guidelines.md): high-level prompting constraints for localization and chat
 
-1. [init.md](./flows/init.md)
-2. [localize.md](./flows/localize.md)
-3. [update-memory.md](./flows/update-memory.md)
-4. [clarify.md](./flows/clarify.md)
-5. [answer-chat.md](./flows/answer-chat.md)
+## Deterministic Helpers
 
-## Required references
+- Primary runtime entrypoints: [pi_backend_bridge.py](./scripts/pi_backend_bridge.py), [pi_agent_adapter.py](./scripts/pi_agent_adapter.py), [agent_common.py](./scripts/agent_common.py)
+- Integration harness helpers: [build_query_plan.py](./scripts/build_query_plan.py), [track_from_description.py](./scripts/track_from_description.py), [main_agent_locate.py](./scripts/main_agent_locate.py), [sub_agent_memory.py](./scripts/sub_agent_memory.py)
 
-- Memory template: [memory-format.md](./references/memory-format.md)
-- Output contracts: [output-contracts.md](./references/output-contracts.md)
-- Prompting rules: [prompting-guidelines.md](./references/prompting-guidelines.md)
-- Interaction policy: [interaction-policy.md](./references/interaction-policy.md)
-- Agent prompt/config bundle: [agent-config.json](./references/agent-config.json)
-- PI Agent tool contract: [pi-agent-tools.json](./references/pi-agent-tools.json)
-- PI host agent config: [pi-host-agent-config.json](./references/pi-host-agent-config.json)
+These helpers are capabilities, not a replacement for agent reasoning.
 
-## Deterministic helpers
+## Integration Artifacts
 
-- Frame manifest reader: [frame_manifest_reader.py](./scripts/frame_manifest_reader.py)
-- Query batch helper: [history_queue.py](./scripts/history_queue.py)
-- Query-plan builder wrapper: [build_query_plan.py](./scripts/build_query_plan.py)
-- Given-description tracking runner: [track_from_description.py](./scripts/track_from_description.py)
-- `track_from_description.py` now expects an external detections file and only asks the model to select a candidate `bounding_box_id`
-- Session state helper: [session_store.py](./scripts/session_store.py)
-- Runtime state helper: [runtime_state.py](./scripts/runtime_state.py)
-- Main-agent locate call: [main_agent_locate.py](./scripts/main_agent_locate.py)
-- Sub-agent memory call: [sub_agent_memory.py](./scripts/sub_agent_memory.py)
-- Tracking chat answer call: [answer_tracking_chat.py](./scripts/answer_tracking_chat.py)
-- PI Agent skill adapter: [pi_agent_adapter.py](./scripts/pi_agent_adapter.py)
-- Backend bridge for PI execution: [pi_backend_bridge.py](./scripts/pi_backend_bridge.py)
-- Target crop writer: [target_crop.py](./scripts/target_crop.py)
-- BBox visualization writer: [bbox_visualization.py](./scripts/bbox_visualization.py)
-- Memory normalizer: [memory_rewriter.py](./scripts/memory_rewriter.py)
-- Locate-result validator: [output_validator.py](./scripts/output_validator.py)
-- Shared model-call helper: [agent_common.py](./scripts/agent_common.py)
+These files are deployment-specific adapters, not the core skill contract:
+
+- [agent-config.json](./references/agent-config.json)
+- [pi-agent-tools.json](./references/pi-agent-tools.json)
+- [robot-agent-config.json](./references/robot-agent-config.json)
+- [openai.yaml](./agents/openai.yaml)
+
+## Common Mistakes
+
+- Treating tool names as separate skills instead of capabilities inside one session skill.
+- Treating the flow documents as a fixed menu of intents instead of reusable patterns.
+- Letting the backend or scripts become the dialogue orchestrator.
+- Using action, pose, or transient position as the main identity cue when stable appearance is available.
+- Compressing memory into a neat summary instead of preserving dense, reusable appearance cues.
+- Guessing between similar candidates instead of asking one focused clarification question.
 
 ## Notes
 
-- The skill owns the full conversational tracking session.
-- Python helpers must stay atomic. Do not reintroduce a monolithic round runner under `skills/` or `scaffold/`.
+- The backend stores raw session state and accepts results. It is not the dialogue orchestrator.
 - Continuous end-to-end replay is allowed only as a test harness, not as the production orchestration layer.
 - All user-facing runtime entry points referenced by this skill must resolve within the skill folder itself.
-- Do not expose a fixed closed list of user-facing intents. Let the host agent decide how to combine the tool calls from context.
-- Keep memory short, natural-language, and search-oriented.
-- Do not over-compress memory; if a stable feature helps tracking, prefer keeping or expanding it instead of shortening it away.
-- Prefer dense appearance descriptions over sparse summaries, especially for hard cases with similar clothing.
-- Rewrite memory in place instead of appending logs forever.
-- Distinguish observations from hypotheses in wording.
-- Assume future views may be back-facing, side-facing, half-body, or partially occluded, so the skill should keep multiple stable cues rather than a single anchor trait.
-- Do not use action or pose as the main identification basis when stable appearance cues are available.
-- When multiple candidates remain plausible, ask one focused follow-up question instead of guessing.

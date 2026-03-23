@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from tracking_agent.robot_stream import (
@@ -11,12 +13,14 @@ from tracking_agent.robot_stream import (
     RobotFrame,
     RobotIngestEvent,
     SOCKETIO_ROBOT_AGENT_EVENT,
+    SocketIOClientManager,
     append_event_jsonl,
     event_payload,
     generate_request_id,
     generate_session_id,
     is_camera_source,
     is_websocket_url,
+    _load_socketio_async_client,
     normalize_source,
     parse_frame_rate,
     post_event_socketio,
@@ -292,3 +296,46 @@ def test_post_event_socketio_calls_robot_agent_event(tmp_path: Path) -> None:
     assert client.calls[0][1]["request_id"] == "req_001"
     assert response["status"] == 200
     assert json.loads(response["body"])["action"] == "wait"
+
+
+def test_socketio_client_manager_forces_websocket_transport(monkeypatch) -> None:
+    observed = {}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            observed["init_kwargs"] = kwargs
+
+        async def connect(self, url: str, **kwargs) -> None:
+            observed["url"] = url
+            observed["kwargs"] = kwargs
+
+        async def disconnect(self) -> None:
+            observed["disconnected"] = True
+
+    monkeypatch.setattr(
+        "tracking_agent.robot_stream._load_socketio_async_client",
+        lambda: FakeAsyncClient,
+    )
+
+    async def exercise_manager() -> None:
+        async with SocketIOClientManager("http://127.0.0.1:8001", timeout_seconds=3.0):
+            pass
+
+    asyncio.run(exercise_manager())
+
+    assert observed["url"] == "http://127.0.0.1:8001"
+    assert observed["kwargs"]["transports"] == ["websocket"]
+    assert observed["kwargs"]["socketio_path"] == "socket.io"
+    assert observed["kwargs"]["wait_timeout"] == 3.0
+    assert observed["disconnected"] is True
+
+
+def test_load_socketio_async_client_requires_aiohttp(monkeypatch) -> None:
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name: None if name == "aiohttp" else object(),
+    )
+
+    with pytest.raises(RuntimeError, match="aiohttp"):
+        _load_socketio_async_client()

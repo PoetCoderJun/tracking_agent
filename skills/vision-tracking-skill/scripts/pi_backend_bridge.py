@@ -88,6 +88,7 @@ def backend_result_payload(
         "target_description": str(tool_output.get("target_description", "")).strip(),
         "pending_question": tool_output.get("pending_question"),
         "latest_target_crop": tool_output.get("latest_target_crop"),
+        "robot_response": tool_output.get("robot_response"),
     }
     return payload
 

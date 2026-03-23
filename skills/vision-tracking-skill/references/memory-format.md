@@ -1,6 +1,13 @@
 # Memory Format
 
-The tracking memory should be a single dense paragraph.
+The canonical tracking memory content is a single dense paragraph.
+
+The skill uses two layers:
+
+- Model output: one paragraph of Markdown body text only
+- Stored file: the runtime may wrap that paragraph with a `# Tracking Memory` heading when persisting it locally
+
+The paragraph content is the real contract. The wrapper heading is a storage detail.
 
 ## Rules
 
@@ -22,7 +29,7 @@ The tracking memory should be a single dense paragraph.
 - Then state how to distinguish the target from nearby people.
 - Distinguish observations from hypotheses in wording.
 
-## Example skeleton
+## Stored Markdown Example
 
 ```md
 # Tracking Memory

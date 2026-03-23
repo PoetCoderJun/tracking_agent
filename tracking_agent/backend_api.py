@@ -139,6 +139,7 @@ class AgentResultRequest(BaseModel):
     target_description: str = ""
     pending_question: Optional[str] = None
     latest_target_crop: Optional[str] = None
+    robot_response: Optional[dict[str, Any]] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -425,62 +426,65 @@ def create_app(
             "agent_result_path": public_url(f"/api/v1/sessions/{session.session_id}/agent-result"),
         }
 
+    def normalize_robot_agent_payload(
+        payload: dict[str, Any],
+        request: RobotAgentRequest,
+    ) -> dict:
+        normalized = dict(payload)
+        normalized["request_id"] = str(normalized.get("request_id") or request.request_id)
+        normalized["session_id"] = str(normalized.get("session_id") or request.session_id)
+        normalized["function"] = str(normalized.get("function") or request.function)
+
+        if request.function == "chat":
+            normalized["text"] = str(normalized.get("text", "")).strip()
+            return normalized
+
+        normalized["frame_id"] = str(normalized.get("frame_id") or request.frame_id)
+        action = str(normalized.get("action", "wait")).strip().lower() or "wait"
+        if action not in {"wait", "ask", "track", "stop"}:
+            action = "wait"
+        normalized["action"] = action
+        normalized["text"] = str(normalized.get("text", "")).strip() or "等待云端结果。"
+        if action == "track" and normalized.get("target_id") is not None:
+            normalized["target_id"] = int(normalized["target_id"])
+        else:
+            normalized.pop("target_id", None)
+        return normalized
+
     def robot_agent_response_payload(
         session: BackendSession,
         request: RobotAgentRequest,
     ) -> dict:
         matched_agent_result = _matched_agent_result(session, request_id=request.request_id)
+        if matched_agent_result is not None:
+            robot_response = matched_agent_result.get("robot_response")
+            if isinstance(robot_response, dict):
+                return normalize_robot_agent_payload(robot_response, request)
+
         if request.function == "chat":
-            if matched_agent_result is None:
-                return {
-                    "request_id": request.request_id,
-                    "session_id": request.session_id,
-                    "function": "chat",
-                    "text": "等待云端结果。",
-                }
             return {
                 "request_id": request.request_id,
                 "session_id": request.session_id,
                 "function": "chat",
-                "text": str(matched_agent_result.get("text", "")).strip(),
+                "text": (
+                    "等待云端结果。"
+                    if matched_agent_result is None
+                    else str(matched_agent_result.get("text", "")).strip()
+                ),
             }
 
-        action = "wait"
-        text = "等待云端结果。"
-        target_id = None
-        if matched_agent_result is not None:
-            behavior = str(matched_agent_result.get("behavior", "")).strip().lower()
-            if behavior in {"stop", "reset"}:
-                action = "stop"
-                text = str(matched_agent_result.get("text", "")).strip() or "结束当前跟踪。"
-            elif (
-                bool(matched_agent_result.get("needs_clarification"))
-                or session.pending_question
-                or matched_agent_result.get("clarification_question")
-            ):
-                action = "ask"
-                text = (
-                    session.pending_question
-                    or str(matched_agent_result.get("clarification_question", "")).strip()
-                    or str(matched_agent_result.get("text", "")).strip()
-                )
-            elif bool(matched_agent_result.get("found")) and matched_agent_result.get("target_id") is not None:
-                action = "track"
-                target_id = int(matched_agent_result["target_id"])
-                text = str(matched_agent_result.get("text", "")).strip() or f"正在持续跟踪 id 为 {target_id} 的目标。"
-            else:
-                text = str(matched_agent_result.get("text", "")).strip() or "暂时无法确认目标。"
-        payload = {
+        return {
             "request_id": request.request_id,
             "session_id": request.session_id,
             "function": "tracking",
             "frame_id": request.frame_id,
-            "action": action,
-            "text": text,
+            "action": "wait",
+            "text": (
+                "等待云端结果。"
+                if matched_agent_result is None
+                else str(matched_agent_result.get("text", "")).strip() or "等待云端结果。"
+            ),
         }
-        if action == "track" and target_id is not None:
-            payload["target_id"] = target_id
-        return payload
 
     def handle_robot_agent_request(payload: RobotAgentRequest) -> dict:
         if payload.function == "tracking":

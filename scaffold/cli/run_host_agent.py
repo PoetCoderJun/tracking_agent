@@ -5,7 +5,6 @@ import asyncio
 import argparse
 import json
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -18,13 +17,10 @@ if str(SKILL_SCRIPTS_DIR) not in sys.path:
 
 import pi_agent_adapter as adapter
 import pi_backend_bridge as bridge
-from tracking_agent.service_urls import build_backend_service_url, normalize_base_url
+from tracking_agent.service_urls import build_backend_service_url
 
 
-@dataclass(frozen=True)
-class ToolRequest:
-    tool_name: str
-    arguments: Dict[str, Any]
+ToolRequest = adapter.ToolRequest
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,184 +46,55 @@ def parse_args() -> argparse.Namespace:
 
 
 def _optional_text(value: Any) -> Optional[str]:
-    if value in (None, ""):
-        return None
-    cleaned = str(value).strip()
-    return cleaned or None
+    return adapter.optional_text(value)
 
 
 def _latest_frame_id(raw_session: Dict[str, Any]) -> Optional[str]:
-    frames = raw_session.get("recent_frames") or []
-    if not frames:
-        return None
-    return _optional_text(frames[-1].get("frame_id"))
+    return adapter.latest_frame_id(raw_session)
 
 
 def _latest_request_id(raw_session: Dict[str, Any]) -> Optional[str]:
-    return _optional_text(raw_session.get("latest_request_id"))
+    return adapter.latest_request_id(raw_session)
 
 
 def _latest_request_function(raw_session: Dict[str, Any]) -> Optional[str]:
-    return _optional_text(raw_session.get("latest_request_function"))
+    return adapter.latest_request_function(raw_session)
 
 
 def _latest_result_frame_id(raw_session: Dict[str, Any]) -> Optional[str]:
-    latest_result = raw_session.get("latest_result") or {}
-    return _optional_text(latest_result.get("frame_id"))
+    return adapter.latest_result_frame_id(raw_session)
 
 
 def _latest_result_request_id(raw_session: Dict[str, Any]) -> Optional[str]:
-    latest_result = raw_session.get("latest_result") or {}
-    return _optional_text(latest_result.get("request_id"))
+    return adapter.latest_result_request_id(raw_session)
 
 
 def latest_user_text(raw_session: Dict[str, Any]) -> Optional[str]:
-    history = raw_session.get("conversation_history") or []
-    for entry in reversed(history):
-        if str(entry.get("role", "")).strip() != "user":
-            continue
-        text = _optional_text(entry.get("text"))
-        if text:
-            return text
-    return None
+    return adapter.latest_user_text(raw_session)
 
 
 def session_has_active_target(raw_session: Dict[str, Any]) -> bool:
-    return bool(
-        raw_session.get("latest_target_id") is not None
-        and _optional_text(raw_session.get("latest_confirmed_frame_path"))
-    )
+    return adapter.session_has_active_target(raw_session)
 
 
 def is_ongoing_text(text: Optional[str], ongoing_text: str) -> bool:
-    normalized_text = _optional_text(text)
-    normalized_ongoing = _optional_text(ongoing_text)
-    if normalized_text is None or normalized_ongoing is None:
-        return False
-    return normalized_text == normalized_ongoing
+    return adapter.is_ongoing_text(text, ongoing_text)
 
 
 def is_explicit_init_text(text: Optional[str], ongoing_text: str) -> bool:
-    normalized_text = _optional_text(text)
-    if normalized_text is None or is_ongoing_text(normalized_text, ongoing_text):
-        return False
-
-    init_prefixes = (
-        "跟踪",
-        "重新跟踪",
-        "开始跟踪",
-        "改跟踪",
-        "改为跟踪",
-        "换成跟踪",
-    )
-    init_keywords = (
-        "换目标",
-        "换一个",
-        "换人",
-        "重新跟踪",
-        "改跟踪",
-        "改为跟踪",
-        "换成跟踪",
-    )
-    return normalized_text.startswith(init_prefixes) or any(keyword in normalized_text for keyword in init_keywords)
+    return adapter.is_explicit_init_text(text, ongoing_text)
 
 
 def is_reset_context_text(text: Optional[str]) -> bool:
-    normalized_text = _optional_text(text)
-    if normalized_text is None:
-        return False
-
-    lowered = normalized_text.lower()
-    exact_matches = {
-        "clear context",
-        "reset context",
-        "clear memory",
-        "reset memory",
-    }
-    keyword_matches = (
-        "清空上下文",
-        "重置上下文",
-        "清空context",
-        "重置context",
-        "清空记忆",
-        "重置记忆",
-        "清空memory",
-        "重置memory",
-    )
-    return lowered in exact_matches or any(keyword in normalized_text for keyword in keyword_matches)
+    return adapter.is_reset_context_text(text)
 
 
 def session_needs_processing(raw_session: Dict[str, Any]) -> bool:
-    latest_request_id = _latest_request_id(raw_session)
-    if latest_request_id is not None:
-        return latest_request_id != _latest_result_request_id(raw_session)
-    latest_frame_id = _latest_frame_id(raw_session)
-    if latest_frame_id is None:
-        return False
-    return latest_frame_id != _latest_result_frame_id(raw_session)
+    return adapter.session_needs_processing(raw_session)
 
 
 def select_tool_request(raw_session: Dict[str, Any], ongoing_text: str) -> Optional[ToolRequest]:
-    latest_user = latest_user_text(raw_session)
-    latest_result = raw_session.get("latest_result") or {}
-    latest_request_function = _latest_request_function(raw_session)
-    if is_reset_context_text(latest_user) and latest_result.get("behavior") != "reset":
-        return ToolRequest(
-            tool_name="reset_context",
-            arguments={},
-        )
-
-    if not session_needs_processing(raw_session):
-        return None
-
-    pending_question = _optional_text(raw_session.get("pending_question"))
-
-    if latest_request_function == "chat":
-        question_text = latest_user or pending_question or ""
-        if not question_text:
-            return None
-        return ToolRequest(
-            tool_name="reply",
-            arguments={"question": question_text},
-        )
-
-    if pending_question and is_ongoing_text(latest_user, ongoing_text):
-        return ToolRequest(
-            tool_name="reply",
-            arguments={
-                "text": pending_question,
-                "needs_clarification": True,
-                "clarification_question": pending_question,
-            },
-        )
-
-    if session_has_active_target(raw_session) and is_explicit_init_text(latest_user, ongoing_text):
-        return ToolRequest(
-            tool_name="init",
-            arguments={"target_description": latest_user},
-        )
-
-    if not session_has_active_target(raw_session):
-        target_description = latest_user or _optional_text(raw_session.get("target_description"))
-        if not target_description or is_ongoing_text(target_description, ongoing_text):
-            clarification = pending_question or "请再描述一下你要跟踪的人。"
-            return ToolRequest(
-                tool_name="reply",
-                arguments={
-                    "text": clarification,
-                    "needs_clarification": True,
-                    "clarification_question": clarification,
-                },
-            )
-        return ToolRequest(
-            tool_name="init",
-            arguments={"target_description": target_description},
-        )
-
-    return ToolRequest(
-        tool_name="track",
-        arguments={"user_text": latest_user or ongoing_text},
-    )
+    return adapter.select_tool_request(raw_session, ongoing_text)
 
 
 def build_session_url(backend_base_url: str, session_id: str) -> str:

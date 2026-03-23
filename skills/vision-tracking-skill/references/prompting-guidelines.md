@@ -6,6 +6,8 @@
 - The current memory is search context, not a source of unquestioned truth.
 - The newest frame is the output frame for bbox coordinates.
 - History frames are supporting context, but identity matching should still rely primarily on stable appearance.
+- The canonical output shapes live in [output-contracts.md](./output-contracts.md).
+- The canonical memory-writing rules live in [memory-format.md](./memory-format.md).
 
 ## Human-in-the-loop
 
@@ -14,18 +16,11 @@
 - Clarification should narrow by distinguishing appearance first, and only use static spatial relations as secondary support when needed.
 - Free-form chat should answer from memory and recent frames without resetting the session.
 
-## Memory update rules
+## Localization heuristics
 
-- Rewrite in place instead of appending logs.
-- Keep stable target cues when they remain useful, and prefer adding new detail over deleting old detail.
-- Use one compact paragraph instead of sectioned memory.
-- Do not shorten memory just to make it neat; for tracking, richer stable appearance detail is usually better than a terse summary.
-- Focus on two things only: detailed target appearance and how to distinguish the target from nearby people.
-- Prefer top-to-bottom appearance descriptions: hair and visible facial traits, upper-body clothing, lower-body clothing, shoes, body build, bags, and accessories.
-- Assume future frames may show arbitrary pose, turning, partial body crops, back view, or occlusion.
-- Avoid single-cue matching; use several stable appearance cues that can back each other up.
+- Prefer candidates that remain consistent across multiple stable cue groups.
+- Avoid single-cue matching, especially in side-by-side or crossing cases.
 - Treat currently invisible cues as unknown, not as negative evidence.
-- For continuous tracking, prefer candidates that remain consistent across multiple cue groups; do not switch identities based on one newly visible weak cue.
 - Do not use action, pose, gait, temporary orientation, or instantaneous location as the main identifying cue.
 - Phrase uncertainty as tentative hypotheses.
 

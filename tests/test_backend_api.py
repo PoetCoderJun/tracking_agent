@@ -14,6 +14,28 @@ def _fake_image_base64() -> str:
     return base64.b64encode(b"fake-image-bytes").decode("ascii")
 
 
+def _tracking_robot_response(
+    *,
+    request_id: str,
+    session_id: str,
+    frame_id: str,
+    action: str,
+    text: str,
+    target_id: int | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "request_id": request_id,
+        "session_id": session_id,
+        "function": "tracking",
+        "frame_id": frame_id,
+        "action": action,
+        "text": text,
+    }
+    if target_id is not None:
+        payload["target_id"] = target_id
+    return payload
+
+
 def test_websocket_receives_updates_when_robot_event_arrives(
     tmp_path: Path,
 ) -> None:
@@ -191,6 +213,14 @@ def test_robot_agent_websocket_returns_tracking_response(tmp_path: Path) -> None
                         "needs_clarification": False,
                         "clarification_question": None,
                         "memory": "短发，黑衣服。",
+                        "robot_response": _tracking_robot_response(
+                            request_id="req_001",
+                            session_id="sess_001",
+                            frame_id="frame_000001",
+                            action="track",
+                            text="正在持续跟踪。",
+                            target_id=12,
+                        ),
                     },
                 )
                 result_holder["status_code"] = response.status_code

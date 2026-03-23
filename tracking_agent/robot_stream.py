@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib.util
 import json
 import subprocess
 import time
@@ -190,6 +191,10 @@ def _load_socketio_async_client():
         raise RuntimeError(
             "Missing socket.io client dependency. Install the 'python-socketio[client]' package before running robot streaming."
         ) from exc
+    if importlib.util.find_spec("aiohttp") is None:
+        raise RuntimeError(
+            "Missing socket.io async transport dependency. Install the 'aiohttp' package or re-sync the project before running robot streaming with --backend-protocol socketio-agent."
+        )
     return socketio.AsyncClient
 
 
@@ -209,6 +214,7 @@ class SocketIOClientManager:
         )
         await client.connect(
             self._base_url,
+            transports=["websocket"],
             socketio_path=SOCKETIO_PATH,
             wait=True,
             wait_timeout=self._timeout_seconds,

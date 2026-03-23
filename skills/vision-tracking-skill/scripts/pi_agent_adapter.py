@@ -38,6 +38,12 @@ class DetectionRecord:
     score: float
 
 
+@dataclass(frozen=True)
+class ToolRequest:
+    tool_name: str
+    arguments: Dict[str, Any]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="PI Agent adapter for the vision tracking skill.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -82,6 +88,172 @@ def optional_text(value: Any) -> Optional[str]:
     if value in (None, ""):
         return None
     return str(value).strip() or None
+
+
+def latest_user_text(raw_session: Dict[str, Any]) -> Optional[str]:
+    history = raw_session.get("conversation_history") or []
+    for entry in reversed(history):
+        if str(entry.get("role", "")).strip() != "user":
+            continue
+        text = optional_text(entry.get("text"))
+        if text:
+            return text
+    return None
+
+
+def latest_request_id(raw_session: Dict[str, Any]) -> Optional[str]:
+    return optional_text(raw_session.get("latest_request_id"))
+
+
+def latest_request_function(raw_session: Dict[str, Any]) -> Optional[str]:
+    return optional_text(raw_session.get("latest_request_function"))
+
+
+def latest_result_frame_id(raw_session: Dict[str, Any]) -> Optional[str]:
+    latest_result = raw_session.get("latest_result") or {}
+    return optional_text(latest_result.get("frame_id"))
+
+
+def latest_result_request_id(raw_session: Dict[str, Any]) -> Optional[str]:
+    latest_result = raw_session.get("latest_result") or {}
+    return optional_text(latest_result.get("request_id"))
+
+
+def latest_frame_id(raw_session: Dict[str, Any]) -> Optional[str]:
+    frames = raw_session.get("recent_frames") or []
+    if not frames:
+        return None
+    return optional_text(frames[-1].get("frame_id"))
+
+
+def is_ongoing_text(text: Optional[str], ongoing_text: str) -> bool:
+    normalized_text = optional_text(text)
+    normalized_ongoing = optional_text(ongoing_text)
+    if normalized_text is None or normalized_ongoing is None:
+        return False
+    return normalized_text == normalized_ongoing
+
+
+def is_explicit_init_text(text: Optional[str], ongoing_text: str) -> bool:
+    normalized_text = optional_text(text)
+    if normalized_text is None or is_ongoing_text(normalized_text, ongoing_text):
+        return False
+
+    init_prefixes = (
+        "跟踪",
+        "重新跟踪",
+        "开始跟踪",
+        "改跟踪",
+        "改为跟踪",
+        "换成跟踪",
+    )
+    init_keywords = (
+        "换目标",
+        "换一个",
+        "换人",
+        "重新跟踪",
+        "改跟踪",
+        "改为跟踪",
+        "换成跟踪",
+    )
+    return normalized_text.startswith(init_prefixes) or any(
+        keyword in normalized_text for keyword in init_keywords
+    )
+
+
+def is_reset_context_text(text: Optional[str]) -> bool:
+    normalized_text = optional_text(text)
+    if normalized_text is None:
+        return False
+
+    lowered = normalized_text.lower()
+    exact_matches = {
+        "clear context",
+        "reset context",
+        "clear memory",
+        "reset memory",
+    }
+    keyword_matches = (
+        "清空上下文",
+        "重置上下文",
+        "清空context",
+        "重置context",
+        "清空记忆",
+        "重置记忆",
+        "清空memory",
+        "重置memory",
+    )
+    return lowered in exact_matches or any(keyword in normalized_text for keyword in keyword_matches)
+
+
+def session_needs_processing(raw_session: Dict[str, Any]) -> bool:
+    request_id = latest_request_id(raw_session)
+    if request_id is not None:
+        return request_id != latest_result_request_id(raw_session)
+    frame_id = latest_frame_id(raw_session)
+    if frame_id is None:
+        return False
+    return frame_id != latest_result_frame_id(raw_session)
+
+
+def select_tool_request(raw_session: Dict[str, Any], ongoing_text: str) -> Optional[ToolRequest]:
+    latest_user = latest_user_text(raw_session)
+    latest_result = raw_session.get("latest_result") or {}
+    request_function = latest_request_function(raw_session)
+    if is_reset_context_text(latest_user) and latest_result.get("behavior") != "reset":
+        return ToolRequest(tool_name="reset_context", arguments={})
+
+    if not session_needs_processing(raw_session):
+        return None
+
+    pending_question = optional_text(raw_session.get("pending_question"))
+
+    if request_function == "chat":
+        question_text = latest_user or pending_question or ""
+        if not question_text:
+            return None
+        return ToolRequest(
+            tool_name="reply",
+            arguments={"question": question_text},
+        )
+
+    if pending_question and is_ongoing_text(latest_user, ongoing_text):
+        return ToolRequest(
+            tool_name="reply",
+            arguments={
+                "text": pending_question,
+                "needs_clarification": True,
+                "clarification_question": pending_question,
+            },
+        )
+
+    if session_has_active_target(raw_session) and is_explicit_init_text(latest_user, ongoing_text):
+        return ToolRequest(
+            tool_name="init",
+            arguments={"target_description": latest_user},
+        )
+
+    if not session_has_active_target(raw_session):
+        target_description = latest_user or optional_text(raw_session.get("target_description"))
+        if not target_description or is_ongoing_text(target_description, ongoing_text):
+            clarification = pending_question or "请再描述一下你要跟踪的人。"
+            return ToolRequest(
+                tool_name="reply",
+                arguments={
+                    "text": clarification,
+                    "needs_clarification": True,
+                    "clarification_question": clarification,
+                },
+            )
+        return ToolRequest(
+            tool_name="init",
+            arguments={"target_description": target_description},
+        )
+
+    return ToolRequest(
+        tool_name="track",
+        arguments={"user_text": latest_user or ongoing_text},
+    )
 
 
 def extract_bounding_box_id(payload: Dict[str, Any]) -> Optional[int]:
@@ -169,6 +341,8 @@ def build_working_context(raw_session: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "session_id": str(raw_session["session_id"]),
         "device_id": str(raw_session.get("device_id", "")),
+        "latest_request_id": latest_request_id(raw_session),
+        "latest_request_function": latest_request_function(raw_session),
         "target_description": str(raw_session.get("target_description", "")),
         "memory": str(raw_session.get("latest_memory", "")),
         "latest_memory": str(raw_session.get("latest_memory", "")),
@@ -379,6 +553,55 @@ def rewrite_memory_frame_paths(
     return [str(previous_frame_path), str(current_frame_path)]
 
 
+def build_robot_response(context: Dict[str, Any], result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    request_function = optional_text(context.get("latest_request_function"))
+    if request_function is None:
+        return None
+
+    request_id = optional_text(context.get("latest_request_id"))
+    session_id = str(context.get("session_id", "")).strip()
+
+    if request_function == "chat":
+        return {
+            "request_id": request_id,
+            "session_id": session_id,
+            "function": "chat",
+            "text": str(result.get("text", "")).strip(),
+        }
+
+    if request_function != "tracking":
+        return None
+
+    action = "wait"
+    target_id = result.get("target_id")
+    clarification_question = optional_text(result.get("clarification_question"))
+    pending_question = optional_text(result.get("pending_question"))
+    text = str(result.get("text", "")).strip() or "等待云端结果。"
+    behavior = str(result.get("behavior", "")).strip().lower()
+
+    if behavior in {"stop", "reset"}:
+        action = "stop"
+        text = text or "结束当前跟踪。"
+    elif bool(result.get("needs_clarification")) or pending_question or clarification_question:
+        action = "ask"
+        text = pending_question or clarification_question or text or "请进一步说明目标。"
+    elif bool(result.get("found")) and target_id is not None:
+        action = "track"
+        text = text or f"正在持续跟踪 id 为 {int(target_id)} 的目标。"
+
+    payload: Dict[str, Any] = {
+        "request_id": request_id,
+        "session_id": session_id,
+        "function": "tracking",
+        "frame_id": result.get("frame_id"),
+        "action": action,
+        "text": text,
+    }
+    if action == "track" and target_id is not None:
+        payload["target_id"] = int(target_id)
+    return payload
+
+
 def execute_reply_tool(
     context: Dict[str, Any],
     arguments: Dict[str, Any],
@@ -413,7 +636,7 @@ def execute_reply_tool(
     needs_clarification = bool(arguments.get("needs_clarification", clarification_question is not None))
     pending_question = clarification_question if needs_clarification else None
 
-    return {
+    payload = {
         "behavior": "reply",
         "text": text,
         "frame_id": (None if latest_frame_payload is None else str(latest_frame_payload.get("frame_id", "")) or None)
@@ -426,6 +649,8 @@ def execute_reply_tool(
         "pending_question": pending_question,
         "elapsed_seconds": None if not question else output["elapsed_seconds"],
     }
+    payload["robot_response"] = build_robot_response(context, payload)
+    return payload
 
 
 def execute_select_tool(
@@ -576,7 +801,7 @@ def execute_select_tool(
             )
             break
 
-    return {
+    payload = {
         "behavior": behavior,
         "text": normalized["text"],
         "frame_id": str(frame["frame_id"]),
@@ -598,6 +823,8 @@ def execute_select_tool(
         "elapsed_seconds": output["elapsed_seconds"],
         "latest_result_summary": latest_result_summary(context),
     }
+    payload["robot_response"] = build_robot_response(context, payload)
+    return payload
 
 
 def execute_rewrite_memory_tool(

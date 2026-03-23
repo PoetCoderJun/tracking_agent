@@ -61,6 +61,17 @@ function getTrackingStatus(latestResult) {
   return { label: "waiting", tone: "neutral" };
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return "n/a";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "n/a";
+  }
+  return parsed.toLocaleString();
+}
+
 function StatusPill({ latestResult }) {
   const status = getTrackingStatus(latestResult);
   return <span className={`pill pill-${status.tone}`}>{status.label}</span>;
@@ -191,7 +202,9 @@ function ConversationEntry({ entry }) {
 }
 
 export default function App() {
-  const [activeSession, setActiveSession] = useState(null);
+  const [sessions, setSessions] = useState([]);
+  const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [selectedSessionRefreshKey, setSelectedSessionRefreshKey] = useState(0);
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
   const [health, setHealth] = useState("checking");
@@ -200,6 +213,11 @@ export default function App() {
   const imageRef = useRef(null);
   const viewerHostRef = useRef(null);
   const [viewerHostSize, setViewerHostSize] = useState({ width: 0, height: 0 });
+  const selectedSessionIdRef = useRef("");
+
+  useEffect(() => {
+    selectedSessionIdRef.current = selectedSessionId;
+  }, [selectedSessionId]);
 
   useEffect(() => {
     let disposed = false;
@@ -231,14 +249,50 @@ export default function App() {
         if (payload?.type === "dashboard_state" || payload?.type === "session_update") {
           const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
           const nextState = payload.frontend_state ?? null;
-          const nextActiveSession =
-            (nextState
-              ? sessions.find((session) => String(session.session_id) === String(nextState.session_id))
-              : null) ??
-            sessions[0] ??
-            null;
-          setActiveSession(nextActiveSession);
-          setState(nextState);
+          const selectedId = selectedSessionIdRef.current;
+
+          setSessions(sessions);
+          setSelectedSessionId((currentId) => {
+            const normalizedCurrentId = String(currentId || "");
+            if (
+              normalizedCurrentId &&
+              sessions.some((session) => String(session.session_id) === normalizedCurrentId)
+            ) {
+              return normalizedCurrentId;
+            }
+
+            const payloadSessionId = String(payload?.session_id || "");
+            if (
+              payloadSessionId &&
+              sessions.some((session) => String(session.session_id) === payloadSessionId)
+            ) {
+              return payloadSessionId;
+            }
+
+            return sessions[0] ? String(sessions[0].session_id) : "";
+          });
+
+          if (sessions.length === 0) {
+            setState(null);
+          } else if (nextState) {
+            const nextStateId = String(nextState.session_id || "");
+            const shouldApplyState =
+              !selectedId ||
+              selectedId === nextStateId ||
+              !sessions.some((session) => String(session.session_id) === selectedId);
+            if (shouldApplyState) {
+              setState(nextState);
+            }
+          }
+          if (
+            payload?.type === "dashboard_state" &&
+            selectedId &&
+            sessions.some((session) => String(session.session_id) === selectedId) &&
+            String(nextState?.session_id || "") !== selectedId
+          ) {
+            setSelectedSessionRefreshKey((value) => value + 1);
+          }
+
           setError("");
           setHealth("online");
         }
@@ -270,6 +324,48 @@ export default function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      setState(null);
+      return undefined;
+    }
+
+    const controller = new window.AbortController();
+    setState((currentState) => {
+      if (currentState && String(currentState.session_id) === String(selectedSessionId)) {
+        return currentState;
+      }
+      return null;
+    });
+
+    async function loadFrontendState() {
+      try {
+        const frontendStateUrl = resolveBackendUrl(
+          `/api/v1/sessions/${encodeURIComponent(selectedSessionId)}/frontend-state`
+        );
+        const response = await window.fetch(frontendStateUrl, {
+          signal: controller.signal
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load session state (${response.status})`);
+        }
+        const payload = await response.json();
+        setState(payload);
+        setError("");
+      } catch (fetchError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setError(fetchError instanceof Error ? fetchError.message : "Failed to load session state.");
+      }
+    }
+
+    loadFrontendState();
+    return () => {
+      controller.abort();
+    };
+  }, [selectedSessionId, selectedSessionRefreshKey]);
 
   useEffect(() => {
     const image = imageRef.current;
@@ -320,17 +416,19 @@ export default function App() {
     };
   }, []);
 
+  const selectedSession = useMemo(
+    () =>
+      sessions.find((session) => String(session.session_id) === String(selectedSessionId)) ?? null,
+    [selectedSessionId, sessions]
+  );
   const latestResult = state?.latest_result ?? null;
   const latestFrame = state?.latest_frame ?? null;
   const displayFrame = state?.display_frame ?? null;
-  const activeSessionId = state?.session_id || activeSession?.session_id || "";
-  const activeSessionLabel = state?.device_id || activeSession?.device_id || "No active session";
+  const activeSessionId = selectedSessionId || state?.session_id || "";
+  const activeSessionLabel = state?.device_id || selectedSession?.device_id || "No active session";
   const resultHistory = state?.result_history ?? [];
   const lastUpdate = useMemo(() => {
-    if (!state?.updated_at) {
-      return "n/a";
-    }
-    return new Date(state.updated_at).toLocaleString();
+    return formatDateTime(state?.updated_at);
   }, [state?.updated_at]);
   const timelineEntries = useMemo(
     () => [...resultHistory].slice(-6).reverse(),
@@ -368,6 +466,15 @@ export default function App() {
       height: `${Math.floor(height)}px`
     };
   }, [imageSize.height, imageSize.width, viewerHostSize.height, viewerHostSize.width]);
+
+  function handleSelectSession(sessionId) {
+    const normalizedSessionId = String(sessionId || "");
+    if (!normalizedSessionId || normalizedSessionId === String(selectedSessionId)) {
+      return;
+    }
+    setSelectedSessionId(normalizedSessionId);
+    setError("");
+  }
 
   async function handleResetContext() {
     if (!activeSessionId || resettingContext) {
@@ -417,7 +524,7 @@ export default function App() {
 
           <div className="session-toolbar">
             <div className="session-current">
-              <span className="session-current-label">Current session</span>
+              <span className="session-current-label">Watching</span>
               <strong>{activeSessionLabel}</strong>
               <span>{activeSessionId || "Waiting for session"}</span>
             </div>
@@ -431,11 +538,43 @@ export default function App() {
             </button>
           </div>
 
+          <div className="session-switcher">
+            <label className="session-switcher-label" htmlFor="session-select">
+              Monitor session
+            </label>
+            <div className="session-switcher-row">
+              <select
+                id="session-select"
+                className="session-select"
+                value={selectedSessionId}
+                onChange={(event) => handleSelectSession(event.target.value)}
+                disabled={!sessions.length}
+              >
+                {sessions.length ? (
+                  sessions.map((session) => (
+                    <option key={session.session_id} value={session.session_id}>
+                      {(session.device_id || "Unknown device") + " | " + session.session_id}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">No sessions yet</option>
+                )}
+              </select>
+              <span className="session-list-count">{sessions.length}</span>
+            </div>
+            <div className="session-switcher-meta">
+              <span>{selectedSession?.updated_at ? `Updated ${formatDateTime(selectedSession.updated_at)}` : "Waiting for updates"}</span>
+              <StatusPill latestResult={selectedSession?.latest_result ?? latestResult} />
+            </div>
+          </div>
+
           <div className="brand-summary">
             <span className={health === "online" ? "health-chip health-online" : "health-chip health-offline"}>
               {health}
             </span>
-            <span className="summary-chip">Session controls</span>
+            <span className="summary-chip">
+              {sessions.length} session{sessions.length === 1 ? "" : "s"}
+            </span>
           </div>
         </div>
 
@@ -518,7 +657,16 @@ export default function App() {
                     <DetectionOverlay displayFrame={displayFrame} imageSize={imageSize} />
                   </>
                 ) : (
-                  <div className="empty-stage" />
+                  <div className="empty-stage">
+                    <div className="empty-stage-copy">
+                      <strong>{activeSessionId ? "Waiting for tracked frame" : "Waiting for session"}</strong>
+                      <span>
+                        {activeSessionId
+                          ? "当前 session 还没有带确认框的画面，继续等待新的 agent 结果。"
+                          : "后端收到 session 后，这里会自动显示当前监视的追踪画面。"}
+                      </span>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

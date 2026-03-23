@@ -36,6 +36,15 @@ def test_backend_result_payload_maps_adapter_output() -> None:
             "target_description": "黑衣服的人",
             "pending_question": None,
             "latest_target_crop": "/tmp/crop.jpg",
+            "robot_response": {
+                "request_id": "req_001",
+                "session_id": "sess_001",
+                "function": "tracking",
+                "frame_id": "frame_000001",
+                "action": "track",
+                "text": "继续跟踪当前目标。",
+                "target_id": 12,
+            },
         },
         request_id="req_001",
         request_function="tracking",
@@ -48,6 +57,7 @@ def test_backend_result_payload_maps_adapter_output() -> None:
     assert payload["target_id"] == 12
     assert payload["bounding_box_id"] == 12
     assert payload["latest_target_crop"] == "/tmp/crop.jpg"
+    assert payload["robot_response"]["action"] == "track"
 
 
 def test_backend_memory_update_payload_maps_rewrite_output() -> None:
@@ -112,6 +122,15 @@ def test_run_bridge_posts_result_and_applies_memory_rewrite(tmp_path: Path, monk
                 "target_description": "黑衣服的人",
                 "pending_question": None,
                 "latest_target_crop": str(tmp_path / "crop.jpg"),
+                "robot_response": {
+                    "request_id": "req_001",
+                    "session_id": "sess_001",
+                    "function": "tracking",
+                    "frame_id": "frame_000001",
+                    "action": "track",
+                    "text": "已继续跟踪。",
+                    "target_id": 15,
+                },
                 "rewrite_memory_input": {
                     "task": "update",
                     "crop_path": str(tmp_path / "crop.jpg"),
@@ -163,6 +182,7 @@ def test_run_bridge_posts_result_and_applies_memory_rewrite(tmp_path: Path, monk
     assert result["posted_payload"]["frame_id"] == "frame_000001"
     assert result["posted_payload"]["request_id"] == "req_001"
     assert result["posted_payload"]["function"] == "tracking"
+    assert result["posted_payload"]["robot_response"]["action"] == "track"
     assert result["memory_update_payload"] is None
     assert len(started_workers) == 1
     assert posted[0]["url"].endswith("/api/v1/sessions/sess_001/agent-result")
@@ -193,6 +213,14 @@ def test_run_bridge_supports_dry_run(tmp_path: Path, monkeypatch) -> None:
             "clarification_question": "请再描述一下目标。",
             "memory": "",
             "pending_question": "请再描述一下目标。",
+            "robot_response": {
+                "request_id": "req_001",
+                "session_id": "sess_001",
+                "function": "tracking",
+                "frame_id": "frame_000001",
+                "action": "ask",
+                "text": "请再描述一下目标。",
+            },
         },
     )
 
