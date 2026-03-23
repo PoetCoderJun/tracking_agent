@@ -25,7 +25,7 @@ def test_parse_args_defaults_interval_to_three_seconds(monkeypatch) -> None:
     assert args.model == DEFAULT_PERSON_MODEL
     assert args.backend_url is None
     assert args.backend_base_url == "http://127.0.0.1:8001"
-    assert args.backend_protocol == "robot-agent"
+    assert args.backend_protocol == "socketio-agent"
     assert args.device is None
     assert args.imgsz is None
     assert args.vid_stride == 1
@@ -41,14 +41,14 @@ def test_parse_args_accepts_device_and_vid_stride(monkeypatch) -> None:
     assert args.vid_stride == 3
 
 
-def test_resolve_backend_url_builds_robot_agent_websocket_from_base_url(monkeypatch) -> None:
+def test_resolve_backend_url_builds_socketio_base_url_from_base_url(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
         ["run_robot_stream.py", "--source", "0", "--backend-base-url", "10.0.0.8:9000"],
     )
     args = parse_args()
 
-    assert resolve_backend_url(args) == "ws://10.0.0.8:9000/ws/robot-agent"
+    assert resolve_backend_url(args) == "http://10.0.0.8:9000"
 
 
 def test_resolve_backend_url_supports_http_ingest_channel(monkeypatch) -> None:

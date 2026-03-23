@@ -13,6 +13,11 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from tracking_agent.backend_store import BackendSession, BackendStore
 from tracking_agent.service_urls import join_url_path, normalize_base_url
 
+try:
+    import socketio
+except ImportError:  # pragma: no cover - dependency is declared in project metadata
+    socketio = None
+
 
 class FrontendUpdateBroker:
     def __init__(self) -> None:
@@ -248,7 +253,7 @@ def create_app(
     public_base_url: Optional[str] = None,
     cors_origins: Optional[Sequence[str]] = None,
     frontend_dist: Optional[Path] = None,
-) -> FastAPI:
+) -> Any:
     if external_agent_wait_seconds < 0:
         raise ValueError("external_agent_wait_seconds must be non-negative")
     if external_agent_poll_seconds <= 0:
@@ -277,6 +282,15 @@ def create_app(
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+    if socketio is None:
+        raise RuntimeError("Missing backend dependency: python-socketio")
+    socketio_cors_origins: Any = _normalize_cors_origins(cors_origins)
+    if socketio_cors_origins == ["*"]:
+        socketio_cors_origins = "*"
+    sio = socketio.AsyncServer(
+        async_mode="asgi",
+        cors_allowed_origins=socketio_cors_origins,
     )
 
     def public_url(path: str) -> str:
@@ -510,6 +524,42 @@ def create_app(
             session = waited_session
         return robot_agent_response_payload(session, payload)
 
+    def stale_robot_agent_payload(payload: RobotAgentRequest) -> dict:
+        return {
+            "request_id": payload.request_id,
+            "session_id": payload.session_id,
+            "function": payload.function,
+            "stale_ignored": True,
+        }
+
+    async def execute_robot_agent_request(
+        payload: RobotAgentRequest,
+        *,
+        return_stale_payload: bool,
+    ) -> Optional[dict]:
+        try:
+            response = await asyncio.to_thread(handle_robot_agent_request, payload)
+            latest_session = store.load_session(payload.session_id)
+            if latest_session.latest_request_id != payload.request_id:
+                return stale_robot_agent_payload(payload) if return_stale_payload else None
+            return response
+        except asyncio.CancelledError:
+            return stale_robot_agent_payload(payload) if return_stale_payload else None
+        except Exception as exc:
+            latest_request_id = None
+            try:
+                latest_request_id = store.load_session(payload.session_id).latest_request_id
+            except FileNotFoundError:
+                latest_request_id = payload.request_id
+            if latest_request_id != payload.request_id:
+                return stale_robot_agent_payload(payload) if return_stale_payload else None
+            return {
+                "request_id": payload.request_id,
+                "session_id": payload.session_id,
+                "function": payload.function,
+                "error": str(exc),
+            }
+
     def wait_for_external_agent_result(
         session_id: str,
         expected_frame_id: Optional[str] = None,
@@ -712,29 +762,12 @@ def create_app(
 
         async def process_request(payload: RobotAgentRequest) -> None:
             try:
-                response = await asyncio.to_thread(handle_robot_agent_request, payload)
-                latest_session = store.load_session(payload.session_id)
-                if latest_session.latest_request_id != payload.request_id:
-                    return
-                await send_json(response)
-            except asyncio.CancelledError:
-                return
-            except Exception as exc:
-                latest_request_id = None
-                try:
-                    latest_request_id = store.load_session(payload.session_id).latest_request_id
-                except FileNotFoundError:
-                    latest_request_id = payload.request_id
-                if latest_request_id != payload.request_id:
-                    return
-                await send_json(
-                    {
-                        "request_id": payload.request_id,
-                        "session_id": payload.session_id,
-                        "function": payload.function,
-                        "error": str(exc),
-                    }
+                response = await execute_robot_agent_request(
+                    payload,
+                    return_stale_payload=False,
                 )
+                if response is not None:
+                    await send_json(response)
             finally:
                 current = pending_tasks.get(payload.session_id)
                 if current is asyncio.current_task():
@@ -769,6 +802,48 @@ def create_app(
                 task.cancel()
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+
+    socketio_pending_tasks: dict[str, asyncio.Task[Optional[dict]]] = {}
+
+    async def _handle_socketio_robot_agent(payload_raw: dict) -> dict:
+        try:
+            payload = RobotAgentRequest(**payload_raw)
+        except ValidationError as exc:
+            return {
+                "request_id": payload_raw.get("request_id"),
+                "session_id": payload_raw.get("session_id"),
+                "function": payload_raw.get("function"),
+                "error": str(exc),
+            }
+
+        previous_task = socketio_pending_tasks.get(payload.session_id)
+        if previous_task is not None:
+            previous_task.cancel()
+
+        task = asyncio.create_task(
+            execute_robot_agent_request(
+                payload,
+                return_stale_payload=True,
+            )
+        )
+        socketio_pending_tasks[payload.session_id] = task
+        try:
+            response = await task
+        finally:
+            current = socketio_pending_tasks.get(payload.session_id)
+            if current is task:
+                socketio_pending_tasks.pop(payload.session_id, None)
+        if response is None:
+            return stale_robot_agent_payload(payload)
+        return response
+
+    @sio.on("robot-agent-request")
+    async def socketio_robot_agent_request(sid: str, payload_raw: dict) -> dict:
+        return await _handle_socketio_robot_agent(payload_raw)
+
+    @sio.on("robot_agent_request")
+    async def socketio_robot_agent_request_alias(sid: str, payload_raw: dict) -> dict:
+        return await _handle_socketio_robot_agent(payload_raw)
 
     @app.get("/api/v1/sessions/{session_id}")
     def get_session(session_id: str) -> dict:
@@ -888,4 +963,4 @@ def create_app(
                 return FileResponse(asset_path)
             return FileResponse(frontend_index)
 
-    return app
+    return socketio.ASGIApp(sio, other_asgi_app=app, socketio_path="socket.io")

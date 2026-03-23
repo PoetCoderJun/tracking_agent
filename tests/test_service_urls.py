@@ -12,6 +12,13 @@ def test_build_backend_service_url_converts_to_websocket_endpoint() -> None:
     )
 
 
+def test_build_backend_service_url_supports_socketio_robot_agent_base_url() -> None:
+    assert (
+        build_backend_service_url("https://tracking.example.com/base", channel="socketio_robot_agent")
+        == "https://tracking.example.com/base"
+    )
+
+
 def test_join_url_path_preserves_base_path() -> None:
     assert (
         join_url_path("https://tracking.example.com/base", "/api/v1/sessions/sess_001")

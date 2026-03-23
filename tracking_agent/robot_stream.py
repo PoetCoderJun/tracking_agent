@@ -17,6 +17,8 @@ from PIL import Image
 
 
 SourceValue = Union[int, str]
+SOCKETIO_PATH = "socket.io"
+SOCKETIO_ROBOT_AGENT_EVENT = "robot-agent-request"
 
 
 @dataclass(frozen=True)
@@ -181,6 +183,45 @@ def _load_websocket_connect():
     return connect
 
 
+def _load_socketio_async_client():
+    try:
+        import socketio
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing socket.io client dependency. Install the 'python-socketio[client]' package before running robot streaming."
+        ) from exc
+    return socketio.AsyncClient
+
+
+class SocketIOClientManager:
+    def __init__(self, base_url: str, timeout_seconds: float) -> None:
+        self._base_url = base_url
+        self._timeout_seconds = timeout_seconds
+        self._client: Any = None
+
+    async def __aenter__(self):
+        AsyncClient = _load_socketio_async_client()
+        client = AsyncClient(
+            reconnection=True,
+            reconnection_attempts=0,
+            logger=False,
+            engineio_logger=False,
+        )
+        await client.connect(
+            self._base_url,
+            socketio_path=SOCKETIO_PATH,
+            wait=True,
+            wait_timeout=self._timeout_seconds,
+        )
+        self._client = client
+        return client
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        if self._client is not None:
+            await self._client.disconnect()
+            self._client = None
+
+
 def post_event(
     url: str,
     event: RobotIngestEvent,
@@ -248,6 +289,38 @@ async def post_event_ws(
         }
 
 
+async def post_event_socketio(
+    client: Any,
+    event: RobotIngestEvent,
+    timeout_seconds: float = 300,
+    *,
+    request_id: str | None = None,
+    function: str = "tracking",
+) -> Dict[str, Any]:
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    if not request_id:
+        raise ValueError("request_id is required for socket.io robot-agent requests")
+    payload = robot_agent_request_payload(
+        event,
+        request_id=request_id,
+        function=function,
+    )
+    response = await client.call(
+        SOCKETIO_ROBOT_AGENT_EVENT,
+        payload,
+        timeout=timeout_seconds,
+    )
+    if not isinstance(response, dict):
+        raise RuntimeError(f"Unexpected socket.io response type: {type(response)!r}")
+    if response.get("error"):
+        raise RuntimeError(str(response.get("error")))
+    return {
+        "status": int(response.get("status", 200)),
+        "body": json.dumps(response, ensure_ascii=True),
+    }
+
+
 async def open_robot_backend_websocket(
     url: str,
     timeout_seconds: float = 300,
@@ -263,3 +336,12 @@ async def open_robot_backend_websocket(
         ping_timeout=timeout_seconds,
         max_size=None,
     )
+
+
+async def open_robot_backend_socketio(
+    base_url: str,
+    timeout_seconds: float = 300,
+):
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    return SocketIOClientManager(base_url=base_url, timeout_seconds=timeout_seconds)

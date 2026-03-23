@@ -10,6 +10,7 @@ from tracking_agent.robot_stream import (
     RobotDetection,
     RobotFrame,
     RobotIngestEvent,
+    SOCKETIO_ROBOT_AGENT_EVENT,
     append_event_jsonl,
     event_payload,
     generate_request_id,
@@ -18,6 +19,7 @@ from tracking_agent.robot_stream import (
     is_websocket_url,
     normalize_source,
     parse_frame_rate,
+    post_event_socketio,
     post_event_ws,
     robot_agent_request_payload,
     video_timestamp_seconds,
@@ -243,3 +245,50 @@ def test_post_event_ws_supports_robot_agent_protocol(tmp_path: Path) -> None:
     assert response["status"] == 200
     assert payload["request_id"] == "req_001"
     assert payload["action"] == "wait"
+
+
+def test_post_event_socketio_calls_robot_agent_event(tmp_path: Path) -> None:
+    image_path = tmp_path / "frame.jpg"
+    Image.new("RGB", (8, 8), color="white").save(image_path, format="JPEG")
+    event = RobotIngestEvent(
+        session_id="sess_001",
+        device_id="robot_01",
+        frame=RobotFrame(
+            frame_id="frame_000001",
+            timestamp_ms=1710000000000,
+            image_path=str(image_path),
+        ),
+        detections=[],
+        text="继续跟踪",
+    )
+
+    class FakeSocketIOClient:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def call(self, event_name: str, payload: dict, timeout: float):
+            self.calls.append((event_name, payload, timeout))
+            return {
+                "request_id": "req_001",
+                "session_id": "sess_001",
+                "function": "tracking",
+                "frame_id": "frame_000001",
+                "action": "wait",
+                "text": "等待云端结果。",
+            }
+
+    client = FakeSocketIOClient()
+    response = asyncio.run(
+        post_event_socketio(
+            client,
+            event,
+            timeout_seconds=1.0,
+            request_id="req_001",
+            function="tracking",
+        )
+    )
+
+    assert client.calls[0][0] == SOCKETIO_ROBOT_AGENT_EVENT
+    assert client.calls[0][1]["request_id"] == "req_001"
+    assert response["status"] == 200
+    assert json.loads(response["body"])["action"] == "wait"

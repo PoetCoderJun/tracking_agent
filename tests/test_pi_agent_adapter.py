@@ -291,6 +291,125 @@ def test_execute_init_tool_returns_rewrite_memory_input(tmp_path: Path, monkeypa
     assert Path(payload["latest_target_crop"]).exists()
 
 
+def test_execute_init_tool_honors_explicit_target_id_without_model_call(tmp_path: Path, monkeypatch) -> None:
+    adapter = _load_adapter()
+    frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
+
+    def fake_settings(_: Path) -> Settings:
+        return Settings(
+            api_key="",
+            base_url="http://example.test",
+            model="main",
+            main_model="main",
+            sub_model="sub",
+            timeout_seconds=30,
+            sample_fps=1.0,
+            query_interval_seconds=3,
+            recent_frame_count=3,
+        )
+
+    def fail_call_model(**kwargs):
+        raise AssertionError("call_model should not be used for explicit target ID selection")
+
+    monkeypatch.setattr(adapter, "load_settings", fake_settings)
+    monkeypatch.setattr(adapter, "call_model", fail_call_model)
+
+    context = {
+        "session_id": "sess_001",
+        "target_description": "",
+        "memory": "",
+        "latest_target_id": None,
+        "latest_confirmed_frame_path": None,
+        "conversation_history": [],
+        "latest_result": None,
+        "frames": [
+            {
+                "frame_id": "frame_000001",
+                "timestamp_ms": 1710000000000,
+                "image_path": str(frame_path),
+                "detections": [
+                    {"track_id": 1, "bbox": [10, 12, 36, 44], "score": 0.95},
+                    {"track_id": 2, "bbox": [40, 12, 66, 44], "score": 0.91},
+                ],
+            }
+        ],
+    }
+
+    payload = adapter.execute_tool(
+        tool_name="init",
+        context=context,
+        arguments={"target_description": "请跟踪ID为1的人"},
+        env_file=tmp_path / ".ENV",
+        config_path=adapter.DEFAULT_CONFIG_PATH,
+        artifacts_root=tmp_path / "pi-agent",
+    )
+
+    assert payload["behavior"] == "init"
+    assert payload["found"] is True
+    assert payload["target_id"] == 1
+    assert payload["text"] == "已确认跟踪 ID 为 1 的目标。"
+    assert payload["rewrite_memory_input"]["target_id"] == 1
+
+
+def test_execute_init_tool_asks_for_clarification_when_explicit_target_id_missing(tmp_path: Path, monkeypatch) -> None:
+    adapter = _load_adapter()
+    frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
+
+    def fake_settings(_: Path) -> Settings:
+        return Settings(
+            api_key="",
+            base_url="http://example.test",
+            model="main",
+            main_model="main",
+            sub_model="sub",
+            timeout_seconds=30,
+            sample_fps=1.0,
+            query_interval_seconds=3,
+            recent_frame_count=3,
+        )
+
+    def fail_call_model(**kwargs):
+        raise AssertionError("call_model should not be used for explicit target ID selection")
+
+    monkeypatch.setattr(adapter, "load_settings", fake_settings)
+    monkeypatch.setattr(adapter, "call_model", fail_call_model)
+
+    context = {
+        "session_id": "sess_001",
+        "target_description": "",
+        "memory": "",
+        "latest_target_id": None,
+        "latest_confirmed_frame_path": None,
+        "conversation_history": [],
+        "latest_result": None,
+        "frames": [
+            {
+                "frame_id": "frame_000001",
+                "timestamp_ms": 1710000000000,
+                "image_path": str(frame_path),
+                "detections": [
+                    {"track_id": 2, "bbox": [40, 12, 66, 44], "score": 0.91},
+                ],
+            }
+        ],
+    }
+
+    payload = adapter.execute_tool(
+        tool_name="init",
+        context=context,
+        arguments={"target_description": "请跟踪ID为1的人"},
+        env_file=tmp_path / ".ENV",
+        config_path=adapter.DEFAULT_CONFIG_PATH,
+        artifacts_root=tmp_path / "pi-agent",
+    )
+
+    assert payload["behavior"] == "init"
+    assert payload["found"] is False
+    assert payload["target_id"] is None
+    assert payload["needs_clarification"] is True
+    assert "ID 为 1" in payload["clarification_question"]
+
+
 def test_execute_track_tool_rewrite_memory_uses_previous_and_current_success_frames(tmp_path: Path, monkeypatch) -> None:
     adapter = _load_adapter()
     previous_frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")

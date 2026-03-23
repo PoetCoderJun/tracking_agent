@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -205,6 +206,31 @@ def candidate_summary(detections: List[Dict[str, Any]]) -> str:
         f"- bounding_box_id={int(detection['track_id'])}: bbox={list(detection['bbox'])}, score={float(detection.get('score', 1.0)):.2f}"
         for detection in detections
     )
+
+
+EXPLICIT_TARGET_ID_PATTERNS = (
+    re.compile(r"\b(?:id|ID)\s*[:=]?\s*(\d+)\b"),
+    re.compile(r"(?:id|ID)\s*为\s*(\d+)"),
+    re.compile(r"(\d+)\s*号"),
+)
+
+
+def explicit_target_id(text: Any) -> Optional[int]:
+    normalized = optional_text(text)
+    if normalized is None:
+        return None
+    for pattern in EXPLICIT_TARGET_ID_PATTERNS:
+        match = pattern.search(normalized)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def select_detection_by_track_id(detections: List[DetectionRecord], target_id: int) -> Optional[DetectionRecord]:
+    for detection in detections:
+        if int(detection.track_id) == int(target_id):
+            return detection
+    return None
 
 
 def recent_dialogue(context: Dict[str, Any]) -> str:
@@ -423,16 +449,59 @@ def execute_select_tool(
     overlay_path = session_dirs["artifacts_dir"] / f"{frame['frame_id']}_overlay.jpg"
     save_detection_visualization(frame_path, detections, overlay_path)
 
+    explicit_request_text = (
+        str(arguments.get("target_description", "")).strip()
+        if behavior == "init"
+        else str(arguments.get("user_text", "")).strip()
+    )
+    requested_target_id = explicit_target_id(explicit_request_text)
+
     if behavior == "init":
         target_description = str(arguments.get("target_description", "")).strip()
         if not target_description:
             raise ValueError("init tool requires target_description")
-        instruction = str(config["prompts"]["init_skill_prompt"]).format(
-            target_description=target_description,
-            candidates=candidate_summary(frame.get("detections", [])),
-        )
-        image_paths = [overlay_path]
-        output_contract = config["contracts"]["select_init_target"]
+        if requested_target_id is not None:
+            matched_detection = select_detection_by_track_id(detections, requested_target_id)
+            if matched_detection is None:
+                clarification_question = f"当前画面里没有 ID 为 {requested_target_id} 的候选人，请确认目标 ID。"
+                normalized = {
+                    "found": False,
+                    "target_id": None,
+                    "bounding_box_id": None,
+                    "text": clarification_question,
+                    "reason": "用户明确指定了目标 ID，但当前候选框中不存在该 ID。",
+                    "needs_clarification": True,
+                    "clarification_question": clarification_question,
+                }
+            else:
+                normalized = {
+                    "found": True,
+                    "target_id": int(requested_target_id),
+                    "bounding_box_id": int(requested_target_id),
+                    "text": f"已确认跟踪 ID 为 {requested_target_id} 的目标。",
+                    "reason": "用户明确指定了候选框 ID。",
+                    "needs_clarification": False,
+                    "clarification_question": None,
+                }
+            output = {"elapsed_seconds": 0.0}
+        else:
+            instruction = str(config["prompts"]["init_skill_prompt"]).format(
+                target_description=target_description,
+                candidates=candidate_summary(frame.get("detections", [])),
+            )
+            image_paths = [overlay_path]
+            output_contract = config["contracts"]["select_init_target"]
+            output = call_model(
+                api_key=settings.api_key,
+                base_url=settings.base_url,
+                timeout_seconds=settings.timeout_seconds,
+                model=settings.main_model,
+                instruction=instruction,
+                image_paths=image_paths,
+                output_contract=output_contract,
+                max_tokens=int(config["limits"]["select_max_tokens"]),
+            )
+            normalized = normalize_select_result(parse_json_block(output["response_text"]))
     else:
         if not session_has_active_target(context):
             raise ValueError("track tool requires an active target in the session context")
@@ -440,27 +509,51 @@ def execute_select_tool(
         if not historical_frame_path.exists():
             raise ValueError(f"Missing latest_confirmed_frame_path: {historical_frame_path}")
         user_text = str(arguments.get("user_text", "")).strip() or "持续跟踪"
-        instruction = str(config["prompts"]["track_skill_prompt"]).format(
-            memory=str(context.get("memory", "")) or "无",
-            latest_target_id=context.get("latest_target_id"),
-            candidates=candidate_summary(frame.get("detections", [])),
-            user_text=user_text,
-            recent_dialogue=recent_dialogue(context),
-        )
-        image_paths = [historical_frame_path, overlay_path]
-        output_contract = config["contracts"]["select_track_target"]
-
-    output = call_model(
-        api_key=settings.api_key,
-        base_url=settings.base_url,
-        timeout_seconds=settings.timeout_seconds,
-        model=settings.main_model,
-        instruction=instruction,
-        image_paths=image_paths,
-        output_contract=output_contract,
-        max_tokens=int(config["limits"]["select_max_tokens"]),
-    )
-    normalized = normalize_select_result(parse_json_block(output["response_text"]))
+        if requested_target_id is not None:
+            matched_detection = select_detection_by_track_id(detections, requested_target_id)
+            if matched_detection is None:
+                clarification_question = f"当前画面里没有 ID 为 {requested_target_id} 的候选人，请确认目标 ID。"
+                normalized = {
+                    "found": False,
+                    "target_id": None,
+                    "bounding_box_id": None,
+                    "text": clarification_question,
+                    "reason": "用户明确指定了目标 ID，但当前候选框中不存在该 ID。",
+                    "needs_clarification": True,
+                    "clarification_question": clarification_question,
+                }
+            else:
+                normalized = {
+                    "found": True,
+                    "target_id": int(requested_target_id),
+                    "bounding_box_id": int(requested_target_id),
+                    "text": f"已切换为跟踪 ID 为 {requested_target_id} 的目标。",
+                    "reason": "用户明确指定了候选框 ID。",
+                    "needs_clarification": False,
+                    "clarification_question": None,
+                }
+            output = {"elapsed_seconds": 0.0}
+        else:
+            instruction = str(config["prompts"]["track_skill_prompt"]).format(
+                memory=str(context.get("memory", "")) or "无",
+                latest_target_id=context.get("latest_target_id"),
+                candidates=candidate_summary(frame.get("detections", [])),
+                user_text=user_text,
+                recent_dialogue=recent_dialogue(context),
+            )
+            image_paths = [historical_frame_path, overlay_path]
+            output_contract = config["contracts"]["select_track_target"]
+            output = call_model(
+                api_key=settings.api_key,
+                base_url=settings.base_url,
+                timeout_seconds=settings.timeout_seconds,
+                model=settings.main_model,
+                instruction=instruction,
+                image_paths=image_paths,
+                output_contract=output_contract,
+                max_tokens=int(config["limits"]["select_max_tokens"]),
+            )
+            normalized = normalize_select_result(parse_json_block(output["response_text"]))
 
     crop_path = None
     rewrite_memory_input = None

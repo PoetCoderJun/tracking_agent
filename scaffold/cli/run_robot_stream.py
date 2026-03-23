@@ -26,8 +26,10 @@ from tracking_agent.robot_stream import (
     is_camera_source,
     is_websocket_url,
     normalize_source,
+    open_robot_backend_socketio,
     open_robot_backend_websocket,
     post_event,
+    post_event_socketio,
     post_event_ws,
     probe_video_fps,
     save_frame_image,
@@ -69,7 +71,8 @@ def parse_args() -> argparse.Namespace:
         "--backend-url",
         default=None,
         help=(
-            "Full backend ingest endpoint. When omitted, the CLI builds one from "
+            "Explicit backend address. For socketio-agent use the backend base URL; for "
+            "websocket/http modes use the full endpoint. When omitted, the CLI builds one from "
             "--backend-base-url and --backend-protocol."
         ),
     )
@@ -80,15 +83,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--backend-protocol",
-        choices=("robot-agent", "robot-ingest", "http-ingest"),
-        default="robot-agent",
+        choices=("socketio-agent", "robot-agent", "robot-ingest", "http-ingest"),
+        default="socketio-agent",
         help="Which backend ingest interface to target when --backend-url is omitted.",
     )
     parser.add_argument(
         "--backend-timeout-seconds",
         type=float,
         default=310.0,
-        help="HTTP timeout used when waiting for backend to reply after agent processing.",
+        help="Timeout used when waiting for the backend to reply after agent processing.",
     )
     parser.add_argument(
         "--model",
@@ -132,6 +135,7 @@ def resolve_backend_url(args: argparse.Namespace) -> str:
         return explicit_url
 
     channel = {
+        "socketio-agent": "socketio_robot_agent",
         "robot-agent": "robot_agent",
         "robot-ingest": "robot_ingest",
         "http-ingest": "robot_http_ingest",
@@ -343,12 +347,24 @@ async def _run_backend_stream(
     next_video_emit_at = 0.0
     backend_url = resolve_backend_url(args)
     source_is_camera = is_camera_source(normalize_source(args.source))
-    backend_is_websocket = bool(backend_url) and is_websocket_url(backend_url)
+    backend_is_socketio = args.backend_protocol == "socketio-agent"
+    backend_is_websocket = (not backend_is_socketio) and bool(backend_url) and is_websocket_url(backend_url)
     websocket_protocol = None if not backend_is_websocket else _websocket_protocol(backend_url)
+    socketio_context = None if not backend_is_socketio else await open_robot_backend_socketio(
+        backend_url,
+        timeout_seconds=args.backend_timeout_seconds,
+    )
     websocket_context = None if not backend_is_websocket else await open_robot_backend_websocket(
         backend_url,
         timeout_seconds=args.backend_timeout_seconds,
     )
+
+    if socketio_context is None:
+        socketio_client = None
+        socketio_manager = None
+    else:
+        socketio_manager = socketio_context
+        socketio_client = await socketio_manager.__aenter__()
 
     if websocket_context is None:
         websocket = None
@@ -397,7 +413,16 @@ async def _run_backend_stream(
 
             backend_status = None
             if backend_url:
-                if websocket is not None:
+                if socketio_client is not None:
+                    request_id = generate_request_id()
+                    backend_response = await post_event_socketio(
+                        socketio_client,
+                        event,
+                        timeout_seconds=args.backend_timeout_seconds,
+                        request_id=request_id,
+                        function="tracking",
+                    )
+                elif websocket is not None:
                     request_id = generate_request_id()
                     backend_response = await post_event_ws(
                         websocket,
@@ -432,6 +457,8 @@ async def _run_backend_stream(
             if args.max_events is not None and emitted_events >= args.max_events:
                 break
     finally:
+        if socketio_manager is not None:
+            await socketio_manager.__aexit__(None, None, None)
         if websocket_manager is not None:
             await websocket_manager.__aexit__(None, None, None)
 

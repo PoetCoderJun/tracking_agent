@@ -46,6 +46,7 @@ def build_backend_service_url(base_url: str, *, channel: str) -> str:
         "robot_ingest": "/ws/robot-ingest",
         "session_events": "/ws/session-events",
         "robot_http_ingest": "/api/v1/robot/ingest",
+        "socketio_robot_agent": "",
     }
     try:
         suffix = channel_paths[channel]
