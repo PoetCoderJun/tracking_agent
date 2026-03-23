@@ -37,7 +37,7 @@ from tracking_agent.robot_stream import (
 )
 from tracking_agent.service_urls import build_backend_service_url
 
-DEFAULT_PERSON_MODEL = "yolov8m.pt"
+DEFAULT_PERSON_MODEL = "yolov8n.pt"
 VIDEO_TRACK_FPS = 8.0
 
 
