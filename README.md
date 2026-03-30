@@ -8,29 +8,6 @@
 - `skills/tracking/` 是当前主力 skill
 - `skills/speech/` 是已安装的 TTS skill
 
-## 架构
-
-主链路：
-
-`perception 写状态 -> chat / loop 触发一轮 -> Pi 选择 skill -> runtime 持久化结果 -> viewer 展示`
-
-边界：
-
-- `backend/` 不关心 tracking 专属流程
-- `skills/tracking/` 只负责单轮 tracking 能力
-- `scripts/run_tracking_*.py` 负责把 tracking 相关进程拼起来
-
-## 安装
-
-```bash
-uv sync --python 3.9
-echo "DASHSCOPE_API_KEY=your_key" > .ENV
-export OPENAI_API_KEY=your_openai_key
-```
-
-- `DASHSCOPE_API_KEY` 给 tracking 用
-- `OPENAI_API_KEY` 只在 speech/TTS 用到时需要
-
 ## 推荐启动
 
 常规 tracking 场景：
