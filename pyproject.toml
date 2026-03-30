@@ -3,30 +3,28 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tracking-agent"
+name = "robot-agent-runtime"
 version = "0.1.0"
-description = "Minimal tracking agent runtime and scaffolding."
+description = "Generic robot agent runtime with pluggable skills."
 readme = "README.md"
 requires-python = ">=3.9,<3.10"
 dependencies = [
-  "fastapi>=0.110,<1.0",
-  "uvicorn[standard]>=0.29,<1.0",
   "Pillow>=10.0,<12.0",
-  "aiohttp>=3.9,<4.0",
-  "python-socketio[client]>=5.11,<6.0",
   "ultralytics>=8.2,<9.0",
-  "websockets>=12,<16",
   "opencv-python==4.9.0.80",
   "numpy<2",
   "torch==2.2.2",
   "torchvision==0.17.2",
+  "openai>=1.0,<2.0",
+  "websockets>=12,<16",
 ]
 
 [project.scripts]
-tracking-backend = "scaffold.cli.run_backend:main"
-tracking-host-agent = "scaffold.cli.run_host_agent:main"
-tracking-robot-stream = "scaffold.cli.run_robot_stream:main"
-tracking-build-query-plan = "scaffold.cli.build_query_plan:main"
+robot-agent = "backend.cli:main"
+robot-agent-tracking-perception = "scripts.run_tracking_perception:main"
+robot-agent-tracking-loop = "scripts.run_tracking_loop:main"
+robot-agent-tracking-viewer-stream = "scripts.run_tracking_viewer_stream:main"
+robot-agent-tracking-stack = "scripts.run_tracking_stack:main"
 
 [dependency-groups]
 dev = [
@@ -34,7 +32,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["tracking_agent*", "scaffold*"]
+include = ["backend*", "skills*", "scripts*"]
 
 [tool.uv]
 default-groups = ["dev"]

@@ -1,72 +1,164 @@
-# Tracking Agent
+# Robot Agent Runtime
 
-## 安装依赖
+这是一个运行在 robot / Pi 侧的 multi-skills agent runtime。
+
+- `backend/` 是通用 runtime、状态管理和 `robot-agent chat`
+- `skills/` 是可插拔 skill
+- `scripts/` 是流程性脚本，用来把 perception、轮询、viewer 这些进程跑起来
+- `skills/tracking/` 是当前主力 skill
+- `skills/speech/` 是已安装的 TTS skill
+
+## 架构
+
+主链路：
+
+`perception 写状态 -> chat / loop 触发一轮 -> Pi 选择 skill -> runtime 持久化结果 -> viewer 展示`
+
+边界：
+
+- `backend/` 不关心 tracking 专属流程
+- `skills/tracking/` 只负责单轮 tracking 能力
+- `scripts/run_tracking_*.py` 负责把 tracking 相关进程拼起来
+
+## 安装
 
 ```bash
-# Python 依赖
 uv sync --python 3.9
-
-# 前端依赖
-cd frontend && npm install && cd ..
-
-# 配置 API Key
 echo "DASHSCOPE_API_KEY=your_key" > .ENV
+export OPENAI_API_KEY=your_openai_key
 ```
 
-## 本地调试方式
+- `DASHSCOPE_API_KEY` 给 tracking 用
+- `OPENAI_API_KEY` 只在 speech/TTS 用到时需要
+
+## 推荐启动
+
+常规 tracking 场景：
+
+1. 先起 perception，默认直接读电脑摄像头。
+2. 需要持续 tracking 时，再起 tracking runtime loop。
+3. 需要多技能对话时，用 `robot-agent start` 绑定当前 session 的可用 skills。
+
+一把启动 tracking 的 perception 和 tracking runtime：
 
 ```bash
-# 先进入仓库根目录
-cd /path/to/tracking_agent
-
-# 终端 1，启动 backend
-uv run tracking-backend --host 0.0.0.0 --port 8001
-
-# 终端 2，启动 host agent
-uv run tracking-host-agent \
-  --backend-base-url http://127.0.0.1:8001
-
-# 终端 3，启动前端开发服务器
-cd frontend
-export VITE_BACKEND_PROXY_TARGET=http://127.0.0.1:8001
-npm run dev -- --host 0.0.0.0 --port 5173
-cd ..
-
-# 终端 4，发送一段测试视频
-uv run tracking-robot-stream \
-  --source test_data/0045.mp4 \
-  --text "跟踪穿黑衣服的人" \
+uv run robot-agent-tracking-stack \
+  --state-root ./.runtime/agent-runtime \
+  --output-dir ./.runtime/tracking-perception \
+  --artifacts-root ./.runtime/pi-agent \
   --device cpu \
-  --tracker bytetrack.yaml
+  --tracker bytetrack.yaml \
+  --interval-seconds 3
+```
 
-# 终端 4，如果是本机摄像头
-uv run tracking-robot-stream \
-  --source 0 \
-  --text "跟踪穿黑衣服的人" \
+如果要在第一帧准备好后自动发送一条初始化 tracking 指令：
+
+```bash
+uv run robot-agent-tracking-stack \
+  --source backend/tests/fixtures/demo_video.mp4 \
+  --state-root ./.runtime/agent-runtime \
+  --output-dir ./.runtime/tracking-perception \
+  --artifacts-root ./.runtime/pi-agent \
   --device cpu \
-  --tracker bytetrack.yaml
+  --tracker bytetrack.yaml \
+  --interval-seconds 3 \
+  --realtime-playback \
+  --init-text "开始跟踪穿黑衣服的人"
 ```
 
-注意：
-
-- `tracking-host-agent` 默认会处理所有 session；只有显式传入 `--session-id <value>` 时，才会只处理单个 session。
-- 如果你希望某个 robot stream 固定复用同一个会话，可以显式给 `tracking-robot-stream` 传入 `--session-id <value>`。
-- 服务器没有 GPU 时，`tracking-robot-stream` 使用 `--device cpu`。
-- 前端开发服务器可用 `VITE_BACKEND_PROXY_TARGET` 和 `VITE_BACKEND_PROXY_WS_TARGET` 修改代理地址。
-- `tracking-host-agent --backend-base-url` 和 `tracking-robot-stream --backend-base-url` 都可以直接填写服务器 IP 或域名，例如 `10.0.0.8:8001`。
-
-## 服务端启动方式
+再单独启动 viewer 前端：
 
 ```bash
-./scripts/server_start.sh
-./scripts/server_watch.sh
-./scripts/server_stop.sh
+cd skills/tracking/viewer
+npm install
+VITE_TRACKING_VIEWER_WS_URL=ws://127.0.0.1:8765 npm run dev
 ```
 
-## 本地 Mock Robot 请求
+只要 tracking runtime loop 正在运行，就会同时提供 `ws://127.0.0.1:8765` 的 viewer stream。
+如果指定的 viewer IP 无法绑定，tracking runtime 会跳过推流，但不会退出。
 
-如果你想在本地模拟 robot 端发送请求来测试 backend，可以使用：
+## 常用手工命令
+
+只启动 perception：
 
 ```bash
-python scaffold/cli/mock_robot_agent_socketio_loop_example.py
+uv run robot-agent-tracking-perception \
+  --state-root ./.runtime/agent-runtime \
+  --output-dir ./.runtime/tracking-perception \
+  --device cpu \
+  --tracker bytetrack.yaml \
+  --interval-seconds 3
 ```
+
+测试模式下如果要回放文件，再显式指定 `--source`：
+
+```bash
+uv run robot-agent-tracking-perception \
+  --source backend/tests/fixtures/demo_video.mp4 \
+  --state-root ./.runtime/agent-runtime \
+  --output-dir ./.runtime/tracking-perception \
+  --device cpu \
+  --tracker bytetrack.yaml \
+  --interval-seconds 3 \
+  --realtime-playback
+```
+
+启动 agent，并指定当前 session 启用哪些 skills：
+
+```bash
+uv run robot-agent start \
+  --state-root ./.runtime/agent-runtime \
+  --skill tracking \
+  --skill speech
+```
+
+手动发一轮 agent 请求：
+
+```bash
+uv run robot-agent chat \
+  --state-root ./.runtime/agent-runtime \
+  --artifacts-root ./.runtime/pi-agent \
+  --text "开始跟踪最开始出现的穿黑衣服的人。"
+```
+
+继续跟踪：
+
+```bash
+uv run robot-agent chat --state-root ./.runtime/agent-runtime --text "继续跟踪"
+```
+
+启动自动轮询：
+
+```bash
+uv run robot-agent-tracking-loop \
+  --state-root ./.runtime/agent-runtime \
+  --artifacts-root ./.runtime/pi-agent \
+  --interval-seconds 3 \
+  --viewer-host 127.0.0.1 \
+  --viewer-port 8765
+```
+
+如果只想启用 TTS：
+
+```bash
+uv run robot-agent start \
+  --state-root ./.runtime/agent-runtime \
+  --skill speech
+```
+
+如果只想单独手动启动 viewer websocket：
+
+```bash
+uv run robot-agent-tracking-viewer-stream \
+  --state-root ./.runtime/agent-runtime \
+  --host 127.0.0.1 \
+  --port 8765
+```
+
+## 目录
+
+- `backend/`: 通用 runtime
+- `scripts/`: 仓库级流程脚本
+- `skills/tracking/`: tracking skill 与单轮 helper
+- `skills/speech/`: speech skill
+- `docs/agent-architecture.md`: 补充说明

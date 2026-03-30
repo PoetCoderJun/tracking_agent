@@ -1,7 +1,0 @@
-interface:
-  display_name: "Vision Tracking"
-  short_description: "Session-based visual tracking with memory and clarification."
-  default_prompt: "Use $vision-tracking-skill as a unified conversational tracking agent. Read the current session context, decide what will best advance the tracking conversation, and use the bundled scripts as atomic capabilities."
-
-policy:
-  allow_implicit_invocation: true
