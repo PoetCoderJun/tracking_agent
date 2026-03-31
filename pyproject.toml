@@ -11,6 +11,7 @@ requires-python = ">=3.9,<3.10"
 dependencies = [
   "Pillow>=10.0,<12.0",
   "ultralytics>=8.2,<9.0",
+  "lap>=0.5.12",
   "opencv-python==4.9.0.80",
   "numpy<2",
   "torch==2.2.2",
@@ -21,8 +22,11 @@ dependencies = [
 
 [project.scripts]
 robot-agent = "backend.cli:main"
+robot-agent-perception = "backend.perception.cli:main"
 robot-agent-tracking-perception = "scripts.run_tracking_perception:main"
 robot-agent-tracking-loop = "scripts.run_tracking_loop:main"
+robot-agent-tracking-agent = "scripts.run_tracking_agent:main"
+robot-agent-tracking-backend = "scripts.run_tracking_backend:main"
 robot-agent-tracking-viewer-stream = "scripts.run_tracking_viewer_stream:main"
 robot-agent-tracking-stack = "scripts.run_tracking_stack:main"
 

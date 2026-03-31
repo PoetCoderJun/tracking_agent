@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const DEFAULT_WS_URL = import.meta.env.VITE_TRACKING_VIEWER_WS_URL || "ws://127.0.0.1:8765";
 const RECONNECT_DELAY_MS = 2000;
+const HISTORY_STORAGE_PREFIX = "tracking-viewer-history:";
 
 function formatTime(value) {
   if (!value) {
@@ -16,6 +17,86 @@ function formatTime(value) {
 
 function formatBoundingBoxIdValue(rawId) {
   return rawId === null || rawId === undefined || rawId === "" ? "未绑定" : String(rawId);
+}
+
+function deriveViewerStatus(viewerState, connectionState) {
+  const summaryStatusLabel = viewerState?.summary?.status_label;
+  const summaryStatusKind = viewerState?.summary?.status_kind;
+  if (connectionState === "disconnected") {
+    return {
+      kind: "disconnected",
+      label: "连接断开",
+      badgeClass: "status-badge-warn",
+    };
+  }
+  if (connectionState === "connecting") {
+    return {
+      kind: "connecting",
+      label: "连接中",
+      badgeClass: "status-badge-neutral",
+    };
+  }
+  if (!viewerState?.available) {
+    return {
+      kind: "idle",
+      label: "等待会话",
+      badgeClass: "status-badge-neutral",
+    };
+  }
+  if (summaryStatusKind === "completed" || viewerState?.summary?.stream_status === "completed") {
+    return {
+      kind: "completed",
+      label: summaryStatusLabel || "视频结束",
+      badgeClass: "status-badge-neutral",
+    };
+  }
+
+  if (summaryStatusKind === "tracking") {
+    return {
+      kind: "tracking",
+      label: summaryStatusLabel || "跟踪中",
+      badgeClass: "status-badge-good",
+    };
+  }
+  if (summaryStatusKind === "seeking") {
+    return {
+      kind: "waiting",
+      label: summaryStatusLabel || "寻找中",
+      badgeClass: "status-badge-warn",
+    };
+  }
+
+  const latestResult = viewerState?.latest_result || {};
+  const action =
+    latestResult?.robot_response?.action || latestResult?.decision || latestResult?.behavior || "";
+  const hasPendingQuestion = Boolean(viewerState?.summary?.pending_question);
+
+  if (hasPendingQuestion) {
+    return {
+      kind: "clarify",
+      label: "寻找中",
+      badgeClass: "status-badge-warn",
+    };
+  }
+  if (action === "wait") {
+    return {
+      kind: "waiting",
+      label: "寻找中",
+      badgeClass: "status-badge-warn",
+    };
+  }
+  if (action === "track" || latestResult?.behavior === "init" || latestResult?.behavior === "track") {
+    return {
+      kind: "tracking",
+      label: "跟踪中",
+      badgeClass: "status-badge-good",
+    };
+  }
+  return {
+    kind: "idle",
+      label: "等待状态",
+      badgeClass: "status-badge-neutral",
+    };
 }
 
 function DetectionOverlay({ displayFrame, imageSize }) {
@@ -133,6 +214,68 @@ function ConversationEntry({ entry }) {
   );
 }
 
+function historyStorageKey(sessionId) {
+  return `${HISTORY_STORAGE_PREFIX}${sessionId}`;
+}
+
+function loadStoredHistory(sessionId) {
+  if (!sessionId) {
+    return { conversationHistory: [], memoryHistory: [] };
+  }
+  try {
+    const raw = window.localStorage.getItem(historyStorageKey(sessionId));
+    if (!raw) {
+      return { conversationHistory: [], memoryHistory: [] };
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      conversationHistory: Array.isArray(parsed?.conversationHistory) ? parsed.conversationHistory : [],
+      memoryHistory: Array.isArray(parsed?.memoryHistory) ? parsed.memoryHistory : [],
+    };
+  } catch {
+    return { conversationHistory: [], memoryHistory: [] };
+  }
+}
+
+function mergeConversationHistory(existing, incoming) {
+  const merged = [...existing];
+  const seen = new Set(
+    merged.map((entry) => `${entry.timestamp || ""}|${entry.role || ""}|${entry.text || ""}`),
+  );
+  for (const entry of incoming || []) {
+    const key = `${entry?.timestamp || ""}|${entry?.role || ""}|${entry?.text || ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(entry);
+  }
+  return merged;
+}
+
+function appendMemorySnapshot(existing, viewerState) {
+  const memory = String(viewerState?.current_memory || "").trim();
+  if (!memory) {
+    return existing;
+  }
+  const nextEntry = {
+    updated_at: viewerState?.updated_at || "",
+    frame_id: viewerState?.summary?.frame_id || "",
+    target_id: viewerState?.summary?.target_id ?? null,
+    behavior: viewerState?.latest_result?.behavior || "memory",
+    memory,
+  };
+  const key = `${nextEntry.updated_at}|${nextEntry.frame_id}|${nextEntry.memory}`;
+  const last = existing[existing.length - 1];
+  if (last) {
+    const lastKey = `${last.updated_at || ""}|${last.frame_id || ""}|${last.memory || ""}`;
+    if (lastKey === key) {
+      return existing;
+    }
+  }
+  return [...existing, nextEntry];
+}
+
 export default function App() {
   const [viewerState, setViewerState] = useState(null);
   const [connectionState, setConnectionState] = useState("connecting");
@@ -142,8 +285,56 @@ export default function App() {
   const imageRef = useRef(null);
   const stageHostRef = useRef(null);
   const reconnectTimerRef = useRef(null);
+  const lastSessionIdRef = useRef("");
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [stageHostSize, setStageHostSize] = useState({ width: 0, height: 0 });
+  const [conversationLog, setConversationLog] = useState([]);
+  const [memoryLog, setMemoryLog] = useState([]);
+  const [lastGoodDisplayFrame, setLastGoodDisplayFrame] = useState(null);
+  const sessionId = viewerState?.session_id || "";
+
+  useEffect(() => {
+    if (!sessionId) {
+      setConversationLog([]);
+      setMemoryLog([]);
+      return;
+    }
+    const stored = loadStoredHistory(sessionId);
+    setConversationLog(stored.conversationHistory);
+    setMemoryLog(stored.memoryHistory);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (sessionId === lastSessionIdRef.current) {
+      return;
+    }
+    lastSessionIdRef.current = sessionId;
+    setLastGoodDisplayFrame(null);
+    setImageSize({ width: 0, height: 0 });
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || !viewerState) {
+      return;
+    }
+    setConversationLog((current) =>
+      mergeConversationHistory(current, viewerState?.conversation_history || []),
+    );
+    setMemoryLog((current) => appendMemorySnapshot(current, viewerState));
+  }, [sessionId, viewerState]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+    window.localStorage.setItem(
+      historyStorageKey(sessionId),
+      JSON.stringify({
+        conversationHistory: conversationLog,
+        memoryHistory: memoryLog,
+      }),
+    );
+  }, [sessionId, conversationLog, memoryLog]);
 
   useEffect(() => {
     let disposed = false;
@@ -228,6 +419,22 @@ export default function App() {
   }, [viewerState?.display_frame?.frame_id, viewerState?.display_frame?.image_data_url]);
 
   useEffect(() => {
+    const nextDisplayFrame = viewerState?.display_frame || null;
+    if (!nextDisplayFrame?.image_data_url) {
+      return;
+    }
+    setLastGoodDisplayFrame((current) => {
+      if (
+        current?.frame_id === nextDisplayFrame.frame_id &&
+        current?.image_data_url === nextDisplayFrame.image_data_url
+      ) {
+        return current;
+      }
+      return nextDisplayFrame;
+    });
+  }, [viewerState?.display_frame]);
+
+  useEffect(() => {
     const host = stageHostRef.current;
     if (!host) {
       return undefined;
@@ -246,9 +453,13 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
 
-  const displayFrame = viewerState?.display_frame || null;
-  const memoryHistory = [...(viewerState?.memory_history || [])].reverse();
-  const conversationHistory = [...(viewerState?.conversation_history || [])].reverse();
+  const liveDisplayFrame = viewerState?.display_frame || null;
+  const displayFrame = liveDisplayFrame?.image_data_url ? liveDisplayFrame : lastGoodDisplayFrame;
+  const showingFallbackFrame =
+    !liveDisplayFrame?.image_data_url && Boolean(lastGoodDisplayFrame?.image_data_url);
+  const viewerStatus = deriveViewerStatus(viewerState, connectionState);
+  const memoryHistory = [...memoryLog].reverse();
+  const conversationHistory = [...conversationLog].reverse();
   const viewerStageStyle = useMemo(() => {
     if (!imageSize.width || !imageSize.height || !stageHostSize.width || !stageHostSize.height) {
       return null;
@@ -269,11 +480,6 @@ export default function App() {
   return (
     <div className="viewer-shell">
       <header className="topbar surface">
-        <div>
-          <div className="eyebrow">Tracking Viewer</div>
-          <h1>一屏监控</h1>
-          <p className="lead">只看结果帧、当前记忆、历史记忆和对话，不再展示无关的中间产物。</p>
-        </div>
         <div className="topbar-meta">
           <span className={`connection-chip connection-chip-${connectionState}`}>{connectionState}</span>
           <span className="meta-chip">
@@ -290,6 +496,21 @@ export default function App() {
 
       <main className="main-grid">
         <section className="surface stage-surface">
+          <div className="section-head section-head-tight stage-head">
+            <div>
+              <div className="eyebrow">Stage</div>
+              <h2>当前跟踪画面</h2>
+            </div>
+            <div className="meta-strip">
+              <span className={`status-badge ${viewerStatus.badgeClass}`}>{viewerStatus.label}</span>
+              <span className="meta-chip">
+                帧 {displayFrame?.frame_id || viewerState?.summary?.frame_id || "未收到"}
+              </span>
+              <span className="meta-chip">
+                目标 {formatBoundingBoxIdValue(viewerState?.summary?.target_id)}
+              </span>
+            </div>
+          </div>
           <div className="stage-host" ref={stageHostRef}>
             <div
               className={viewerStageStyle ? "stage-canvas stage-canvas-fitted" : "stage-canvas"}
@@ -304,6 +525,14 @@ export default function App() {
                     alt={`当前结果帧 ${displayFrame.frame_id || ""}`}
                   />
                   <DetectionOverlay displayFrame={displayFrame} imageSize={imageSize} />
+                  <div className="stage-note">
+                    <strong>{viewerStatus.label}</strong>
+                    {showingFallbackFrame ? (
+                      <span className="stage-note-inline">
+                        当前显示的是上一张可靠画面：{lastGoodDisplayFrame?.frame_id || "未知帧"}
+                      </span>
+                    ) : null}
+                  </div>
                 </>
               ) : (
                 <div className="empty-stage">
@@ -326,30 +555,32 @@ export default function App() {
             </span>
           </div>
 
-          <div className="current-memory-card">
-            <div className="card-label">当前记忆</div>
-            <pre className="memory-block">{viewerState?.current_memory || "当前还没有 tracking memory。"}</pre>
-          </div>
-
-          {viewerState?.summary?.pending_question ? (
-            <div className="warning-note">
-              <strong>待用户澄清</strong>
-              <p>{viewerState.summary.pending_question}</p>
+          <div className="memory-scroll">
+            <div className="current-memory-card">
+              <div className="card-label">当前记忆</div>
+              <pre className="memory-block">{viewerState?.current_memory || "当前还没有 tracking memory。"}</pre>
             </div>
-          ) : null}
 
-          <div className="list-head">
-            <strong>历史记忆</strong>
-            <span>{memoryHistory.length}</span>
-          </div>
-          <div className="entry-list">
-            {memoryHistory.length ? (
-              memoryHistory.map((entry, index) => (
-                <MemoryEntry key={`${entry.updated_at || "memory"}-${index}`} entry={entry} />
-              ))
-            ) : (
-              <div className="empty-inline">还没有历史 memory。</div>
-            )}
+            {viewerState?.summary?.pending_question ? (
+              <div className="warning-note">
+                <strong>待用户澄清</strong>
+                <p>{viewerState.summary.pending_question}</p>
+              </div>
+            ) : null}
+
+            <div className="list-head">
+              <strong>历史记忆</strong>
+              <span>{memoryHistory.length}</span>
+            </div>
+            <div className="entry-list entry-list-static">
+              {memoryHistory.length ? (
+                memoryHistory.map((entry, index) => (
+                  <MemoryEntry key={`${entry.updated_at || "memory"}-${index}`} entry={entry} />
+                ))
+              ) : (
+                <div className="empty-inline">还没有历史 memory。</div>
+              )}
+            </div>
           </div>
         </section>
 

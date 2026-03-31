@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional
 
 from backend.agent.context import AgentContext
 from backend.agent.memory import AgentMemoryStore
-from backend.perception.stream import RobotIngestEvent
 from backend.persistence import LiveSessionStore
 
 
@@ -25,10 +24,38 @@ def _latest_language_payload(raw_session: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _runtime_result_payload(raw_session: Dict[str, Any]) -> Dict[str, Any]:
+    latest_result = raw_session.get("latest_result")
+    if not isinstance(latest_result, dict):
+        return {
+            "has_latest_result": False,
+            "latest_behavior": None,
+            "latest_frame_id": None,
+            "latest_target_id": None,
+            "latest_found": None,
+            "latest_decision": None,
+            "latest_text": "",
+        }
+
+    return {
+        "has_latest_result": True,
+        "latest_behavior": latest_result.get("behavior"),
+        "latest_frame_id": latest_result.get("frame_id"),
+        "latest_target_id": latest_result.get("target_id"),
+        "latest_found": latest_result.get("found"),
+        "latest_decision": latest_result.get("decision"),
+        "latest_text": str(latest_result.get("text", "")).strip(),
+    }
+
+
 class LocalAgentRuntime:
     def __init__(self, state_root: Path, frame_buffer_size: int = 3):
         self._state_root = state_root
         self._store = LiveSessionStore(state_root=state_root, frame_buffer_size=frame_buffer_size)
+
+    @property
+    def state_root(self) -> Path:
+        return self._state_root
 
     def _memory_store(self, session_id: str) -> AgentMemoryStore:
         return AgentMemoryStore(self._state_root, session_id)
@@ -65,64 +92,6 @@ class LocalAgentRuntime:
         self._memory_store(session_id).reset()
         return self.context(session_id, device_id=device_id)
 
-    def ingest_event(
-        self,
-        event: RobotIngestEvent,
-        *,
-        request_id: Optional[str] = None,
-        request_function: str = "event",
-        frame_payload: Optional[Dict[str, Any]] = None,
-        record_conversation: Optional[bool] = None,
-    ) -> AgentContext:
-        should_record_conversation = (
-            request_function.strip().lower() != "observation"
-            if record_conversation is None
-            else bool(record_conversation)
-        )
-        stored_session = self._store.ingest_robot_event(
-            session_id=event.session_id,
-            device_id=event.device_id,
-            frame=(
-                dict(frame_payload)
-                if frame_payload is not None
-                else {
-                    "frame_id": event.frame.frame_id,
-                    "timestamp_ms": event.frame.timestamp_ms,
-                    "image_path": event.frame.image_path,
-                }
-            ),
-            detections=[
-                {
-                    "track_id": detection.track_id,
-                    "bbox": list(detection.bbox),
-                    "score": detection.score,
-                    "label": detection.label,
-                }
-                for detection in event.detections
-            ],
-            text=event.text,
-            request_id=request_id,
-            request_function=request_function,
-            record_conversation=should_record_conversation,
-        )
-        latest_frame = stored_session.recent_frames[-1] if stored_session.recent_frames else None
-        self.update_perception_cache(
-            event.session_id,
-            {
-                "vision": {
-                    "latest_frame_id": None if latest_frame is None else latest_frame.frame_id,
-                    "latest_image_path": None if latest_frame is None else latest_frame.image_path,
-                    "latest_detection_count": len(event.detections),
-                },
-                "language": {
-                    "latest_text": event.text,
-                    "latest_function": request_function,
-                    "latest_request_id": request_id,
-                },
-            },
-        )
-        return self.context(event.session_id, device_id=event.device_id)
-
     def append_chat_request(
         self,
         *,
@@ -155,9 +124,7 @@ class LocalAgentRuntime:
         self.update_perception_cache(
             session_id,
             {
-                "runtime": {
-                    "latest_result": context.raw_session.get("latest_result"),
-                },
+                "runtime": _runtime_result_payload(context.raw_session),
                 "language": _latest_language_payload(context.raw_session),
             },
         )
@@ -179,11 +146,7 @@ class LocalAgentRuntime:
         )
         self.update_perception_cache(
             session_id,
-            {
-                "runtime": {
-                    "latest_result": self.context(session_id).raw_session.get("latest_result"),
-                }
-            },
+            {"runtime": _runtime_result_payload(self.context(session_id).raw_session)},
         )
         return self.context(session_id)
 
@@ -191,11 +154,7 @@ class LocalAgentRuntime:
         self._store.reset_session_context(session_id)
         self.update_perception_cache(
             session_id,
-            {
-                "runtime": {
-                    "latest_result": self.context(session_id).raw_session.get("latest_result"),
-                }
-            },
+            {"runtime": _runtime_result_payload(self.context(session_id).raw_session)},
         )
         return self.context(session_id)
 

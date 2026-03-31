@@ -4,10 +4,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from PIL import Image, ImageOps
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -16,12 +19,19 @@ if str(ROOT) not in sys.path:
 from backend.config import load_settings
 from backend.llm_client import call_model, parse_json_block
 from skills.tracking.detection_visualization import save_detection_visualization
+from skills.tracking.memory_format import tracking_memory_display_text, tracking_memory_flash_prompt_text
 from skills.tracking.target_crop import save_target_crop
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = SKILL_ROOT / "references" / "robot-agent-config.json"
 CHAT_HISTORY_LIMIT = 12
+TRACK_CANDIDATE_CROP_LIMIT = 3
+TRACK_REBIND_SCORE_THRESHOLD = 0.64
+TRACK_REBIND_MARGIN_THRESHOLD = 0.06
+TRACK_ID_STAY_BONUS = 0.08
+TRACK_SPATIAL_WEIGHT = 0.18
+TRACK_APPEARANCE_WEIGHT = 0.82
 
 
 @dataclass(frozen=True)
@@ -41,8 +51,9 @@ EXPLICIT_TARGET_ID_PATTERNS = (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one init/track localization turn for tracking.")
     parser.add_argument("--mode", choices=("init", "track"), required=True)
-    parser.add_argument("--session-file", required=True)
-    parser.add_argument("--memory-file", required=True)
+    parser.add_argument("--tracking-context-file", default="")
+    parser.add_argument("--session-file", default="")
+    parser.add_argument("--memory-file", default="")
     parser.add_argument("--target-description", default="")
     parser.add_argument("--user-text", default="")
     parser.add_argument("--env-file", default=".ENV")
@@ -65,6 +76,36 @@ def optional_text(value: Any) -> Optional[str]:
     return text or None
 
 
+def normalized_frame(frame: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(frame, dict):
+        return None
+
+    frame_id = optional_text(frame.get("frame_id"))
+    image_path = optional_text(frame.get("image_path"))
+    if frame_id is None or image_path is None:
+        return None
+
+    detections: List[Dict[str, Any]] = []
+    for detection in frame.get("detections", []):
+        track_id = int(detection["track_id"])
+        detections.append(
+            {
+                "track_id": track_id,
+                "bounding_box_id": track_id,
+                "bbox": [int(value) for value in detection["bbox"]],
+                "score": float(detection.get("score", 1.0)),
+                "label": str(detection.get("label", "person")),
+            }
+        )
+
+    return {
+        "frame_id": frame_id,
+        "timestamp_ms": int(frame.get("timestamp_ms", 0)),
+        "image_path": image_path,
+        "detections": detections,
+    }
+
+
 def load_tracking_context(session_file: Path, memory_file: Path) -> Dict[str, Any]:
     raw_session = load_json(session_file)
     memory_payload = load_json(memory_file) if memory_file.exists() else {}
@@ -72,26 +113,9 @@ def load_tracking_context(session_file: Path, memory_file: Path) -> Dict[str, An
 
     frames: List[Dict[str, Any]] = []
     for frame in raw_session.get("recent_frames", []):
-        detections: List[Dict[str, Any]] = []
-        for detection in frame.get("detections", []):
-            track_id = int(detection["track_id"])
-            detections.append(
-                {
-                    "track_id": track_id,
-                    "bounding_box_id": track_id,
-                    "bbox": [int(value) for value in detection["bbox"]],
-                    "score": float(detection.get("score", 1.0)),
-                    "label": str(detection.get("label", "person")),
-                }
-            )
-        frames.append(
-            {
-                "frame_id": str(frame["frame_id"]),
-                "timestamp_ms": int(frame["timestamp_ms"]),
-                "image_path": str(frame["image_path"]),
-                "detections": detections,
-            }
-        )
+        normalized = normalized_frame(frame)
+        if normalized is not None:
+            frames.append(normalized)
 
     latest_target_id = tracking_state.get("latest_target_id")
     if latest_target_id is not None:
@@ -100,9 +124,13 @@ def load_tracking_context(session_file: Path, memory_file: Path) -> Dict[str, An
     return {
         "session_id": str(raw_session["session_id"]),
         "target_description": str(tracking_state.get("target_description", "")),
-        "memory": str(tracking_state.get("latest_memory", "")),
+        "memory": tracking_memory_display_text(tracking_state.get("latest_memory", "")),
         "latest_target_id": latest_target_id,
+        "latest_target_crop": optional_text(tracking_state.get("latest_target_crop")),
         "latest_confirmed_frame_path": optional_text(tracking_state.get("latest_confirmed_frame_path")),
+        "identity_target_crop": optional_text(tracking_state.get("identity_target_crop")),
+        "latest_confirmed_bbox": tracking_state.get("latest_confirmed_bbox"),
+        "init_frame_snapshot": normalized_frame(tracking_state.get("init_frame_snapshot")),
         "chat_history": [
             {
                 "role": str(entry.get("role", "")),
@@ -115,11 +143,63 @@ def load_tracking_context(session_file: Path, memory_file: Path) -> Dict[str, An
     }
 
 
+def load_tracking_context_file(tracking_context_file: Path) -> Dict[str, Any]:
+    payload = load_json(tracking_context_file)
+    return {
+        "session_id": str(payload["session_id"]),
+        "target_description": str(payload.get("target_description", "")),
+        "memory": str(payload.get("memory", "")),
+        "latest_target_id": payload.get("latest_target_id"),
+        "latest_target_crop": optional_text(payload.get("latest_target_crop")),
+        "latest_confirmed_frame_path": optional_text(payload.get("latest_confirmed_frame_path")),
+        "identity_target_crop": optional_text(payload.get("identity_target_crop")),
+        "latest_confirmed_bbox": payload.get("latest_confirmed_bbox"),
+        "init_frame_snapshot": normalized_frame(payload.get("init_frame_snapshot")),
+        "recovery_mode": bool(payload.get("recovery_mode", False)),
+        "missing_target_id": payload.get("missing_target_id"),
+        "candidate_track_id_floor_exclusive": payload.get("candidate_track_id_floor_exclusive"),
+        "chat_history": [
+            {
+                "role": str(entry.get("role", "")),
+                "text": str(entry.get("text", "")),
+                "timestamp": str(entry.get("timestamp", "")),
+            }
+            for entry in list(payload.get("chat_history") or [])[-CHAT_HISTORY_LIMIT:]
+            if isinstance(entry, dict)
+        ],
+        "frames": [
+            normalized
+            for normalized in (
+                normalized_frame(frame) for frame in list(payload.get("frames") or [])
+            )
+            if normalized is not None
+        ],
+    }
+
+
 def latest_frame(context: Dict[str, Any]) -> Dict[str, Any]:
     frames = context.get("frames") or []
     if not frames:
         raise ValueError("Tracking context does not contain any frames")
     return frames[-1]
+
+
+def frame_for_behavior(context: Dict[str, Any], behavior: str) -> Dict[str, Any]:
+    if behavior == "init":
+        snapshot = context.get("init_frame_snapshot")
+        if isinstance(snapshot, dict):
+            return snapshot
+    return latest_frame(context)
+
+
+def _recovery_note(context: Dict[str, Any]) -> str:
+    if not bool(context.get("recovery_mode")):
+        return "当前不是找回模式。"
+    missing_target_id = context.get("missing_target_id")
+    note = f"当前处于找回模式：上一轮绑定的 track id {missing_target_id} 已暂时不在画面里。"
+    note += " 业务逻辑层已经提前完成候选过滤；你不要根据 id 大小做推理，只需要判断当前画面是否已经出现了与历史目标具备强连续性证据的候选。"
+    note += " 如果只是短时遮挡、局部不可见、或证据不足，请优先返回 wait，等待原目标重新出现。"
+    return note
 
 
 def session_has_active_target(context: Dict[str, Any]) -> bool:
@@ -133,6 +213,22 @@ def candidate_summary(detections: List[Dict[str, Any]]) -> str:
         f"- bounding_box_id={int(detection['track_id'])}: bbox={list(detection['bbox'])}, score={float(detection.get('score', 1.0)):.2f}"
         for detection in detections
     )
+
+
+def _track_candidate_crop_detections(detections: List[DetectionRecord]) -> List[DetectionRecord]:
+    ordered = sorted(detections, key=lambda detection: float(detection.score), reverse=True)
+    return ordered[:TRACK_CANDIDATE_CROP_LIMIT]
+
+
+def _candidate_crop_note(candidate_detections: List[DetectionRecord]) -> str:
+    if not candidate_detections:
+        return "当前没有额外候选 crop。"
+    lines = [
+        "第三张及之后的图片是当前候选人的单人 crop，顺序与下面列表完全一致：",
+    ]
+    for index, detection in enumerate(candidate_detections, start=3):
+        lines.append(f"- 第 {index} 张图 -> bounding_box_id={int(detection.track_id)}")
+    return "\n".join(lines)
 
 
 def explicit_target_id(text: Any) -> Optional[int]:
@@ -176,6 +272,14 @@ def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
     clarification_question = str(result.get("clarification_question", "")).strip() or None
     if needs_clarification and clarification_question is None:
         clarification_question = "请进一步说明你指的是哪一个候选人。"
+    decision = str(result.get("decision", "")).strip() or None
+    if decision not in {"track", "ask", "wait"}:
+        if found and target_id is not None:
+            decision = "track"
+        elif needs_clarification:
+            decision = "ask"
+        else:
+            decision = "wait"
 
     text = str(result.get("text", "")).strip()
     reason = str(result.get("reason", "")).strip()
@@ -190,6 +294,8 @@ def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
         "reason": reason,
         "needs_clarification": needs_clarification,
         "clarification_question": clarification_question,
+        "decision": decision,
+        "candidate_checks": list(result.get("candidate_checks") or []),
     }
 
 
@@ -204,6 +310,7 @@ def _explicit_target_result(*, target_id: int, matched: Optional[DetectionRecord
             "reason": "用户明确指定了目标 ID，但当前候选框中不存在该 ID。",
             "needs_clarification": True,
             "clarification_question": question,
+            "decision": "ask",
         }
 
     if behavior == "init":
@@ -218,6 +325,7 @@ def _explicit_target_result(*, target_id: int, matched: Optional[DetectionRecord
         "reason": "用户明确指定了候选框 ID。",
         "needs_clarification": False,
         "clarification_question": None,
+        "decision": "track",
     }
 
 
@@ -243,11 +351,23 @@ def _select_with_model(
     return normalize_select_result(parse_json_block(output["response_text"])), output["elapsed_seconds"]
 
 
+def _recent_dialogue_text(chat_history: List[Dict[str, Any]], *, limit: int = 6) -> str:
+    items: List[str] = []
+    for entry in list(chat_history or [])[-limit:]:
+        role = str(entry.get("role", "")).strip() or "unknown"
+        text = str(entry.get("text", "")).strip()
+        if not text:
+            continue
+        items.append(f"{role}: {text}")
+    return "\n".join(items) if items else "(无)"
+
+
 def ensure_session_dirs(artifacts_root: Path, session_id: str) -> Dict[str, Path]:
     session_root = artifacts_root / session_id
     paths = {
         "artifacts_dir": session_root / "agent_artifacts",
         "crops_dir": session_root / "reference_crops",
+        "frames_dir": session_root / "reference_frames",
     }
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)
@@ -277,18 +397,213 @@ def rewrite_memory_frame_paths(
     current_frame_path: Path,
     latest_confirmed_frame_path: Optional[str],
 ) -> List[str]:
-    if behavior == "init" or not latest_confirmed_frame_path:
-        return [str(current_frame_path)]
-    previous_frame_path = Path(str(latest_confirmed_frame_path))
-    if previous_frame_path == current_frame_path:
-        return [str(current_frame_path)]
-    return [str(previous_frame_path), str(current_frame_path)]
+    return [str(current_frame_path)]
+
+
+def _persist_reference_frame(frame_path: Path, output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if frame_path.resolve() != output_path.resolve():
+        shutil.copyfile(frame_path, output_path)
+    return output_path
+
+
+def _save_candidate_crops(
+    *,
+    frame_path: Path,
+    detections: List[DetectionRecord],
+    output_dir: Path,
+    frame_id: str,
+) -> List[Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths: List[Path] = []
+    for detection in detections:
+        output_path = output_dir / f"{frame_id}_candidate_{int(detection.track_id)}.jpg"
+        save_target_crop(frame_path, detection.bbox, output_path)
+        paths.append(output_path)
+    return paths
+
+
+def _normalized_bbox(bbox: Any) -> Optional[List[int]]:
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        return None
+    try:
+        return [int(value) for value in bbox]
+    except (TypeError, ValueError):
+        return None
+
+
+def _crop_for_matching(image_path: Path, bbox: List[int]) -> Image.Image:
+    image = Image.open(image_path).convert("RGB")
+    width, height = image.size
+    x1, y1, x2, y2 = [int(value) for value in bbox]
+    left = max(0, min(width, x1))
+    top = max(0, min(height, y1))
+    right = max(left + 1, min(width, x2))
+    bottom = max(top + 1, min(height, y2))
+    return image.crop((left, top, right, bottom))
+
+
+def _appearance_signature(image: Image.Image) -> List[float]:
+    normalized = ImageOps.fit(image.convert("RGB"), (32, 64))
+    histogram = normalized.histogram()
+    total = float(sum(histogram)) or 1.0
+    return [float(value) / total for value in histogram]
+
+
+def _cosine_similarity(left: List[float], right: List[float]) -> float:
+    numerator = sum(a * b for a, b in zip(left, right))
+    left_norm = sum(a * a for a in left) ** 0.5
+    right_norm = sum(b * b for b in right) ** 0.5
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return numerator / (left_norm * right_norm)
+
+
+def _bbox_continuity_score(previous_bbox: Optional[List[int]], current_bbox: List[int]) -> float:
+    if previous_bbox is None:
+        return 0.5
+    px1, py1, px2, py2 = previous_bbox
+    cx1, cy1, cx2, cy2 = current_bbox
+    prev_center = ((px1 + px2) / 2.0, (py1 + py2) / 2.0)
+    curr_center = ((cx1 + cx2) / 2.0, (cy1 + cy2) / 2.0)
+    prev_width = max(1.0, float(px2 - px1))
+    prev_height = max(1.0, float(py2 - py1))
+    curr_width = max(1.0, float(cx2 - cx1))
+    curr_height = max(1.0, float(cy2 - cy1))
+    center_distance = (((prev_center[0] - curr_center[0]) ** 2) + ((prev_center[1] - curr_center[1]) ** 2)) ** 0.5
+    normalized_distance = center_distance / max(prev_width, prev_height, curr_width, curr_height)
+    size_ratio = min(prev_width, curr_width) / max(prev_width, curr_width)
+    height_ratio = min(prev_height, curr_height) / max(prev_height, curr_height)
+    distance_score = max(0.0, 1.0 - normalized_distance)
+    return max(0.0, min(1.0, (distance_score * 0.6) + (size_ratio * 0.2) + (height_ratio * 0.2)))
+
+
+def _reference_crop_paths(context: Dict[str, Any]) -> List[Path]:
+    paths: List[Path] = []
+    for raw in (context.get("identity_target_crop"), context.get("latest_target_crop")):
+        text = optional_text(raw)
+        if text is None:
+            continue
+        path = Path(text)
+        if path.exists() and path not in paths:
+            paths.append(path)
+    return paths
+
+
+def _deterministic_track_result(
+    *,
+    context: Dict[str, Any],
+    frame_path: Path,
+    detections: List[DetectionRecord],
+) -> Dict[str, Any]:
+    if not detections:
+        question = "当前画面中没有检测到任何候选人，请稍后重试或重新初始化目标。"
+        return {
+            "found": False,
+            "target_id": None,
+            "bounding_box_id": None,
+            "text": question,
+            "reason": "当前画面中没有候选人。",
+            "needs_clarification": False,
+            "clarification_question": None,
+            "decision": "wait",
+        }
+
+    reference_paths = _reference_crop_paths(context)
+    if not reference_paths:
+        question = "当前缺少目标参考图，请重新初始化目标。"
+        return {
+            "found": False,
+            "target_id": None,
+            "bounding_box_id": None,
+            "text": question,
+            "reason": "缺少可用于重绑定的目标参考图。",
+            "needs_clarification": False,
+            "clarification_question": None,
+            "decision": "wait",
+        }
+
+    reference_signatures = [
+        _appearance_signature(Image.open(path).convert("RGB"))
+        for path in reference_paths
+    ]
+    previous_bbox = _normalized_bbox(context.get("latest_confirmed_bbox"))
+    previous_target_id = context.get("latest_target_id")
+    scored: List[Dict[str, Any]] = []
+    for detection in detections:
+        candidate_crop = _crop_for_matching(frame_path, detection.bbox)
+        candidate_signature = _appearance_signature(candidate_crop)
+        appearance_score = max(
+            _cosine_similarity(reference_signature, candidate_signature)
+            for reference_signature in reference_signatures
+        )
+        spatial_score = _bbox_continuity_score(previous_bbox, detection.bbox)
+        score = (appearance_score * TRACK_APPEARANCE_WEIGHT) + (spatial_score * TRACK_SPATIAL_WEIGHT)
+        if previous_target_id not in (None, "") and int(detection.track_id) == int(previous_target_id):
+            score += TRACK_ID_STAY_BONUS
+        scored.append(
+            {
+                "track_id": int(detection.track_id),
+                "appearance_score": appearance_score,
+                "spatial_score": spatial_score,
+                "score": score,
+            }
+        )
+
+    scored.sort(key=lambda item: item["score"], reverse=True)
+    best = scored[0]
+    second_best = scored[1] if len(scored) > 1 else None
+    margin = best["score"] - (0.0 if second_best is None else second_best["score"])
+    if best["score"] < TRACK_REBIND_SCORE_THRESHOLD:
+        question = "当前候选人与历史目标的外观连续性不足，请重新指定目标或重新初始化。"
+        return {
+            "found": False,
+            "target_id": None,
+            "bounding_box_id": None,
+            "text": question,
+            "reason": f"最佳候选分数过低（score={best['score']:.3f}）。",
+            "needs_clarification": False,
+            "clarification_question": None,
+            "decision": "wait",
+        }
+    if second_best is not None and margin < TRACK_REBIND_MARGIN_THRESHOLD:
+        question = "当前有多个候选人与历史目标过于接近，请指定目标 ID 或补充更稳定的外观特征。"
+        return {
+            "found": False,
+            "target_id": None,
+            "bounding_box_id": None,
+            "text": question,
+            "reason": f"最佳候选与次佳候选过于接近（margin={margin:.3f}）。",
+            "needs_clarification": False,
+            "clarification_question": None,
+            "decision": "wait",
+        }
+
+    rebind_reason = (
+        f"外观连续性最高的候选为 ID {best['track_id']} "
+        f"(appearance={best['appearance_score']:.3f}, spatial={best['spatial_score']:.3f}, score={best['score']:.3f})。"
+    )
+    if previous_target_id not in (None, "") and int(best["track_id"]) != int(previous_target_id):
+        text = f"已将跟踪目标从 ID {int(previous_target_id)} 重绑定到 ID {best['track_id']}。"
+    else:
+        text = f"已确认继续跟踪 ID {best['track_id']}。"
+    return {
+        "found": True,
+        "target_id": int(best["track_id"]),
+        "bounding_box_id": int(best["track_id"]),
+        "text": text,
+        "reason": rebind_reason,
+        "needs_clarification": False,
+        "clarification_question": None,
+        "decision": "track",
+    }
 
 
 def execute_select_tool(
     *,
-    session_file: Path,
-    memory_file: Path,
+    session_file: Path | None = None,
+    memory_file: Path | None = None,
+    tracking_context_file: Path | None = None,
     behavior: str,
     arguments: Dict[str, Any],
     env_file: Path,
@@ -298,17 +613,26 @@ def execute_select_tool(
     if behavior not in {"init", "track"}:
         raise ValueError(f"Unsupported select behavior: {behavior}")
 
-    context = load_tracking_context(session_file, memory_file)
+    if tracking_context_file is not None:
+        context = load_tracking_context_file(tracking_context_file)
+    else:
+        if session_file is None or memory_file is None:
+            raise ValueError("select_target requires tracking_context_file or both session_file and memory_file")
+        context = load_tracking_context(session_file, memory_file)
 
     if behavior == "track" and not session_has_active_target(context):
         raise ValueError("track tool requires an active target")
 
-    frame = latest_frame(context)
+    frame = frame_for_behavior(context, behavior)
     frame_path = Path(str(frame["image_path"]))
     detections = detection_records(frame.get("detections", []))
     session_dirs = ensure_session_dirs(artifacts_root, str(context["session_id"]))
+    persisted_current_frame_path = _persist_reference_frame(
+        frame_path,
+        session_dirs["artifacts_dir"] / f"{frame_path.stem}_current.jpg",
+    )
     overlay_path = session_dirs["artifacts_dir"] / f"{frame['frame_id']}_overlay.jpg"
-    save_detection_visualization(frame_path, detections, overlay_path)
+    save_detection_visualization(persisted_current_frame_path, detections, overlay_path)
 
     explicit_request_text = (
         str(arguments.get("target_description", "")).strip()
@@ -344,7 +668,6 @@ def execute_select_tool(
                 max_tokens=int(config["limits"]["select_max_tokens"]),
             )
     else:
-        requested_text = str(arguments.get("user_text", "")).strip() or "持续跟踪"
         config = load_agent_config(config_path)
         if requested_target_id is not None:
             normalized = _explicit_target_result(
@@ -355,43 +678,78 @@ def execute_select_tool(
             elapsed_seconds = 0.0
         else:
             settings = load_settings(env_file)
-            historical_frame_path = Path(str(context["latest_confirmed_frame_path"]))
-            if not historical_frame_path.exists():
-                raise ValueError(f"Missing latest_confirmed_frame_path: {historical_frame_path}")
+            confirmed_frame_path = optional_text(context.get("latest_confirmed_frame_path"))
+            if confirmed_frame_path is None:
+                raise ValueError("track tool requires latest_confirmed_frame_path")
+            reference_frame_path = Path(confirmed_frame_path)
+            if not reference_frame_path.exists():
+                raise ValueError(f"Missing latest_confirmed_frame_path: {reference_frame_path}")
+            candidate_crop_detections = _track_candidate_crop_detections(detections)
+            candidate_crop_paths = _save_candidate_crops(
+                frame_path=persisted_current_frame_path,
+                detections=candidate_crop_detections,
+                output_dir=session_dirs["artifacts_dir"],
+                frame_id=str(frame["frame_id"]),
+            )
             instruction = str(config["prompts"]["track_skill_prompt"]).format(
-                memory=str(context.get("memory", "")) or "无",
+                memory=tracking_memory_flash_prompt_text(context.get("memory", "")),
                 latest_target_id=context.get("latest_target_id"),
                 candidates=candidate_summary(frame.get("detections", [])),
-                user_text=requested_text,
-                recent_dialogue="\n".join(
-                    f"- {entry.get('role', 'unknown')}: {entry.get('text', '')}"
-                    for entry in (context.get("chat_history") or [])
-                )
-                or "- 无",
+                user_text=str(arguments.get("user_text", "")).strip() or "(无)",
+                recent_dialogue=_recent_dialogue_text(list(context.get("chat_history") or [])),
+                recovery_note=_recovery_note(context),
+                candidate_crops_note=_candidate_crop_note(candidate_crop_detections),
             )
             normalized, elapsed_seconds = _select_with_model(
                 settings=settings,
                 model_name=settings.main_model,
                 instruction=instruction,
-                image_paths=[historical_frame_path, overlay_path],
+                image_paths=[reference_frame_path, overlay_path, *candidate_crop_paths],
                 output_contract=config["contracts"]["select_track_target"],
                 max_tokens=int(config["limits"]["select_max_tokens"]),
             )
 
+    if behavior == "track" and bool(context.get("recovery_mode")) and normalized["decision"] == "ask":
+        normalized["found"] = False
+        normalized["target_id"] = None
+        normalized["bounding_box_id"] = None
+        normalized["needs_clarification"] = False
+        normalized["clarification_question"] = None
+        normalized["decision"] = "wait"
+        if not normalized["text"]:
+            normalized["text"] = "当前证据不足，保持等待原目标重新出现。"
+        if normalized["reason"]:
+            normalized["reason"] = f"{normalized['reason']} 恢复模式下证据不足，已降级为 wait。".strip()
+        else:
+            normalized["reason"] = "恢复模式下证据不足，已降级为 wait。"
+
     crop_path = None
     rewrite_memory_input = None
+    confirmed_frame_path = None
+    confirmed_bbox = None
+    identity_target_crop = None
     if normalized["found"]:
         for detection in detections:
             if int(detection.track_id) != int(normalized["target_id"]):
                 continue
             crop_path = session_dirs["crops_dir"] / f"{frame_path.stem}_id_{normalized['target_id']}.jpg"
-            save_target_crop(frame_path, detection.bbox, crop_path)
+            save_target_crop(persisted_current_frame_path, detection.bbox, crop_path)
+            confirmed_frame_path = _persist_reference_frame(
+                persisted_current_frame_path,
+                session_dirs["frames_dir"] / f"{frame_path.stem}.jpg",
+            )
+            confirmed_bbox = [int(value) for value in detection.bbox]
+            identity_target_crop = (
+                str(crop_path)
+                if behavior == "init" or not optional_text(context.get("identity_target_crop"))
+                else optional_text(context.get("identity_target_crop"))
+            )
             rewrite_memory_input = build_rewrite_memory_input(
                 behavior=behavior,
                 crop_path=crop_path,
                 frame_paths=rewrite_memory_frame_paths(
                     behavior=behavior,
-                    current_frame_path=frame_path,
+                    current_frame_path=confirmed_frame_path,
                     latest_confirmed_frame_path=context.get("latest_confirmed_frame_path"),
                 ),
                 frame_id=str(frame["frame_id"]),
@@ -408,10 +766,14 @@ def execute_select_tool(
         "found": normalized["found"],
         "needs_clarification": normalized["needs_clarification"],
         "clarification_question": normalized["clarification_question"],
-        "pending_question": normalized["clarification_question"],
         "memory": str(context.get("memory", "")),
         "reason": normalized["reason"],
+        "candidate_checks": list(normalized.get("candidate_checks") or []),
+        "decision": normalized["decision"],
         "latest_target_crop": None if crop_path is None else str(crop_path),
+        "identity_target_crop": identity_target_crop,
+        "confirmed_frame_path": None if confirmed_frame_path is None else str(confirmed_frame_path),
+        "confirmed_bbox": confirmed_bbox,
         "target_description": (
             str(arguments.get("target_description", "")).strip()
             if behavior == "init"
@@ -419,14 +781,17 @@ def execute_select_tool(
         ),
         "rewrite_memory_input": rewrite_memory_input,
         "elapsed_seconds": elapsed_seconds,
+        "pending_question": normalized["clarification_question"] if normalized["decision"] == "ask" else None,
     }
 
 
 def main() -> int:
     args = parse_args()
+    tracking_context_file = optional_text(args.tracking_context_file)
     payload = execute_select_tool(
-        session_file=Path(args.session_file),
-        memory_file=Path(args.memory_file),
+        session_file=None if tracking_context_file else Path(args.session_file),
+        memory_file=None if tracking_context_file else Path(args.memory_file),
+        tracking_context_file=None if not tracking_context_file else Path(tracking_context_file),
         behavior=args.mode,
         arguments={
             "target_description": args.target_description,

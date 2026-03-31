@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 
 from backend.config import load_settings
 from backend.llm_client import call_model
-from skills.tracking.memory_format import normalize_memory_markdown
+from skills.tracking.memory_format import normalize_tracking_memory, tracking_memory_prompt_text
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -36,12 +36,12 @@ def load_agent_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]
     return json.loads(config_path.read_text(encoding="utf-8"))
 
 
-def _load_previous_memory(memory_file: Path) -> str:
+def _load_previous_memory(memory_file: Path) -> Any:
     if not memory_file.exists():
-        return ""
+        return {}
     payload = json.loads(memory_file.read_text(encoding="utf-8"))
     tracking_state = dict(((payload.get("skill_cache") or {}).get("tracking") or {}))
-    return str(tracking_state.get("latest_memory", "")).strip()
+    return tracking_state.get("latest_memory", {})
 
 
 def execute_rewrite_memory_tool(
@@ -65,8 +65,11 @@ def execute_rewrite_memory_tool(
 
     settings = load_settings(env_file)
     config = load_agent_config(config_path)
+    previous_memory = _load_previous_memory(memory_file)
     prompt_key = "memory_init_prompt" if task == "init" else "memory_optimize_prompt"
-    prompt = str(config["prompts"][prompt_key]).format(current_memory=_load_previous_memory(memory_file) or "(空)")
+    prompt = str(config["prompts"][prompt_key]).format(
+        current_memory=tracking_memory_prompt_text(previous_memory),
+    )
     output = call_model(
         api_key=settings.api_key,
         base_url=settings.base_url,
@@ -74,12 +77,15 @@ def execute_rewrite_memory_tool(
         model=settings.sub_model,
         instruction=prompt,
         image_paths=[crop_path, *frame_paths],
-        output_contract=config["contracts"]["memory_markdown"],
+        output_contract=config["contracts"]["memory_json"],
         max_tokens=int(config["limits"]["memory_max_tokens"]),
     )
     return {
         "task": task,
-        "memory": normalize_memory_markdown(output["response_text"]),
+        "memory": normalize_tracking_memory(
+            output["response_text"],
+            previous_memory=previous_memory,
+        ),
         "frame_id": str(arguments.get("frame_id", "")),
         "target_id": int(arguments["target_id"]),
         "crop_path": str(crop_path),

@@ -14,7 +14,28 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-RESULT_HISTORY_LIMIT = 60
+RESULT_HISTORY_LIMIT = 8
+CONVERSATION_HISTORY_LIMIT = 8
+ALLOWED_RESULT_FIELDS = frozenset(
+    {
+        "request_id",
+        "function",
+        "behavior",
+        "frame_id",
+        "target_id",
+        "bounding_box_id",
+        "found",
+        "text",
+        "reason",
+        "decision",
+        "needs_clarification",
+        "clarification_question",
+        "available_targets",
+        "latest_target_crop",
+        "summary",
+        "robot_response",
+    }
+)
 
 
 def _copy_jsonish(value: Any) -> Any:
@@ -27,6 +48,14 @@ def _copy_jsonish(value: Any) -> Any:
 
 def _normalized_result_text(result: Dict[str, Any]) -> str:
     return str(result.get("text", "")).strip()
+
+
+def _normalized_session_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: _copy_jsonish(value)
+        for key, value in dict(result).items()
+        if key in ALLOWED_RESULT_FIELDS
+    }
 
 
 @dataclass(frozen=True)
@@ -327,11 +356,7 @@ class BackendStore:
                 else str(result.get("frame_id")).strip()
             )
             updated_at = _utc_now()
-            latest_result = {
-                key: _copy_jsonish(value)
-                for key, value in dict(result).items()
-                if key != "skill_state"
-            }
+            latest_result = _normalized_session_result(result)
             latest_result["request_id"] = request_id
             latest_result["function"] = request_function
             latest_result["frame_id"] = (
@@ -399,7 +424,8 @@ class BackendStore:
 
             updated_latest_result = dict(latest_result)
             changed = False
-            for key, value in dict(patch).items():
+            normalized_patch = _normalized_session_result(dict(patch))
+            for key, value in normalized_patch.items():
                 copied_value = _copy_jsonish(value)
                 if updated_latest_result.get(key) == copied_value:
                     continue
@@ -412,7 +438,7 @@ class BackendStore:
             if updated_history:
                 last_entry = dict(updated_history[-1])
                 if last_entry.get("request_id") == updated_latest_result.get("request_id"):
-                    for key, value in dict(patch).items():
+                    for key, value in normalized_patch.items():
                         last_entry[key] = _copy_jsonish(value)
                     updated_history[-1] = last_entry
 
@@ -467,7 +493,7 @@ class BackendStore:
         role: str,
         text: str,
         timestamp: Optional[str] = None,
-        limit: int = 20,
+        limit: Optional[int] = None,
     ) -> List[Dict[str, str]]:
         cleaned = text.strip()
         if not cleaned:
@@ -477,7 +503,10 @@ class BackendStore:
             "text": cleaned,
             "timestamp": timestamp or _utc_now(),
         }
-        return [*history, entry][-limit:]
+        updated_history = [*history, entry]
+        if limit is None:
+            limit = CONVERSATION_HISTORY_LIMIT
+        return updated_history[-limit:]
 
     def _frame_by_id(
         self,
@@ -532,6 +561,22 @@ class BackendStore:
                 continue
             if frame_path.parent == frames_dir.resolve():
                 pinned_paths.add(frame_path)
+
+        memory_path = self.session_dir(session.session_id) / "agent_memory.json"
+        if memory_path.exists():
+            try:
+                memory_payload = json.loads(memory_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                memory_payload = {}
+            tracking_state = dict(((memory_payload.get("skill_cache") or {}).get("tracking") or {}))
+            confirmed_frame_path = tracking_state.get("latest_confirmed_frame_path")
+            if confirmed_frame_path not in (None, ""):
+                try:
+                    confirmed_path = Path(str(confirmed_frame_path)).resolve()
+                except OSError:
+                    confirmed_path = None
+                if confirmed_path is not None and confirmed_path.parent == frames_dir.resolve():
+                    pinned_paths.add(confirmed_path)
 
         for candidate in frames_dir.iterdir():
             if not candidate.is_file():

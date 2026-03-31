@@ -58,9 +58,9 @@ button {
 .topbar {
   padding: 16px 18px;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .eyebrow {
@@ -189,6 +189,10 @@ h2 {
   padding: 12px;
 }
 
+.stage-head {
+  margin-bottom: 12px;
+}
+
 .memory-surface {
   grid-column: 2 / 3;
   grid-row: 1 / 2;
@@ -270,6 +274,36 @@ h2 {
   pointer-events: none;
 }
 
+.stage-note {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(15, 12, 8, 0.74);
+  color: #fff7ef;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.stage-note strong {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.stage-note span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 247, 239, 0.86);
+}
+
+.stage-note-inline {
+  color: rgba(255, 247, 239, 0.72);
+}
+
 .empty-stage {
   display: grid;
   gap: 10px;
@@ -297,7 +331,7 @@ h2 {
 }
 
 .bbox-target {
-  stroke: #ff8b38;
+  stroke: #ff3b30;
   stroke-width: 4;
 }
 
@@ -322,7 +356,7 @@ h2 {
 }
 
 .bbox-label-bg-target {
-  fill: rgba(126, 52, 14, 0.88);
+  fill: rgba(163, 22, 33, 0.9);
 }
 
 .current-memory-card {
@@ -330,6 +364,15 @@ h2 {
   border-radius: 18px;
   background: var(--surface-strong);
   border: 1px solid rgba(78, 60, 32, 0.08);
+}
+
+.memory-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .card-label {
@@ -396,6 +439,11 @@ h2 {
   flex-direction: column;
   gap: 10px;
   overflow: auto;
+}
+
+.entry-list-static {
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
 .list-entry {

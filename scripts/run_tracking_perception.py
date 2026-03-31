@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.agent.runtime import LocalAgentRuntime
+from backend.perception import LocalPerceptionService
 from backend.perception.stream import (
     RobotDetection,
     RobotFrame,
@@ -31,7 +31,6 @@ from backend.perception.stream import (
     trim_event_jsonl,
     video_timestamp_seconds,
 )
-from backend.persistence import ActiveSessionStore
 from backend.project_paths import resolve_project_path
 
 DEFAULT_PERSON_MODEL = "yolov8n.pt"
@@ -55,7 +54,7 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Tracking perception writer. Runs person detection over the local camera by default, "
             "or over an explicit video file/camera source, then writes sampled observations into "
-            "the local runtime."
+            "the shared perception store."
         )
     )
     parser.add_argument(
@@ -76,6 +75,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional. If omitted, create a random fresh session and mark it active.",
     )
+    parser.add_argument(
+        "--fresh-session",
+        action="store_true",
+        help="When --session-id is provided and already exists, reset it before writing new perception events.",
+    )
     parser.add_argument("--device-id", default="robot_01")
     parser.add_argument(
         "--observation-text",
@@ -85,7 +89,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--state-root",
         default="./.runtime/agent-runtime",
-        help="Session state root used by the local runtime.",
+        help="Shared state root used by the perception service and agent runtime.",
     )
     parser.add_argument(
         "--model",
@@ -115,7 +119,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--interval-seconds",
         type=float,
-        default=3.0,
+        default=1.0,
         help="Minimum wall-clock seconds between emitted observations.",
     )
     parser.add_argument(
@@ -123,9 +127,32 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="For video files, sleep for interval-seconds after each emitted observation so the viewer updates in wall-clock time.",
     )
+    parser.add_argument(
+        "--pause-after-first-event-file",
+        default=None,
+        help="Optional sentinel file. If it exists after the first emitted event, pause perception until the file is removed.",
+    )
     parser.add_argument("--max-events", type=int, default=None)
     parser.add_argument("--max-event-log-lines", type=int, default=300)
     parser.add_argument("--person-class-id", type=int, default=0)
+    parser.add_argument(
+        "--observation-window-seconds",
+        type=float,
+        default=5.0,
+        help="How much recent camera perception to keep in the in-process observation window.",
+    )
+    parser.add_argument(
+        "--save-keyframe-every-seconds",
+        type=float,
+        default=1.0,
+        help="How often to save shared perception keyframes.",
+    )
+    parser.add_argument(
+        "--keyframe-retention-seconds",
+        type=float,
+        default=10.0,
+        help="How much keyframe history to keep on disk.",
+    )
     return parser.parse_args()
 
 
@@ -217,6 +244,21 @@ def _normalize_xyxy_bbox(bbox: List[int]) -> List[int]:
     left, right = sorted((x1, x2))
     top, bottom = sorted((y1, y2))
     return [left, top, right, bottom]
+
+
+def _prune_frame_dir(frame_dir: Path, *, keep_last: int) -> None:
+    if keep_last <= 0 or not frame_dir.exists():
+        return
+    frames = sorted(
+        [path for path in frame_dir.iterdir() if path.is_file()],
+        key=lambda path: path.stat().st_mtime_ns,
+    )
+    while len(frames) > keep_last:
+        expired = frames.pop(0)
+        try:
+            expired.unlink()
+        except FileNotFoundError:
+            continue
 
 
 def _extract_person_detections(result: Any, person_class_id: int) -> List[RobotDetection]:
@@ -362,11 +404,23 @@ async def _run_perception_writer(
 ) -> int:
     events_path = output_dir / "events.jsonl"
     emitted_events = 0
+    last_timestamp_ms: int | None = None
     next_emit_at = 0.0
     next_video_emit_at = 0.0
-    local_runtime = LocalAgentRuntime(state_root=Path(args.state_root))
-    state_frames_dir = Path(args.state_root) / "sessions" / session_id / "frames"
+    next_wall_emit_at: float | None = None
+    perception_service = LocalPerceptionService(
+        state_root=Path(args.state_root),
+        observation_window_seconds=args.observation_window_seconds,
+        save_frame_every_seconds=args.save_keyframe_every_seconds,
+        keyframe_retention_seconds=args.keyframe_retention_seconds,
+    )
+    state_frames_dir = Path(args.state_root) / "perception" / "sessions" / session_id / "frames"
     state_frames_dir.mkdir(parents=True, exist_ok=True)
+    pause_after_first_event_file = (
+        None
+        if args.pause_after_first_event_file in (None, "")
+        else resolve_project_path(args.pause_after_first_event_file)
+    )
 
     for frame_index, result in result_stream:
         now_monotonic = time.monotonic()
@@ -392,6 +446,10 @@ async def _run_perception_writer(
         frame_id = f"frame_{emitted_events:06d}"
         frame_path = state_frames_dir / f"{frame_id}.jpg"
         save_frame_image(result.orig_img, frame_path)
+        _prune_frame_dir(
+            state_frames_dir,
+            keep_last=max(1, int(args.keyframe_retention_seconds / args.save_keyframe_every_seconds)),
+        )
 
         event = RobotIngestEvent(
             session_id=session_id,
@@ -404,34 +462,73 @@ async def _run_perception_writer(
             detections=_extract_person_detections(result, person_class_id=args.person_class_id),
             text=str(args.observation_text).strip(),
         )
+        last_timestamp_ms = int(event.frame.timestamp_ms)
         append_event_jsonl(events_path, event)
         trim_event_jsonl(events_path, keep_last_lines=args.max_event_log_lines)
-        await asyncio.to_thread(
-            local_runtime.ingest_event,
+        snapshot = await asyncio.to_thread(
+            perception_service.write_observation,
             event,
             request_function="observation",
             record_conversation=False,
         )
+        persisted_image_path_value = str(
+            (
+                (snapshot.get("latest_camera_observation") or {}).get("payload") or {}
+            ).get("image_path", "")
+        ).strip()
+        persisted_image_path = None if not persisted_image_path_value else Path(persisted_image_path_value)
+        if persisted_image_path is not None and persisted_image_path != frame_path and frame_path.exists():
+            frame_path.unlink()
 
         summary = {
             "session_id": session_id,
             "frame_id": frame_id,
-            "image_path": str(frame_path),
+            "image_path": str(frame_path if persisted_image_path is None else persisted_image_path),
             "detection_count": len(event.detections),
             "ingest_status": 200,
         }
         print(json.dumps(summary, ensure_ascii=True), flush=True)
+
+        if emitted_events == 0 and pause_after_first_event_file is not None:
+            while pause_after_first_event_file.exists():
+                await asyncio.sleep(0.1)
 
         emitted_events += 1
         next_emit_at = now_monotonic + args.interval_seconds
         if not source_is_camera:
             next_video_emit_at += args.interval_seconds
             if args.realtime_playback:
-                await asyncio.sleep(args.interval_seconds)
+                if next_wall_emit_at is None:
+                    next_wall_emit_at = now_monotonic + args.interval_seconds
+                else:
+                    next_wall_emit_at += args.interval_seconds
+                remaining_sleep = max(0.0, next_wall_emit_at - time.monotonic())
+                if remaining_sleep > 0:
+                    await asyncio.sleep(remaining_sleep)
         if args.max_events is not None and emitted_events >= args.max_events:
             break
 
+    perception_service.update_stream_status(
+        session_id,
+        status="completed",
+        ended_at_ms=last_timestamp_ms if last_timestamp_ms is not None else current_timestamp_ms(),
+    )
     return 0
+
+
+def _prepare_perception_session(
+    *,
+    perception_service: LocalPerceptionService,
+    session_id: str,
+    device_id: str,
+    fresh_session: bool,
+) -> None:
+    perception_service.prepare_session(
+        session_id=session_id,
+        device_id=device_id,
+        fresh_session=fresh_session,
+        mark_active=True,
+    )
 
 
 async def _async_main() -> int:
@@ -446,15 +543,30 @@ async def _async_main() -> int:
         raise ValueError("--max-events must be positive when provided")
     if args.max_event_log_lines <= 0:
         raise ValueError("--max-event-log-lines must be positive")
+    if args.observation_window_seconds <= 0:
+        raise ValueError("--observation-window-seconds must be positive")
+    if args.save_keyframe_every_seconds <= 0:
+        raise ValueError("--save-keyframe-every-seconds must be positive")
+    if args.keyframe_retention_seconds <= 0:
+        raise ValueError("--keyframe-retention-seconds must be positive")
 
     output_dir = resolve_project_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "events.jsonl").write_text("", encoding="utf-8")
     session_id = args.session_id or generate_session_id()
     state_root = resolve_project_path(args.state_root)
-    local_runtime = LocalAgentRuntime(state_root=state_root)
-    local_runtime.start_fresh_session(session_id, device_id=args.device_id)
-    ActiveSessionStore(state_root).write(session_id)
+    perception_service = LocalPerceptionService(
+        state_root=state_root,
+        observation_window_seconds=args.observation_window_seconds,
+        save_frame_every_seconds=args.save_keyframe_every_seconds,
+        keyframe_retention_seconds=args.keyframe_retention_seconds,
+    )
+    _prepare_perception_session(
+        perception_service=perception_service,
+        session_id=session_id,
+        device_id=args.device_id,
+        fresh_session=bool(args.fresh_session or args.session_id in (None, "")),
+    )
 
     _configure_device_runtime(args.device)
     YOLO = _load_yolo()

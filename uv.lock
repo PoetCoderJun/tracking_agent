@@ -293,6 +293,25 @@ wheels = [
 ]
 
 [[package]]
+name = "lap"
+version = "0.5.13"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/ae/5cc637c2e5158b7dcf1a9744d33b11dfc21d9309931169402f573e4d1ee3/lap-0.5.13.tar.gz", hash = "sha256:9eff7169e3ca452995af0493cc20d35452c4bfd06122c36c06457119ffbd411b", size = 1537351, upload-time = "2026-02-23T12:37:24.789Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/41/1cacb2735b4c1d702f8eb7d2725df893cddfa0eb407ede70de6c046780d0/lap-0.5.13-cp39-cp39-macosx_10_9_x86_64.whl", hash = "sha256:d39921f69b726101d7443be6c1920fc3ae13ff857796223177f76625103c4390", size = 1482163, upload-time = "2026-02-23T12:37:13.581Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/84/e112a14c7cad9825a938fae22bcacd63addd7a04afa808fef1ce59ff86b7/lap-0.5.13-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:0efd8fe0bf17b74bd97d5958bdb154df84118962cdeff4119497093c325a6bd3", size = 1479271, upload-time = "2026-02-23T12:37:14.819Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/1c/edc9f68b31c8802eaed8a715425cdd2f51228a291a16e45352735fcd9f88/lap-0.5.13-cp39-cp39-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:001ba5488a080dff80ba327e50dad05e450198828f82b0c85240d557cd424133", size = 1708767, upload-time = "2026-02-23T12:37:16.103Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/4b/0ce2a8ba234725161091c30cf0addc2f3aed1d133613c6b14843a9770ebc/lap-0.5.13-cp39-cp39-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d61bf2a3d9ecc3ac85d7053f11396ca6e1bd0de049f0bce32986bd58f9d1ec1d", size = 1703948, upload-time = "2026-02-23T12:37:17.442Z" },
+    { url = "https://files.pythonhosted.org/packages/87/0b/c47c2563394be425bcd8896519c610f80ea7eab57c31f90985835307a486/lap-0.5.13-cp39-cp39-musllinux_1_2_aarch64.whl", hash = "sha256:1c6bdace3e2d12c791e4c8d878ceda50fc7b84e1998b17e1b8b41aceff2192e8", size = 1701068, upload-time = "2026-02-23T12:37:19.215Z" },
+    { url = "https://files.pythonhosted.org/packages/74/fc/73050dd275505045c01e79c4d4ec033ea4afa4336d94d27e432b94b4f326/lap-0.5.13-cp39-cp39-musllinux_1_2_x86_64.whl", hash = "sha256:9ab290a1500089dbe3d4bac5bcc7fe46b9594413393f212b4d1d3fa315a5ef6c", size = 1711349, upload-time = "2026-02-23T12:37:20.905Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/84/c646bd910fc8e70c4b9f657ff4539b7c4884c6f6e0585c46b0282345cdb0/lap-0.5.13-cp39-cp39-win_amd64.whl", hash = "sha256:ce5f1e56ebd28907670b4a8bb89ae6842bcfdc0b6360d2b4bb8d950834a19db3", size = 1478364, upload-time = "2026-02-23T12:37:22.229Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/a9/9324132f37c2ce0a74d9de7be527f58eff61c2dc991bc7337784d9698c02/lap-0.5.13-cp39-cp39-win_arm64.whl", hash = "sha256:67c6937c4dd9710d8ed0731f8dff407599a6c65822b4ad82b31f89b9ebc667cf", size = 1467497, upload-time = "2026-02-23T12:37:23.514Z" },
+]
+
+[[package]]
 name = "markupsafe"
 version = "3.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -724,6 +743,7 @@ name = "robot-agent-runtime"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "lap" },
     { name = "numpy" },
     { name = "openai" },
     { name = "opencv-python" },
@@ -741,6 +761,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "lap", specifier = ">=0.5.12" },
     { name = "numpy", specifier = "<2" },
     { name = "openai", specifier = ">=1.0,<2.0" },
     { name = "opencv-python", specifier = "==4.9.0.80" },

@@ -2,53 +2,171 @@ from __future__ import annotations
 
 from skills.tracking.memory_format import (
     DEFAULT_MEMORY_TEXT,
-    extract_memory_text,
-    normalize_memory_markdown,
-    render_memory_markdown,
+    normalize_tracking_memory,
+    tracking_memory_display_text,
+    tracking_memory_prompt_text,
+    tracking_memory_summary,
 )
 
 
-def test_normalize_memory_markdown_wraps_plain_text() -> None:
-    normalized = normalize_memory_markdown("目标刚刚从左边转角消失，可能继续向前走。")
+def test_normalize_tracking_memory_wraps_legacy_plain_text_into_summary() -> None:
+    normalized = normalize_tracking_memory("黑色上衣，短发。和右边浅色裤子的人不同。")
 
-    assert normalized.startswith("# Tracking Memory")
-    assert "左边转角消失" in extract_memory_text(normalized)
-
-
-def test_render_and_extract_memory_text_round_trip() -> None:
-    original_text = "短发，穿深色上衣，裤子更宽松。和右边更高、穿浅色裤子的人不同。"
-
-    rendered = render_memory_markdown(original_text)
-    extracted = extract_memory_text(rendered)
-
-    assert extracted == original_text
+    assert normalized["summary"] == "黑色上衣，短发。和右边浅色裤子的人不同。"
+    assert normalized["appearance"]["upper_body"] == ""
 
 
-def test_normalize_memory_markdown_collapses_model_generated_headings() -> None:
-    raw_memory = """
-### Target Traits and Distinguishing Description
-目标是穿白色上衣、坐在黄色凳子上的人。
+def test_normalize_tracking_memory_keeps_existing_fields_when_update_omits_them() -> None:
+    previous = {
+        "appearance": {
+            "head_face": "短发，脸偏长。",
+            "upper_body": "黑色短袖上衣。",
+            "lower_body": "浅卡其短裤。",
+            "shoes": "白色运动鞋。",
+            "accessories": "",
+            "body_shape": "偏瘦偏高。",
+        },
+        "distinguish": "优先看黑色短袖和浅卡其短裤。",
+        "summary": "黑色短袖、浅卡其短裤、白鞋。",
+    }
 
-### Current Action and Movement Clues
-目前坐着看手机，没有明显移动。
+    normalized = normalize_tracking_memory(
+        {
+            "appearance": {
+                "head_face": "",
+                "upper_body": "",
+                "lower_body": "浅卡其短裤，裤长到膝上。",
+                "shoes": "白色运动鞋，鞋底偏厚。",
+                "accessories": "",
+                "body_shape": "",
+            },
+            "distinguish": "优先看浅卡其短裤和厚白鞋底。",
+            "summary": "黑色短袖、浅卡其短裤、厚白鞋底。",
+        },
+        previous_memory=previous,
+    )
 
-### Environment and Distractor Context
-右侧有一名黑衣行走者，左侧有人群经过。
-
-### Missing-Target Hypotheses
-如果消失，更可能是起身离开座位。
-
-### Next Search Guidance
-下一轮先检查原座位附近和左侧通道。
-"""
-
-    normalized = normalize_memory_markdown(raw_memory)
-
-    assert "目标是穿白色上衣、坐在黄色凳子上的人。" in extract_memory_text(normalized)
-    assert "下一轮先检查原座位附近和左侧通道。" in extract_memory_text(normalized)
+    assert normalized["appearance"]["head_face"] == "短发，脸偏长。"
+    assert normalized["appearance"]["upper_body"] == "黑色短袖上衣。"
+    assert normalized["appearance"]["lower_body"] == "浅卡其短裤，裤长到膝上。"
+    assert normalized["appearance"]["shoes"] == "白色运动鞋，鞋底偏厚。"
+    assert normalized["distinguish"] == "优先看浅卡其短裤和厚白鞋底。"
 
 
-def test_normalize_memory_markdown_uses_default_text_for_empty_input() -> None:
-    normalized = normalize_memory_markdown("")
+def test_tracking_memory_prompt_text_serializes_structured_json() -> None:
+    prompt_text = tracking_memory_prompt_text(
+        {
+            "appearance": {
+                "head_face": "短发。",
+                "upper_body": "黑色上衣。",
+                "lower_body": "",
+                "shoes": "",
+                "accessories": "",
+                "body_shape": "",
+            },
+            "distinguish": "",
+            "summary": "短发、黑色上衣。",
+        }
+    )
 
-    assert extract_memory_text(normalized) == DEFAULT_MEMORY_TEXT
+    assert '"appearance"' in prompt_text
+    assert '"head_face"' in prompt_text
+    assert "短发、黑色上衣。" in prompt_text
+
+
+def test_tracking_memory_display_text_renders_sections() -> None:
+    display_text = tracking_memory_display_text(
+        {
+            "appearance": {
+                "head_face": "短发。",
+                "upper_body": "黑色上衣。",
+                "lower_body": "浅色裤子。",
+                "shoes": "白鞋。",
+                "accessories": "",
+                "body_shape": "偏瘦。",
+            },
+            "distinguish": "和旁边深色长裤的人区分时优先看浅色裤子。",
+            "summary": "短发、黑色上衣、浅色裤子、白鞋。",
+        }
+    )
+
+    assert "摘要：短发、黑色上衣、浅色裤子、白鞋。" in display_text
+    assert "上装：黑色上衣。" in display_text
+    assert "鞋子：白鞋。" in display_text
+    assert "区分点：和旁边深色长裤的人区分时优先看浅色裤子。" in display_text
+
+
+def test_normalize_tracking_memory_clears_distinguish_when_no_confusing_person() -> None:
+    normalized = normalize_tracking_memory(
+        {
+            "appearance": {
+                "head_face": "短发。",
+                "upper_body": "黑色上衣。",
+                "lower_body": "卡其短裤。",
+                "shoes": "白鞋。",
+                "accessories": "",
+                "body_shape": "",
+            },
+            "distinguish": "无其他行人",
+            "summary": "短发、黑色上衣、卡其短裤、白鞋。",
+        }
+    )
+
+    assert normalized["distinguish"] == ""
+
+
+def test_normalize_tracking_memory_keeps_distinguish_when_it_contains_real_comparison() -> None:
+    normalized = normalize_tracking_memory(
+        {
+            "appearance": {
+                "head_face": "短发，戴眼镜。",
+                "upper_body": "黑色上衣。",
+                "lower_body": "卡其短裤。",
+                "shoes": "白鞋。",
+                "accessories": "",
+                "body_shape": "",
+            },
+            "distinguish": "相似人：黑色上衣、深色长裤、无眼镜；目标区别：卡其短裤、白鞋、戴眼镜。",
+            "summary": "短发、黑色上衣、卡其短裤、白鞋。",
+        }
+    )
+
+    assert normalized["distinguish"] == "相似人：黑色上衣、深色长裤、无眼镜；目标区别：卡其短裤、白鞋、戴眼镜。"
+
+
+def test_normalize_tracking_memory_allows_structured_update_to_clear_previous_distinguish() -> None:
+    previous = {
+        "appearance": {
+            "head_face": "短发，戴眼镜。",
+            "upper_body": "黑色上衣。",
+            "lower_body": "卡其短裤。",
+            "shoes": "白鞋。",
+            "accessories": "",
+            "body_shape": "",
+        },
+        "distinguish": "相似人：黑色上衣、深色长裤；目标区别：卡其短裤、白鞋。",
+        "summary": "短发、黑色上衣、卡其短裤、白鞋。",
+    }
+
+    normalized = normalize_tracking_memory(
+        {
+            "appearance": {
+                "head_face": "",
+                "upper_body": "黑色上衣，背面版型宽松。",
+                "lower_body": "",
+                "shoes": "",
+                "accessories": "",
+                "body_shape": "",
+            },
+            "distinguish": "",
+            "summary": "黑色上衣、卡其短裤、白鞋。",
+        },
+        previous_memory=previous,
+    )
+
+    assert normalized["distinguish"] == ""
+    assert normalized["appearance"]["upper_body"] == "黑色上衣，背面版型宽松。"
+
+
+def test_tracking_memory_summary_uses_default_when_empty() -> None:
+    assert tracking_memory_summary({"appearance": {}, "distinguish": "", "summary": ""}) == DEFAULT_MEMORY_TEXT

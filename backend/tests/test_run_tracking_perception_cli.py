@@ -2,6 +2,7 @@ from scripts.run_tracking_perception import (
     DEFAULT_CAMERA_SOURCE,
     DEFAULT_PERSON_MODEL,
     VIDEO_TRACK_FPS,
+    _prepare_perception_session,
     _preferred_camera_index,
     _resolve_source,
     _configure_device_runtime,
@@ -15,20 +16,24 @@ from scripts.run_tracking_perception import (
 )
 
 
-def test_parse_args_defaults_interval_to_three_seconds(monkeypatch) -> None:
+def test_parse_args_defaults_interval_to_one_second(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
         ["run_tracking_perception.py"],
     )
     args = parse_args()
     assert args.source == DEFAULT_CAMERA_SOURCE
-    assert args.interval_seconds == 3.0
+    assert args.interval_seconds == 1.0
     assert args.observation_text == ""
     assert args.model == DEFAULT_PERSON_MODEL
     assert args.device is None
     assert args.imgsz is None
     assert args.vid_stride == 1
+    assert args.fresh_session is False
     assert args.state_root == "./.runtime/agent-runtime"
+    assert args.observation_window_seconds == 5.0
+    assert args.save_keyframe_every_seconds == 1.0
+    assert args.keyframe_retention_seconds == 10.0
 
 
 def test_parse_args_accepts_device_and_vid_stride(monkeypatch) -> None:
@@ -47,6 +52,25 @@ def test_parse_args_accepts_device_and_vid_stride(monkeypatch) -> None:
     args = parse_args()
     assert args.device == "mps"
     assert args.vid_stride == 3
+
+
+def test_parse_args_accepts_window_and_keyframe_intervals(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_tracking_perception.py",
+            "--observation-window-seconds",
+            "7.5",
+            "--save-keyframe-every-seconds",
+            "3.0",
+            "--keyframe-retention-seconds",
+            "12.0",
+        ],
+    )
+    args = parse_args()
+    assert args.observation_window_seconds == 7.5
+    assert args.save_keyframe_every_seconds == 3.0
+    assert args.keyframe_retention_seconds == 12.0
 
 
 def test_parse_args_accepts_local_runtime_paths(monkeypatch) -> None:
@@ -167,3 +191,45 @@ def test_preferred_camera_index_falls_back_to_zero_when_no_devices(monkeypatch) 
     )
 
     assert _preferred_camera_index() == 0
+
+
+def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_path) -> None:
+    from backend.agent.runtime import LocalAgentRuntime
+    from backend.perception import LocalPerceptionService
+
+    state_root = tmp_path / "state"
+    runtime = LocalAgentRuntime(state_root=state_root)
+    perception = LocalPerceptionService(state_root=state_root)
+    runtime.start_fresh_session("sess_001", device_id="robot_01")
+    runtime.update_skill_cache("sess_001", skill_name="tracking", payload={"latest_target_id": 7})
+
+    _prepare_perception_session(
+        perception_service=perception,
+        session_id="sess_001",
+        device_id="robot_01",
+        fresh_session=False,
+    )
+
+    context = runtime.context("sess_001")
+    assert context.skill_cache["tracking"]["latest_target_id"] == 7
+
+
+def test_prepare_perception_session_resets_existing_session_when_requested(tmp_path) -> None:
+    from backend.agent.runtime import LocalAgentRuntime
+    from backend.perception import LocalPerceptionService
+
+    state_root = tmp_path / "state"
+    runtime = LocalAgentRuntime(state_root=state_root)
+    perception = LocalPerceptionService(state_root=state_root)
+    runtime.start_fresh_session("sess_001", device_id="robot_01")
+    runtime.update_skill_cache("sess_001", skill_name="tracking", payload={"latest_target_id": 7})
+
+    _prepare_perception_session(
+        perception_service=perception,
+        session_id="sess_001",
+        device_id="robot_01",
+        fresh_session=True,
+    )
+
+    context = runtime.context("sess_001")
+    assert context.skill_cache == {}

@@ -42,3 +42,12 @@ def test_load_settings_prefers_explicit_main_model(tmp_path: Path) -> None:
     assert settings.main_model == "qwen3.5-plus"
     assert settings.sub_model == "qwen3.5-plus"
     assert settings.chat_model == "qwen3.5-flash"
+
+
+def test_project_declares_lap_for_bytetrack_runtime() -> None:
+    root = Path(__file__).resolve().parents[2]
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    requirements = (root / "requirements.txt").read_text(encoding="utf-8")
+
+    assert '"lap>=0.5.12"' in pyproject
+    assert "lap>=0.5.12" in requirements

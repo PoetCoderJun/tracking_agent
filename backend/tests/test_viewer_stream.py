@@ -7,8 +7,24 @@ from pathlib import Path
 from PIL import Image
 
 from backend.agent.memory import AgentMemoryStore
+from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 from backend.persistence import ActiveSessionStore, LiveSessionStore
 from skills.tracking.viewer_stream import build_tracking_viewer_payload
+
+
+def _memory_payload() -> dict:
+    return {
+        "appearance": {
+            "head_face": "短发。",
+            "upper_body": "黑色上衣。",
+            "lower_body": "",
+            "shoes": "",
+            "accessories": "",
+            "body_shape": "",
+        },
+        "distinguish": "和旁边浅色上衣的人区分时优先看黑色上衣。",
+        "summary": "短发、黑色上衣。",
+    }
 
 
 def _tiny_jpeg_base64() -> str:
@@ -17,23 +33,38 @@ def _tiny_jpeg_base64() -> str:
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
+def _frame_image(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (8, 8), color="white").save(path, format="JPEG")
+    return path
+
+
 def test_build_tracking_viewer_payload_includes_current_frame_memory_and_history(
     tmp_path: Path,
 ) -> None:
     state_root = tmp_path / "state"
     store = LiveSessionStore(state_root, frame_buffer_size=3)
-    store.ingest_robot_event(
+    perception = LocalPerceptionService(state_root)
+    frame_path = _frame_image(tmp_path / "frame.jpg")
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_001",
+            device_id="robot_01",
+            frame=RobotFrame(
+                frame_id="frame_000001",
+                timestamp_ms=1710000000000,
+                image_path=str(frame_path),
+            ),
+            detections=[RobotDetection(track_id=3, bbox=[10, 20, 30, 40], score=0.95)],
+            text="先看看画面",
+        ),
+        request_function="observation",
+    )
+    store.append_chat_request(
         session_id="sess_001",
         device_id="robot_01",
-        frame={
-            "frame_id": "frame_000001",
-            "timestamp_ms": 1710000000000,
-            "image_base64": _tiny_jpeg_base64(),
-        },
-        detections=[{"track_id": 3, "bbox": [10, 20, 30, 40], "score": 0.95}],
         text="先看看画面",
         request_id="req_001",
-        request_function="chat",
     )
     store.apply_agent_result(
         "sess_001",
@@ -45,14 +76,14 @@ def test_build_tracking_viewer_payload_includes_current_frame_memory_and_history
             "target_id": 3,
             "bbox": [10, 20, 30, 40],
             "text": "目标在左侧。",
-            "memory": "黑色上衣，短发。",
+            "memory": _memory_payload(),
         },
     )
     AgentMemoryStore(state_root, "sess_001").update_skill_cache(
         "tracking",
         {
             "latest_target_id": 3,
-            "latest_memory": "黑色上衣，短发。",
+            "latest_memory": _memory_payload(),
             "pending_question": "",
         },
     )
@@ -61,12 +92,14 @@ def test_build_tracking_viewer_payload_includes_current_frame_memory_and_history
 
     assert payload["available"] is True
     assert payload["summary"]["target_id"] == 3
-    assert payload["current_memory"] == "黑色上衣，短发。"
+    assert "摘要：短发、黑色上衣。" in payload["current_memory"]
     assert payload["display_frame"]["frame_id"] == "frame_000001"
     assert payload["display_frame"]["target_id"] == 3
     assert payload["display_frame"]["image_data_url"].startswith("data:image/jpeg;base64,")
     assert payload["conversation_history"][-1]["text"] == "目标在左侧。"
-    assert payload["memory_history"][-1]["memory"] == "黑色上衣，短发。"
+    assert payload["memory_history"] == []
+    assert payload["summary"]["status_kind"] == "tracking"
+    assert payload["summary"]["status_label"] == "跟踪中"
 
 
 def test_build_tracking_viewer_payload_handles_missing_session(tmp_path: Path) -> None:
@@ -101,6 +134,214 @@ def test_build_tracking_viewer_payload_uses_active_session_when_session_id_is_om
 
     assert payload["available"] is True
     assert payload["session_id"] == "sess_active"
+    assert payload["display_frame"] is None
+
+
+def test_build_tracking_viewer_payload_hides_raw_perception_frames_before_target_confirmation(
+    tmp_path: Path,
+) -> None:
+    state_root = tmp_path / "state"
+    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store.ingest_robot_event(
+        session_id="sess_waiting",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[{"track_id": 5, "bbox": [10, 20, 30, 40], "score": 0.95}],
+        text="开始跟踪穿黑衣服的人",
+        request_id="req_001",
+        request_function="chat",
+    )
+
+    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_waiting")
+
+    assert payload["available"] is True
+    assert payload["latest_result"] is None
+    assert payload["display_frame"] is None
+    assert payload["summary"]["frame_id"] is None
+    assert payload["summary"]["detection_count"] == 0
+
+
+def test_build_tracking_viewer_payload_follows_latest_perception_frame_after_confirmation(
+    tmp_path: Path,
+) -> None:
+    state_root = tmp_path / "state"
+    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    perception = LocalPerceptionService(state_root)
+    frame_a = _frame_image(tmp_path / "frame_a.jpg")
+    frame_b = _frame_image(tmp_path / "frame_b.jpg")
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_live",
+            device_id="robot_01",
+            frame=RobotFrame(
+                frame_id="frame_000001",
+                timestamp_ms=1710000000000,
+                image_path=str(frame_a),
+            ),
+            detections=[RobotDetection(track_id=3, bbox=[10, 20, 30, 40], score=0.95)],
+            text="先看看画面",
+        ),
+        request_function="observation",
+    )
+    store.append_chat_request(
+        session_id="sess_live",
+        device_id="robot_01",
+        text="先看看画面",
+        request_id="req_001",
+    )
+    store.apply_agent_result(
+        "sess_live",
+        {
+            "request_id": "req_001",
+            "function": "tracking",
+            "behavior": "init",
+            "frame_id": "frame_000001",
+            "target_id": 3,
+            "text": "已确认目标。",
+            "memory": _memory_payload(),
+        },
+    )
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_live",
+            device_id="robot_01",
+            frame=RobotFrame(
+                frame_id="frame_000002",
+                timestamp_ms=1710000001000,
+                image_path=str(frame_b),
+            ),
+            detections=[RobotDetection(track_id=3, bbox=[12, 24, 34, 46], score=0.96)],
+            text="更新画面",
+        ),
+        request_function="observation",
+    )
+    AgentMemoryStore(state_root, "sess_live").update_skill_cache(
+        "tracking",
+        {
+            "latest_target_id": 3,
+            "latest_memory": _memory_payload(),
+            "pending_question": "",
+        },
+    )
+
+    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_live")
+
+    assert payload["display_frame"]["frame_id"] == "frame_000002"
+    assert payload["display_frame"]["bbox"] == [12, 24, 34, 46]
+    assert payload["summary"]["frame_id"] == "frame_000002"
+
+
+def test_build_tracking_viewer_payload_marks_completed_stream(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    perception = LocalPerceptionService(state_root)
+    frame_path = _frame_image(tmp_path / "frame.jpg")
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_done",
+            device_id="robot_01",
+            frame=RobotFrame(
+                frame_id="frame_000001",
+                timestamp_ms=1710000000000,
+                image_path=str(frame_path),
+            ),
+            detections=[RobotDetection(track_id=3, bbox=[10, 20, 30, 40], score=0.95)],
+            text="更新画面",
+        ),
+        request_function="observation",
+    )
+    perception.update_stream_status("sess_done", status="completed", ended_at_ms=1710000001000)
+    store.append_chat_request(
+        session_id="sess_done",
+        device_id="robot_01",
+        text="继续跟踪",
+        request_id="req_001",
+    )
+    store.apply_agent_result(
+        "sess_done",
+        {
+            "request_id": "req_001",
+            "function": "tracking",
+            "behavior": "track",
+            "frame_id": "frame_000001",
+            "found": False,
+            "decision": "wait",
+            "text": "当前画面中未发现与历史目标特征一致的人，暂时无法继续绑定。",
+        },
+    )
+    AgentMemoryStore(state_root, "sess_done").update_skill_cache(
+        "tracking",
+        {
+            "latest_target_id": 3,
+            "latest_memory": _memory_payload(),
+            "pending_question": "",
+        },
+    )
+
+    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_done")
+
+    assert payload["summary"]["status_kind"] == "completed"
+    assert payload["summary"]["status_label"] == "视频结束"
+    assert payload["summary"]["stream_status"] == "completed"
+
+
+def test_build_tracking_viewer_payload_keeps_display_frame_during_wait(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    perception = LocalPerceptionService(state_root)
+    frame_path = _frame_image(tmp_path / "frame_wait.jpg")
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_wait_live",
+            device_id="robot_01",
+            frame=RobotFrame(
+                frame_id="frame_000010",
+                timestamp_ms=1710000000000,
+                image_path=str(frame_path),
+            ),
+            detections=[RobotDetection(track_id=8, bbox=[11, 21, 31, 41], score=0.95)],
+            text="更新画面",
+        ),
+        request_function="observation",
+    )
+    store.append_chat_request(
+        session_id="sess_wait_live",
+        device_id="robot_01",
+        text="继续跟踪",
+        request_id="req_001",
+    )
+    store.apply_agent_result(
+        "sess_wait_live",
+        {
+            "request_id": "req_001",
+            "function": "tracking",
+            "behavior": "track",
+            "frame_id": "frame_000010",
+            "target_id": None,
+            "found": False,
+            "decision": "wait",
+            "text": "当前画面中未发现与历史目标特征一致的人，暂时无法继续绑定。",
+        },
+    )
+    AgentMemoryStore(state_root, "sess_wait_live").update_skill_cache(
+        "tracking",
+        {
+            "latest_target_id": 8,
+            "latest_memory": _memory_payload(),
+            "pending_question": "",
+        },
+    )
+
+    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_wait_live")
+
+    assert payload["summary"]["status_kind"] == "seeking"
+    assert payload["display_frame"]["frame_id"] == "frame_000010"
+    assert payload["display_frame"]["target_id"] == 8
+    assert payload["display_frame"]["bbox"] == [11, 21, 31, 41]
 
 
 def test_build_tracking_viewer_payload_handles_missing_active_session(tmp_path: Path) -> None:
@@ -110,3 +351,82 @@ def test_build_tracking_viewer_payload_handles_missing_active_session(tmp_path: 
 
     assert payload["available"] is False
     assert payload["session_id"] is None
+
+
+def test_build_tracking_viewer_payload_marks_wait_result_as_seeking(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store.ingest_robot_event(
+        session_id="sess_wait",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[{"track_id": 5, "bbox": [10, 20, 30, 40], "score": 0.95}],
+        text="观察画面",
+    )
+    store.apply_agent_result(
+        "sess_wait",
+        {
+            "behavior": "track",
+            "frame_id": "frame_000001",
+            "decision": "wait",
+            "text": "当前证据不足。",
+        },
+    )
+    AgentMemoryStore(state_root, "sess_wait").update_skill_cache(
+        "tracking",
+        {
+            "latest_target_id": 5,
+            "latest_memory": _memory_payload(),
+            "pending_question": "",
+        },
+    )
+
+    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_wait")
+
+    assert payload["summary"]["status_kind"] == "seeking"
+    assert payload["summary"]["status_label"] == "寻找中"
+
+
+def test_build_tracking_viewer_payload_exposes_recent_conversation_window(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store.ingest_robot_event(
+        session_id="sess_history",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[],
+        text="初始化观察",
+    )
+
+    for index in range(12):
+        request_id = f"req_{index:03d}"
+        store.append_chat_request(
+            session_id="sess_history",
+            device_id="robot_01",
+            text=f"user turn {index}",
+            request_id=request_id,
+        )
+        store.apply_agent_result(
+            "sess_history",
+            {
+                "request_id": request_id,
+                "function": "chat",
+                "behavior": "reply",
+                "frame_id": "frame_000001",
+                "text": f"assistant turn {index}",
+            },
+        )
+
+    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_history")
+
+    assert len(payload["conversation_history"]) == 8
+    assert payload["conversation_history"][0]["text"] == "user turn 8"
+    assert payload["conversation_history"][-1]["text"] == "assistant turn 11"

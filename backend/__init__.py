@@ -1,1 +1,1 @@
-"""Core local runtime package for robot perception, memory, and Pi skill execution."""
+"""Core local runtime package for perception services, memory, and Pi skill execution."""

@@ -21,10 +21,17 @@ def test_skill_package_contains_expected_files() -> None:
         SKILL_ROOT / "references" / "robot-agent-config.json",
         TRACKING_SCRIPT_ROOT / "select_target.py",
         TRACKING_SCRIPT_ROOT / "rewrite_memory.py",
+        TRACKING_SCRIPT_ROOT / "run_tracking_init.py",
+        TRACKING_SCRIPT_ROOT / "run_tracking_track.py",
+        TRACKING_SCRIPT_ROOT / "run_tracking_rewrite_worker.py",
         REPO_SCRIPT_ROOT / "run_tracking_perception.py",
         REPO_SCRIPT_ROOT / "run_tracking_loop.py",
+        REPO_SCRIPT_ROOT / "run_tracking_agent.py",
+        REPO_SCRIPT_ROOT / "run_tracking_backend.py",
         REPO_SCRIPT_ROOT / "run_tracking_viewer_stream.py",
         REPO_SCRIPT_ROOT / "run_tracking_stack.py",
+        REPO_SCRIPT_ROOT / "run_tracking_stack.sh",
+        REPO_SCRIPT_ROOT / "run_tracking_frontend.sh",
     ]
 
     for path in expected_paths:
@@ -48,13 +55,20 @@ def test_backend_contains_single_local_cli_entrypoint() -> None:
 def test_tracking_operational_scripts_live_under_repo_scripts() -> None:
     assert (REPO_SCRIPT_ROOT / "run_tracking_perception.py").exists()
     assert (REPO_SCRIPT_ROOT / "run_tracking_loop.py").exists()
+    assert (REPO_SCRIPT_ROOT / "run_tracking_agent.py").exists()
+    assert (REPO_SCRIPT_ROOT / "run_tracking_backend.py").exists()
     assert (REPO_SCRIPT_ROOT / "run_tracking_viewer_stream.py").exists()
     assert (REPO_SCRIPT_ROOT / "run_tracking_stack.py").exists()
+    assert (REPO_SCRIPT_ROOT / "run_tracking_stack.sh").exists()
+    assert (REPO_SCRIPT_ROOT / "run_tracking_frontend.sh").exists()
 
 
 def test_tracking_skill_scripts_only_keep_single_turn_helpers() -> None:
     assert (TRACKING_SCRIPT_ROOT / "select_target.py").exists()
     assert (TRACKING_SCRIPT_ROOT / "rewrite_memory.py").exists()
+    assert (TRACKING_SCRIPT_ROOT / "run_tracking_init.py").exists()
+    assert (TRACKING_SCRIPT_ROOT / "run_tracking_track.py").exists()
+    assert (TRACKING_SCRIPT_ROOT / "run_tracking_rewrite_worker.py").exists()
     assert not (TRACKING_SCRIPT_ROOT / "run_tracking_perception.py").exists()
     assert not (TRACKING_SCRIPT_ROOT / "run_tracking_loop.py").exists()
 
@@ -90,8 +104,8 @@ def test_skill_frontmatter_and_sections_follow_skill_style() -> None:
 def test_skill_explicitly_treats_tool_names_as_tools_not_skills() -> None:
     skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "`reply`, `init`, `track`, and `rewrite_memory` are tools" in skill
-    assert "not standalone skills" in skill
+    assert "`reply`, `init`, and `track` are turn types" in skill
+    assert "deterministic scripts" in skill
 
 
 def test_pi_specific_configs_are_not_listed_as_canonical_references() -> None:
@@ -110,10 +124,8 @@ def test_tracking_skill_does_not_embed_backend_runtime_contracts() -> None:
     assert "backend.tools.tracking" not in skill
     assert "backend/adapters/pi" not in skill
     assert "scripts/runtime.py" not in skill
-    assert "python skills/tracking/scripts/select_target.py" in skill
-    assert "python skills/tracking/scripts/rewrite_memory.py" in skill
-    assert "finalize_turn.py" not in skill
-    assert "reply.py" not in skill
+    assert "python skills/tracking/scripts/run_tracking_init.py" in skill
+    assert "python skills/tracking/scripts/run_tracking_track.py" in skill
     assert "skill_state_patch" not in skill
     assert '"status": "idle" | "processed"' not in skill
 
@@ -121,22 +133,23 @@ def test_tracking_skill_does_not_embed_backend_runtime_contracts() -> None:
 def test_tracking_skill_requires_helper_for_explicit_candidate_id_turns() -> None:
     skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "always verify it with `select_target.py --mode init`" in skill
-    assert "Do not use `reply` for explicit target-selection commands" in skill
+    assert "User explicitly says `跟踪 ID 为 N` / `切换到 ID N` | `init`" in skill
+    assert "Always call the deterministic init script." in skill
 
 
 def test_tracking_skill_requires_memory_rewrite_after_successful_init_or_track() -> None:
     skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "Use it after every successful `init` or `track`." in skill
-    assert "if the `init` or `track` result succeeded, call `rewrite_memory.py`" in skill
+    assert "For `init`, memory rewrite is off the critical path." in skill
+    assert "For `track`, memory rewrite is off the critical path." in skill
+    assert "Do not call `select_target.py` or `rewrite_memory.py` directly from Pi" in skill
 
 
-def test_memory_reference_clarifies_model_output_vs_stored_markdown() -> None:
+def test_memory_reference_clarifies_model_output_vs_stored_json() -> None:
     memory_reference = (SKILL_ROOT / "references" / "memory-format.md").read_text(
         encoding="utf-8"
     )
 
     assert "Model output:" in memory_reference
     assert "Stored file:" in memory_reference
-    assert "storage detail" in memory_reference
+    assert "presentation detail" in memory_reference

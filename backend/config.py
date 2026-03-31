@@ -19,7 +19,7 @@ class Settings:
     chat_model: str = "qwen3.5-flash"
 
 
-def _parse_dotenv(env_path: Path) -> Dict[str, str]:
+def parse_dotenv(env_path: Path) -> Dict[str, str]:
     values: Dict[str, str] = {}
     if not env_path.exists():
         return values
@@ -35,7 +35,7 @@ def _parse_dotenv(env_path: Path) -> Dict[str, str]:
 
 def load_settings(env_path: Optional[Path] = None) -> Settings:
     path = env_path or Path(".ENV")
-    values = _parse_dotenv(path)
+    values = parse_dotenv(path)
     default_model = values.get("DASHSCOPE_MODEL", "qwen3.5-plus")
 
     return Settings(

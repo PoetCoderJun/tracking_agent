@@ -5,7 +5,13 @@ from pathlib import Path
 from PIL import Image
 
 from backend.agent import LocalAgentRuntime
-from backend.perception import RobotDetection, RobotFrame, RobotIngestEvent, build_perception_bundle
+from backend.perception import (
+    LocalPerceptionService,
+    RobotDetection,
+    RobotFrame,
+    RobotIngestEvent,
+    build_perception_bundle,
+)
 
 
 def _frame_image(path: Path) -> Path:
@@ -16,11 +22,12 @@ def _frame_image(path: Path) -> Path:
 
 def test_local_agent_runtime_context_contains_generic_state(tmp_path: Path) -> None:
     runtime = LocalAgentRuntime(tmp_path / "state")
+    perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
 
     runtime.update_user_preferences("sess_001", {"language": "zh"})
     runtime.update_environment_map("sess_001", {"rooms": {"lab": {"visible": True}}})
-    context = runtime.ingest_event(
+    perception.write_observation(
         RobotIngestEvent(
             session_id="sess_001",
             device_id="robot_01",
@@ -35,22 +42,23 @@ def test_local_agent_runtime_context_contains_generic_state(tmp_path: Path) -> N
         request_id="req_001",
         request_function="tracking",
     )
+    context = runtime.context("sess_001", device_id="robot_01")
 
-    assert context.raw_session["latest_request_id"] == "req_001"
     assert context.user_preferences["language"] == "zh"
     assert context.environment_map["rooms"]["lab"]["visible"] is True
-    assert context.perception_cache["vision"]["latest_frame_id"] == "frame_000001"
-    assert context.perception_cache["language"]["latest_text"] == "跟踪穿黑衣服的人"
+    assert context.raw_session["recent_frames"] == []
+    assert context.raw_session["conversation_history"] == []
     assert context.state_paths["session_path"].endswith("/sessions/sess_001/session.json")
     assert context.state_paths["agent_memory_path"].endswith("/sessions/sess_001/agent_memory.json")
 
 
 def test_build_perception_bundle_surfaces_memory_language_and_map(tmp_path: Path) -> None:
     runtime = LocalAgentRuntime(tmp_path / "state")
+    perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
     runtime.update_user_preferences("sess_001", {"language": "zh"})
     runtime.update_environment_map("sess_001", {"map_id": "lab-01"})
-    context = runtime.ingest_event(
+    perception.write_observation(
         RobotIngestEvent(
             session_id="sess_001",
             device_id="robot_01",
@@ -65,20 +73,22 @@ def test_build_perception_bundle_surfaces_memory_language_and_map(tmp_path: Path
         request_id="req_001",
         request_function="tracking",
     )
+    context = runtime.context("sess_001", device_id="robot_01")
 
     bundle = build_perception_bundle(context)
 
     assert bundle.vision["latest_frame"]["frame_id"] == "frame_000001"
-    assert bundle.language["latest_request_function"] == "tracking"
+    assert bundle.language["latest_request_function"] is None
     assert bundle.user_preferences["language"] == "zh"
     assert bundle.environment_map["map_id"] == "lab-01"
 
 
 def test_observation_ingest_updates_state_without_polluting_chat_history(tmp_path: Path) -> None:
     runtime = LocalAgentRuntime(tmp_path / "state")
+    perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
 
-    context = runtime.ingest_event(
+    perception.write_observation(
         RobotIngestEvent(
             session_id="sess_obs",
             device_id="robot_01",
@@ -93,7 +103,53 @@ def test_observation_ingest_updates_state_without_polluting_chat_history(tmp_pat
         request_id="req_obs_001",
         request_function="observation",
     )
+    context = runtime.context("sess_obs", device_id="robot_01")
 
-    assert context.raw_session["latest_request_function"] == "observation"
+    assert context.raw_session["latest_request_function"] is None
     assert context.raw_session["conversation_history"] == []
-    assert context.perception_cache["language"]["latest_text"] == "camera observation"
+    assert context.raw_session["recent_frames"] == []
+
+
+def test_apply_skill_result_stores_runtime_summary_not_full_result_copy(tmp_path: Path) -> None:
+    runtime = LocalAgentRuntime(tmp_path / "state")
+    perception = LocalPerceptionService(tmp_path / "state")
+    frame_path = _frame_image(tmp_path / "frame.jpg")
+
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_result",
+            device_id="robot_01",
+            frame=RobotFrame(
+                frame_id="frame_000001",
+                timestamp_ms=1710000000000,
+                image_path=str(frame_path),
+            ),
+            detections=[],
+            text="继续跟踪",
+        ),
+        request_id="req_001",
+        request_function="chat",
+    )
+
+    context = runtime.apply_skill_result(
+        "sess_result",
+        {
+            "behavior": "track",
+            "frame_id": "frame_000001",
+            "target_id": 12,
+            "found": True,
+            "decision": "track",
+            "text": "已确认继续跟踪 ID 12。",
+            "latest_result": {"should_not": "persist"},
+        },
+    )
+
+    runtime_state = context.perception_cache["runtime"]
+    assert runtime_state["has_latest_result"] is True
+    assert runtime_state["latest_behavior"] == "track"
+    assert runtime_state["latest_frame_id"] == "frame_000001"
+    assert runtime_state["latest_target_id"] == 12
+    assert runtime_state["latest_found"] is True
+    assert runtime_state["latest_decision"] == "track"
+    assert runtime_state["latest_text"] == "已确认继续跟踪 ID 12。"
+    assert "latest_result" not in runtime_state

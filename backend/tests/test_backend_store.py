@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from io import BytesIO
 from pathlib import Path
 
@@ -89,6 +90,63 @@ def test_ingest_robot_event_cleans_up_expired_frame_files(tmp_path: Path) -> Non
     ]
 
 
+def test_ingest_robot_event_keeps_latest_confirmed_frame_file(tmp_path: Path) -> None:
+    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=2)
+
+    for index in range(2):
+        store.ingest_robot_event(
+            session_id="sess_001",
+            device_id="robot_01",
+            frame={
+                "frame_id": f"frame_{index:06d}",
+                "timestamp_ms": 1710000000000 + index,
+                "image_base64": _tiny_jpeg_base64(),
+            },
+            detections=[],
+            text="",
+        )
+
+    session_dir = tmp_path / "state" / "sessions" / "sess_001"
+    confirmed_path = session_dir / "frames" / "frame_000000.jpg"
+    (session_dir / "agent_memory.json").write_text(
+        json.dumps(
+            {
+                "messages": [],
+                "skill_cache": {
+                    "tracking": {
+                        "latest_confirmed_frame_path": str(confirmed_path),
+                    }
+                },
+                "user_preferences": {},
+                "environment_map": {},
+                "perception_cache": {},
+            },
+            indent=2,
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+
+    store.ingest_robot_event(
+        session_id="sess_001",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000002",
+            "timestamp_ms": 1710000000002,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[],
+        text="",
+    )
+
+    frames_dir = session_dir / "frames"
+    assert sorted(path.name for path in frames_dir.iterdir() if path.is_file()) == [
+        "frame_000000.jpg",
+        "frame_000001.jpg",
+        "frame_000002.jpg",
+    ]
+
+
 def test_ingest_robot_event_reuses_existing_session_frame_without_copying(tmp_path: Path) -> None:
     store = LiveSessionStore(tmp_path / "state", frame_buffer_size=2)
     session_frames_dir = tmp_path / "state" / "sessions" / "sess_001" / "frames"
@@ -139,6 +197,8 @@ def test_apply_agent_result_preserves_generic_payload_shape(tmp_path: Path) -> N
             "summary": {"objects": 1},
             "robot_response": {"action": "speak", "text": "scene looks clear"},
             "skill_state": {"should_not": "live_in_session"},
+            "latest_result": {"should_not": "nest"},
+            "raw_session": {"should_not": "persist"},
         },
     )
 
@@ -151,6 +211,8 @@ def test_apply_agent_result_preserves_generic_payload_shape(tmp_path: Path) -> N
     assert session.latest_result["summary"] == {"objects": 1}
     assert session.latest_result["robot_response"]["action"] == "speak"
     assert "skill_state" not in session.latest_result
+    assert "latest_result" not in session.latest_result
+    assert "raw_session" not in session.latest_result
     assert session.result_history[-1]["summary"] == {"objects": 1}
 
 
@@ -185,8 +247,48 @@ def test_session_payload_stays_generic(tmp_path: Path) -> None:
     assert "latest_target_id" not in payload
     assert "latest_memory" not in payload
     assert payload["latest_result"]["function"] == "inspect"
-    assert payload["latest_result"]["memory"] == "generic note"
+    assert "memory" not in payload["latest_result"]
     assert payload["recent_frames"][-1]["detections"][0]["track_id"] == 15
+
+
+def test_conversation_history_keeps_full_chat_log(tmp_path: Path) -> None:
+    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=3)
+    store.ingest_robot_event(
+        session_id="sess_chat",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[],
+        text="初始化观察",
+    )
+
+    for index in range(25):
+        request_id = f"req_{index:03d}"
+        store.append_chat_request(
+            session_id="sess_chat",
+            device_id="robot_01",
+            text=f"user turn {index}",
+            request_id=request_id,
+        )
+        store.apply_agent_result(
+            "sess_chat",
+            {
+                "request_id": request_id,
+                "function": "chat",
+                "behavior": "reply",
+                "frame_id": "frame_000001",
+                "text": f"assistant turn {index}",
+            },
+        )
+
+    session = store.load_session("sess_chat")
+
+    assert len(session.conversation_history) == 8
+    assert session.conversation_history[0]["text"] == "user turn 21"
+    assert session.conversation_history[-1]["text"] == "assistant turn 24"
 
 
 def test_patch_latest_result_updates_current_result_and_history(tmp_path: Path) -> None:
@@ -224,9 +326,9 @@ def test_patch_latest_result_updates_current_result_and_history(tmp_path: Path) 
     )
 
     assert updated.latest_result is not None
-    assert updated.latest_result["memory"] == "updated memory"
+    assert "memory" not in updated.latest_result
     assert updated.latest_result["text"] == "updated result"
-    assert updated.result_history[-1]["memory"] == "updated memory"
+    assert "memory" not in updated.result_history[-1]
     assert updated.result_history[-1]["text"] == "updated result"
 
 
