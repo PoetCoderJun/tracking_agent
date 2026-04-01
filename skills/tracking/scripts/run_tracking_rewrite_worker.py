@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import traceback
 from datetime import datetime, timezone
@@ -64,6 +65,7 @@ def _record_status(
     stdout_path: Path | None = None,
     stderr_path: Path | None = None,
     result_path: Path | None = None,
+    pid: int | None = None,
 ) -> None:
     status_path, _ = _status_paths(job_dir)
     _write_tracking_rewrite_json(
@@ -86,6 +88,7 @@ def _record_status(
             stdout_path=None if stdout_path is None else str(stdout_path),
             stderr_path=None if stderr_path is None else str(stderr_path),
             result_path=None if result_path is None else str(result_path),
+            pid=pid,
         ),
     )
     _update_latest_tracking_rewrite_state(
@@ -101,6 +104,7 @@ def _record_status(
         reason=reason,
         error=error,
         result_path=result_path,
+        pid=pid,
     )
 
 
@@ -198,6 +202,7 @@ def main() -> int:
         started_at=started_at,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
+        pid=os.getpid(),
     )
 
     confirmed_frame_path = frame_paths[-1]
@@ -226,6 +231,7 @@ def main() -> int:
             reason="stale_context",
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            pid=os.getpid(),
         )
         return 0
 
@@ -262,6 +268,7 @@ def main() -> int:
             error=str(exc),
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            pid=os.getpid(),
         )
         return 0
 
@@ -341,6 +348,7 @@ def main() -> int:
         stdout_path=stdout_path,
         stderr_path=stderr_path,
         result_path=result_path,
+        pid=os.getpid(),
     )
     return 0
 

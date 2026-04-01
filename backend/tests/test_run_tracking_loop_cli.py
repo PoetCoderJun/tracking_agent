@@ -4,6 +4,7 @@ from scripts.run_tracking_loop import (
     _has_active_target,
     _next_dispatch_deadline,
     _rewrite_in_progress,
+    _should_schedule_rewrite,
     _should_request_recovery_for_frame,
     _stream_completed,
     _track_id_present_in_frame,
@@ -155,6 +156,24 @@ def test_rewrite_in_progress_detects_active_worker() -> None:
     assert _rewrite_in_progress({"latest_rewrite_status": "queued"}) is True
     assert _rewrite_in_progress({"latest_rewrite_status": "running"}) is True
     assert _rewrite_in_progress({"latest_rewrite_status": "succeeded"}) is False
+
+
+def test_should_schedule_rewrite_waits_for_active_worker() -> None:
+    assert _should_schedule_rewrite(
+        next_rewrite_at=None,
+        now=10.0,
+        runtime_state={"latest_rewrite_status": "running"},
+    ) is False
+    assert _should_schedule_rewrite(
+        next_rewrite_at=9.0,
+        now=10.0,
+        runtime_state={"latest_rewrite_status": "queued"},
+    ) is False
+    assert _should_schedule_rewrite(
+        next_rewrite_at=9.0,
+        now=10.0,
+        runtime_state={"latest_rewrite_status": "succeeded"},
+    ) is True
 
 
 def test_stream_completed_detects_completed_status() -> None:

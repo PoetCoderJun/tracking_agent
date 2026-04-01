@@ -629,6 +629,7 @@ def _update_latest_tracking_rewrite_state(
     reason: Optional[str] = None,
     error: Optional[str] = None,
     result_path: Optional[Path] = None,
+    pid: Optional[int] = None,
 ) -> None:
     if not _tracking_rewrite_job_is_latest(runtime, session_id=session_id, job_id=job_id):
         return
@@ -644,16 +645,98 @@ def _update_latest_tracking_rewrite_state(
         patch["latest_rewrite_completed_at"] = completed_at
     if reason is not None:
         patch["latest_rewrite_reason"] = reason
+    else:
+        patch["latest_rewrite_reason"] = None
     if error is not None:
         patch["latest_rewrite_error"] = error
     else:
         patch["latest_rewrite_error"] = None
     if result_path is not None:
         patch["latest_rewrite_result_path"] = str(result_path)
+    else:
+        patch["latest_rewrite_result_path"] = None
+    if pid is not None:
+        patch["latest_rewrite_pid"] = int(pid)
+    else:
+        patch["latest_rewrite_pid"] = None
     runtime.update_skill_cache(
         session_id,
         skill_name=TRACKING_RUNTIME_NAMESPACE,
         payload=patch,
+    )
+
+
+def _tracking_rewrite_pid_alive(pid: Any) -> bool:
+    if pid in (None, "", 0):
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except (OSError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _recover_latest_tracking_rewrite_if_stale(
+    *,
+    runtime: LocalAgentRuntime,
+    session_id: str,
+) -> None:
+    context = runtime.context(session_id)
+    runtime_state = dict(context.skill_cache.get(TRACKING_RUNTIME_NAMESPACE) or {})
+    status = str(runtime_state.get("latest_rewrite_status", "")).strip()
+    if status not in {"queued", "running"}:
+        return
+
+    pid = runtime_state.get("latest_rewrite_pid")
+    if _tracking_rewrite_pid_alive(pid):
+        return
+
+    status_path_raw = str(runtime_state.get("latest_rewrite_status_path", "")).strip()
+    if not status_path_raw:
+        return
+    status_path = Path(status_path_raw)
+    if not status_path.exists():
+        return
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if str(payload.get("status", "")).strip() not in {"queued", "running"}:
+        return
+    completed_at = _utc_now()
+    failed_payload = _tracking_rewrite_status_payload(
+        job_id=str(payload.get("job_id", "")).strip(),
+        session_id=str(payload.get("session_id", session_id)).strip(),
+        status="failed",
+        task=str(payload.get("task", "")).strip(),
+        frame_id=str(payload.get("frame_id", "")).strip(),
+        target_id=int(payload.get("target_id", 0)),
+        crop_path=str(payload.get("crop_path", "")).strip(),
+        frame_paths=list(payload.get("frame_paths") or []),
+        requested_at=str(payload.get("requested_at", "")).strip() or None,
+        started_at=str(payload.get("started_at", "")).strip() or None,
+        completed_at=completed_at,
+        exit_code=-1,
+        reason="worker_missing",
+        error="tracking rewrite worker exited before writing a result",
+        stdout_path=str(payload.get("stdout_path", "")).strip() or None,
+        stderr_path=str(payload.get("stderr_path", "")).strip() or None,
+        pid=None,
+    )
+    _write_tracking_rewrite_json(status_path, failed_payload)
+    _update_latest_tracking_rewrite_state(
+        runtime,
+        session_id=session_id,
+        job_id=str(payload.get("job_id", "")).strip(),
+        status="failed",
+        task=str(payload.get("task", "")).strip(),
+        log_dir=status_path.parent,
+        status_path=status_path,
+        requested_at=str(payload.get("requested_at", "")).strip() or None,
+        completed_at=completed_at,
+        reason="worker_missing",
+        error="tracking rewrite worker exited before writing a result",
+        pid=None,
     )
 
 
@@ -663,10 +746,17 @@ def _apply_tracking_rewrite_output(
     session_id: str,
     rewrite_output: Dict[str, Any],
 ) -> None:
+    patch: Dict[str, Any] = {"latest_memory": rewrite_output["memory"]}
+    crop_path = None if rewrite_output.get("crop_path") in (None, "") else str(rewrite_output["crop_path"]).strip()
+    reference_view = str(rewrite_output.get("reference_view", "")).strip()
+    if crop_path and reference_view == "front":
+        patch["latest_front_target_crop"] = crop_path
+    elif crop_path and reference_view == "back":
+        patch["latest_back_target_crop"] = crop_path
     runtime.update_skill_cache(
         session_id,
         skill_name=TRACKING_SKILL_NAME,
-        payload={"latest_memory": rewrite_output["memory"]},
+        payload=patch,
     )
 
 
@@ -821,6 +911,17 @@ def _schedule_tracking_memory_rewrite(
             stderr_path=str(stderr_path),
             pid=process.pid,
         ),
+    )
+    _update_latest_tracking_rewrite_state(
+        runtime,
+        session_id=session_id,
+        job_id=job_id,
+        status="queued",
+        task=str(rewrite_memory_input["task"]),
+        log_dir=job_dir,
+        status_path=status_path,
+        requested_at=requested_at,
+        pid=process.pid,
     )
 
 

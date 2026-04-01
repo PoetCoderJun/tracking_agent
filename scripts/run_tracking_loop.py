@@ -15,7 +15,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.config import parse_dotenv
-from backend.agent.runner import PiAgentRunner, _schedule_tracking_memory_rewrite
+from backend.agent.runner import (
+    PiAgentRunner,
+    _recover_latest_tracking_rewrite_if_stale,
+    _schedule_tracking_memory_rewrite,
+)
 from backend.perception.service import LocalPerceptionService
 from backend.perception.stream import generate_request_id
 from backend.persistence import resolve_session_id
@@ -234,6 +238,19 @@ def _stop_requested(stop_file: str | None) -> bool:
 
 def _rewrite_in_progress(runtime_state: Dict[str, Any]) -> bool:
     return str(runtime_state.get("latest_rewrite_status", "")).strip() in {"queued", "running"}
+
+
+def _should_schedule_rewrite(
+    *,
+    next_rewrite_at: float | None,
+    now: float,
+    runtime_state: Dict[str, Any],
+) -> bool:
+    if _rewrite_in_progress(runtime_state):
+        return False
+    if next_rewrite_at is None:
+        return True
+    return now >= next_rewrite_at
 
 
 def _stream_completed(stream_status: Dict[str, Any]) -> bool:
@@ -498,11 +515,17 @@ def main() -> int:
                     flush=True,
                 )
                 return 0
-            runtime_state = _tracking_runtime_state(context)
+            _recover_latest_tracking_rewrite_if_stale(
+                runtime=runner.runtime,
+                session_id=session_id,
+            )
+            runtime_state = _tracking_runtime_state(runner.runtime.context(session_id, device_id=args.device_id))
             now = time.monotonic()
-            if next_rewrite_at is None:
-                next_rewrite_at = now
-            if now >= next_rewrite_at and not _rewrite_in_progress(runtime_state):
+            if _should_schedule_rewrite(
+                next_rewrite_at=next_rewrite_at,
+                now=now,
+                runtime_state=runtime_state,
+            ):
                 if _schedule_bound_memory_rewrite(
                     runner=runner,
                     session_id=session_id,

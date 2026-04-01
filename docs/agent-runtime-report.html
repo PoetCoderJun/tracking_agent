@@ -601,12 +601,20 @@
         <ul>
           <li><code>PiAgentRunner</code> 已经是一个真正的 turn orchestrator。</li>
           <li>tracking skill 的 <code>init</code> / <code>track</code> 被收敛成确定性入口脚本，减少了 Pi 内部自由发挥。</li>
-          <li>memory rewrite 被明确拆成同步初始化和异步更新两条路径，符合实际运行成本。</li>
+          <li><code>context_builders.py</code> 把上下文生成从 runtime 中进一步剥离，使新增 skill 的 context builder 有明确扩展点。</li>
+          <li><code>turn_payload.py</code> 把 tracking 脚本输出收敛成标准 turn payload，skill 与 runner 的契约更稳定。</li>
+          <li>memory rewrite 被明确拆成同步初始化和异步更新两条路径，异步 worker 带完整的 job 状态跟踪与失败恢复。</li>
         </ul>
 
         <h3 id="conclusion-3">1.3 当前最需要认清的事实</h3>
         <div class="info-box warning">
-          当前 <code>track</code> 主路径仍是 <strong>VLM 驱动定位</strong>，而不是纯确定性重绑定。代码里存在 <code>_deterministic_track_result(...)</code>，但还没有接到 <code>execute_select_tool(...)</code> 主流程。这一点必须在设计理解上说清楚，否则会高估系统的确定性程度。
+          当前 <code>track</code> 在 <strong>tracking loop</strong> 中的行为需要分层理解：
+          <ul>
+            <li><strong>目标在画面中且已绑定：</strong>loop 直接确认绑定并周期性调度 memory rewrite，<strong>完全不经过 Pi/VLM</strong>，这是最高频路径。</li>
+            <li><strong>目标丢失（recovery mode）：</strong>loop 调用 <code>process_tracking_request_direct(...)</code>，此时 <code>execute_select_tool(...)</code> 的 <code>track</code> 分支在非显式 ID 场景下仍走 <strong>VLM 驱动定位</strong>。</li>
+            <li>代码里存在 <code>_deterministic_track_result(...)</code>，但尚未接入 <code>execute_select_tool(...)</code> 的 <code>track</code> 主流程。</li>
+          </ul>
+          这意味着：系统在日常运行中已经避免了大量不必要的 VLM 调用，但在 recovery 场景下仍然是 VLM 主导的身份绑定。
         </div>
       </section>
 
@@ -643,8 +651,8 @@
           </tr>
           <tr>
             <td>Perception</td>
-            <td><code>backend/perception/</code></td>
-            <td>抽帧、检测、写 observation</td>
+            <td><code>backend/perception/</code> + <code>scripts/run_tracking_perception.py</code></td>
+            <td>抽帧、检测、写 observation、提供实时帧查询</td>
             <td>技能路由、用户对话决策</td>
           </tr>
           <tr>
@@ -784,17 +792,31 @@
         </div>
 
         <h3 id="agent-call-3">4.3 tracking loop 快路径</h3>
-        <p><code>scripts/run_tracking_loop.py</code> 在有活动目标时不会重复走完整 skill routing，而是直接调用：</p>
+        <p><code>scripts/run_tracking_loop.py</code> 实现了三层运行状态：</p>
+
+        <h4>状态一：<code>tracking_bound</code>（目标在画面中）</h4>
+        <p>当最新帧中已存在绑定的 <code>target_id</code> 时，loop <strong>不调用任何脚本/Pi</strong>，直接：</p>
         <ul>
-          <li><code>PiAgentRunner.process_tracking_request_direct(...)</code></li>
+          <li>输出 <code>tracking_bound</code> 状态日志</li>
+          <li>按 <code>rewrite_interval_seconds</code> 周期性调度 bound memory rewrite</li>
+          <li>更新 <code>latest_confirmed_frame_path</code>、<code>latest_confirmed_bbox</code>、<code>latest_target_crop</code></li>
         </ul>
-        
-        <p>这不是绕开架构，而是利用架构提供的快路径：</p>
+        <p>这是最高频、最低成本的路径。</p>
+
+        <h4>状态二：<code>recovery</code>（目标丢失）</h4>
+        <p>当目标在最新帧中不可见时，loop 进入 recovery mode，调用：</p>
         <ul>
-          <li>仍写 <code>tracking_context.json</code></li>
-          <li>仍返回统一 payload</li>
-          <li>仍由 runner 做统一回写</li>
+          <li><code>PiAgentRunner.process_tracking_request_direct(..., recovery_mode=True, missing_target_id=..., candidate_track_id_floor_exclusive=...)</code></li>
         </ul>
+        <p>此时生成带 <code>recovery_mode</code> 标记的 <code>tracking_context.json</code>，由 <code>run_tracking_track.py</code> 判断目标是否重新出现。</p>
+
+        <h4>状态三：<code>idle</code> / <code>completed</code></h4>
+        <ul>
+          <li>无 active target 时 sleep</li>
+          <li>perception stream completed 时优雅退出</li>
+        </ul>
+
+        <p>这不是绕开架构，而是 runtime 明确支持"通用路径 + 高频零成本路径 + 降级恢复路径"的三层设计。此外，loop 可选启动 WebSocket viewer stream，向外部实时广播 tracking 状态。</p>
       </section>
 
       <section id="runner">
@@ -848,15 +870,16 @@
         <p>没有这层，multi-skills 会退化成"一堆脚本之间互相写文件"。</p>
 
         <h4>关键方法</h4>
-        
+
         <p><strong><code>process_chat_request(...)</code></strong> — 标准对话入口</p>
         <ol>
           <li>把用户输入追加到 <code>conversation_history</code></li>
           <li>更新 <code>perception_cache.language</code></li>
-          <li>调 <code>process_session(...)</code></li>
-          <li>运行 Pi</li>
+          <li>若只启用 tracking 且当前没有 active target，<strong>直接短路到 <code>process_tracking_init_direct(...)</code></strong>，不走 Pi</li>
+          <li>否则调 <code>process_session(...)</code> 运行 Pi</li>
           <li>按 payload 回写状态</li>
         </ol>
+        <p>它的意义在于：<strong>把"用户说了一句话"显式变成一个 turn。</strong>同时，对于最明确的初始化场景，runner 提供了零 Pi 调用的快捷路径。</p>
 
         <p><strong><code>_run_pi_turn(...)</code></strong> — runner 的执行核心</p>
         <p>它的说服力来自三个设计动作：</p>
@@ -868,7 +891,7 @@
         
         <div class="info-box success">
           <strong>第二，把 Pi 的自由度限制在技能选择与技能执行</strong><br>
-          Pi prompt 里明确规定：先读 route_context、不要直接改状态文件、只返回原始 JSON 对象。
+          Pi prompt 里明确规定 12 条规则，核心约束包括：先读 <code>route_context</code>，tracking 时优先读 <code>tracking_context</code>；不要直接改状态文件，只返回 patches 和 results；只返回一个原始 JSON 对象，不要输出 markdown 或解释性文字；<code>idle</code> 仅用于无 skill 匹配的场景，若 skill 匹配但需要澄清，应返回 <code>processed</code> clarification payload；若确定性入口脚本已返回完整 payload，直接原样返回，不要手工重写字段。
         </div>
         
         <div class="info-box success">
@@ -877,7 +900,7 @@
         </div>
 
         <h4>tracking rewrite 的同步 / 异步切分</h4>
-        
+
         <table>
           <tr>
             <th>阶段</th>
@@ -891,11 +914,40 @@
           </tr>
           <tr>
             <td><code>track</code></td>
-            <td>异步调 worker</td>
+            <td>异步 detached worker</td>
             <td>高频动作不能被 memory 更新阻塞</td>
           </tr>
         </table>
-        <p>这不是性能优化，而是<strong>业务优先级排序</strong>。</p>
+
+        <h4>异步 worker 的完整机制</h4>
+        <p>runner 维护了一套 tracking rewrite job 生命周期：</p>
+        <ul>
+          <li>每个 job 有唯一 <code>job_id</code>，落盘到 <code>tracking_rewrite_jobs/&lt;job_id&gt;/status.json</code></li>
+          <li>记录 <code>requested_at</code>、<code>started_at</code>、<code>completed_at</code>、<code>exit_code</code>、<code>pid</code></li>
+          <li><code>_tracking_rewrite_pid_alive(...)</code> 检查 worker 是否仍在运行</li>
+          <li><code>_recover_latest_tracking_rewrite_if_stale(...)</code> 在 loop 每次 bound 时检查：若 worker 异常退出但状态仍为 <code>queued/running</code>，自动标记为 <code>failed</code></li>
+          <li>只有最新 job 的结果才会被写回 <code>skill_cache</code></li>
+        </ul>
+        <p>这不是性能优化，而是<strong>业务优先级排序 + 工程可靠性设计</strong>。</p>
+
+        <h4><code>process_tracking_request_direct(...)</code> — tracking loop recovery 路径</h4>
+        <p>tracking loop 在 recovery 场景下用这个方法直接跑：</p>
+        <ul>
+          <li>生成带 <code>recovery_mode</code>、<code>missing_target_id</code>、<code>candidate_track_id_floor_exclusive</code> 的 <code>tracking_context.json</code></li>
+          <li>调 <code>run_tracking_track.py</code></li>
+          <li>若失败，降级成 <code>wait</code> payload</li>
+          <li>仍走 <code>_apply_processed_payload(...)</code></li>
+        </ul>
+        <p>这说明 runner 不只是"Pi 的代理"，还是"统一状态入口"。</p>
+
+        <h4><code>process_tracking_init_direct(...)</code> — init 快捷路径</h4>
+        <p>当 <code>process_chat_request</code> 检测到"只启用了 tracking 且没有 active target"时，直接调用：</p>
+        <ul>
+          <li>生成 <code>tracking_context.json</code></li>
+          <li>调 <code>run_tracking_init.py</code></li>
+          <li>若失败直接抛异常（初始化失败不应静默）</li>
+        </ul>
+        <p>这是把最明确的用户意图（初始化目标）从通用 Pi 路径中剥离出来，减少不必要的模型调用。</p>
       </section>
 
       <section id="context">
@@ -925,7 +977,21 @@
         </ul>
         <p>它是 runtime 的内部标准视图，<strong>不直接暴露给 Pi</strong>。这个动作很重要，因为 runtime 可以控制"给模型看什么，不给模型看什么"。</p>
 
-        <h3>6.3 历史裁剪不是缩水，而是降噪</h3>
+        <h3>6.3 <code>context_builders.py</code>：上下文构建的显式扩展点</h3>
+        <p><code>backend/agent/context_builders.py</code> 定义了：</p>
+        <ul>
+          <li><code>RouteContextBuilder</code></li>
+          <li><code>TrackingContextBuilder</code></li>
+        </ul>
+        <p>它们把上下文生成逻辑从 <code>runner.py</code> 中剥离出来，使新增 skill 时只需：</p>
+        <ol>
+          <li>在 <code>context_views.py</code> 中增加 <code>build_&lt;skill&gt;_context(...)</code></li>
+          <li>在 <code>context_builders.py</code> 中增加对应的 dataclass builder</li>
+          <li>在 <code>runner.py</code> 的 <code>_run_pi_turn(...)</code> 中注册启用条件</li>
+        </ol>
+        <p>这比把上下文拼接逻辑直接写在 runner 里更易于扩展。</p>
+
+        <h3>6.4 历史裁剪不是缩水，而是降噪</h3>
         <p>当前历史保留策略：</p>
         <ul>
           <li><code>conversation_history</code> 最多 8 条</li>
@@ -964,6 +1030,15 @@
         <div class="info-box success">
           <strong>当前做法是：让 Pi 只做路由和调用，让脚本做精确流程。</strong>这些流程如果分散在 Pi 对话中，会非常难以稳定。
         </div>
+
+        <h3>7.3 <code>turn_payload.py</code> 把脚本输出收敛成统一契约</h3>
+        <p><code>skills/tracking/scripts/turn_payload.py</code> 是 tracking skill 与 runner 之间的"协议转换层"：</p>
+        <ul>
+          <li>接收 <code>select_target.py</code> 的输出（含 <code>found</code>、<code>target_id</code>、<code>decision</code>、<code>rewrite_memory_input</code> 等）</li>
+          <li>组装成符合 runner 契约的标准 payload（<code>session_result</code>、<code>skill_state_patch</code>、<code>robot_response</code> 等）</li>
+          <li><code>ensure_rewrite_paths_exist(...)</code> 在返回前校验 crop 和 frame 路径是否真实存在，避免 runner 调度一个指向不存在文件的 rewrite job</li>
+        </ul>
+        <p>这个模块的存在让 <code>select_target.py</code> 专注于"选目标"，而不用关心 runner 的 payload schema。</p>
       </section>
 
       <section id="vlm">
@@ -995,7 +1070,7 @@
           </tr>
           <tr>
             <td>VLM-3</td>
-            <td><code>rewrite_memory.py</code></td>
+            <td><code>rewrite_memory.py</code>（由 runner 调度异步 worker）</td>
             <td>初始化或更新 tracking memory</td>
             <td>crop + frame(s)</td>
             <td>memory JSON</td>
@@ -1004,12 +1079,13 @@
 
         <h3>8.2 当前实现上的真实判断</h3>
         <ul>
-          <li>显式 ID 指令优先，不调 VLM</li>
-          <li>非显式 ID 的 <code>track</code> 主路径仍然调 VLM</li>
-          <li><code>_deterministic_track_result(...)</code> 存在，但未接入主流程</li>
+          <li><strong>tracking loop 日常路径（目标在画面中）：</strong>直接绑定，<strong>不调 VLM</strong></li>
+          <li><strong>tracking loop recovery 路径（目标丢失）：</strong>调用 <code>process_tracking_request_direct</code>，此时若用户未显式指定 ID，仍走 VLM</li>
+          <li><strong>显式 ID 指令：</strong>优先，不调 VLM</li>
+          <li><code>_deterministic_track_result(...)</code> 存在于 <code>select_target.py</code>，但尚未接入 <code>execute_select_tool</code> 的 <code>track</code> 主流程</li>
         </ul>
         <div class="info-box warning">
-          这说明系统当前是<strong>"VLM 主导的持续身份绑定"</strong>，而不是"确定性 matcher 主导"。
+          这说明系统已经实现了"<strong>高频零 VLM 调用 + 丢失时 VLM 恢复</strong>"的分层策略，而不是所有帧都依赖 VLM。
         </div>
 
         <h3>8.3 memory 设计</h3>
@@ -1119,7 +1195,15 @@
         </ul>
         <p>这是一组<strong>通用"环境事实"</strong>，不是 tracking 私有状态机。</p>
 
-        <h3>11.2 专用上下文由 runtime 再投影</h3>
+        <h3>11.2 Perception 优先从 <code>LocalPerceptionService</code> 读取</h3>
+        <p><code>context_views.py</code> 中的 <code>_tracking_frames(...)</code> 现在优先调用 <code>_recent_frames_from_perception(...)</code>：</p>
+        <ul>
+          <li>直接从 <code>LocalPerceptionService</code> 读取最新 camera observations</li>
+          <li>若 perception service 无数据，才回退到 <code>raw_session["recent_frames"]</code></li>
+        </ul>
+        <p>这意味着 <code>tracking_context.json</code> 中的帧数据总是尽可能新鲜，而不是依赖 session store 的写入周期。未来 skill 的 context builder 也应遵循同一模式：<strong>优先读 perception service，再回退 persisted session</strong>。</p>
+
+        <h3>11.3 专用上下文由 runtime 再投影</h3>
         <p>当前设计不是"给所有 skill 一个巨大的统一 JSON，让 skill 自己去筛字段"，而是：</p>
         <div class="info-box key-point">
           <strong>先有一个统一 perception / context 底座，再按 skill 生成最小 specialized context</strong>
@@ -1130,7 +1214,7 @@
           <li>专用：<code>tracking_context</code></li>
         </ul>
 
-        <h3>11.3 这套设计对 robot agent 尤其重要</h3>
+        <h3>11.4 这套设计对 robot agent 尤其重要</h3>
         <p>机器人场景和普通 chat agent 的区别在于：</p>
         <ul>
           <li>输入有时序</li>
@@ -1206,12 +1290,14 @@
         <div class="reading-list">
           <ol>
             <li><code>backend/agent/runner.py</code></li>
+            <li><code>backend/agent/context_builders.py</code></li>
             <li><code>backend/agent/context_views.py</code></li>
             <li><code>backend/agent/runtime.py</code></li>
             <li><code>backend/persistence/live_session_store.py</code></li>
             <li><code>skills/tracking/SKILL.md</code></li>
             <li><code>skills/tracking/scripts/run_tracking_init.py</code></li>
             <li><code>skills/tracking/scripts/run_tracking_track.py</code></li>
+            <li><code>skills/tracking/scripts/turn_payload.py</code></li>
             <li><code>skills/tracking/scripts/select_target.py</code></li>
             <li><code>skills/tracking/scripts/rewrite_memory.py</code></li>
           </ol>

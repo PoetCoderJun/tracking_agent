@@ -18,6 +18,19 @@ from skills.tracking.memory_format import normalize_tracking_memory, tracking_me
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = SKILL_ROOT / "references" / "robot-agent-config.json"
+REFERENCE_VIEW_ALIASES = {
+    "front": "front",
+    "front_view": "front",
+    "frontview": "front",
+    "正面": "front",
+    "back": "back",
+    "back_view": "back",
+    "backview": "back",
+    "背面": "back",
+    "unknown": "unknown",
+    "unk": "unknown",
+    "侧面": "unknown",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,6 +55,31 @@ def _load_previous_memory(memory_file: Path) -> Any:
     payload = json.loads(memory_file.read_text(encoding="utf-8"))
     tracking_state = dict(((payload.get("skill_cache") or {}).get("tracking") or {}))
     return tracking_state.get("latest_memory", {})
+
+
+def _normalize_reference_view(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return "unknown"
+    return REFERENCE_VIEW_ALIASES.get(text, "unknown")
+
+
+def _reference_view_from_response_text(response_text: str) -> str:
+    stripped = response_text.strip()
+    candidates = [stripped]
+    left = stripped.find("{")
+    right = stripped.rfind("}")
+    if left != -1 and right != -1 and right > left:
+        candidates.append(stripped[left : right + 1])
+
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return _normalize_reference_view(payload.get("reference_view"))
+    return "unknown"
 
 
 def execute_rewrite_memory_tool(
@@ -89,6 +127,7 @@ def execute_rewrite_memory_tool(
         "frame_id": str(arguments.get("frame_id", "")),
         "target_id": int(arguments["target_id"]),
         "crop_path": str(crop_path),
+        "reference_view": _reference_view_from_response_text(output["response_text"]),
         "elapsed_seconds": output["elapsed_seconds"],
     }
 

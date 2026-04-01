@@ -23,6 +23,19 @@ def _confirmed_frame_path(select_output: Dict[str, Any]) -> Optional[str]:
     return _optional_text(frame_paths[-1])
 
 
+def _wait_feedback_text(select_output: Dict[str, Any]) -> str:
+    text = str(select_output.get("text", "")).strip()
+    reject_reason = _optional_text(select_output.get("reject_reason"))
+    decision = _optional_text(select_output.get("decision"))
+    if decision != "wait" or reject_reason is None:
+        return text
+    if reject_reason in text:
+        return text
+    if not text:
+        return reject_reason
+    return f"{text} 原因：{reject_reason}"
+
+
 def _session_result(select_output: Dict[str, Any]) -> Dict[str, Any]:
     decision = _optional_text(select_output.get("decision"))
     result = {
@@ -31,11 +44,14 @@ def _session_result(select_output: Dict[str, Any]) -> Dict[str, Any]:
         "target_id": select_output.get("target_id"),
         "bounding_box_id": select_output.get("bounding_box_id"),
         "found": bool(select_output.get("found", False)),
-        "text": str(select_output.get("text", "")).strip(),
+        "text": _wait_feedback_text(select_output),
         "reason": _optional_text(select_output.get("reason")),
     }
     if decision is not None:
         result["decision"] = decision
+    reject_reason = _optional_text(select_output.get("reject_reason"))
+    if reject_reason is not None:
+        result["reject_reason"] = reject_reason
     latest_target_crop = _optional_text(select_output.get("latest_target_crop"))
     if latest_target_crop is not None:
         result["latest_target_crop"] = latest_target_crop
@@ -82,7 +98,7 @@ def _skill_state_patch(select_output: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _robot_response(select_output: Dict[str, Any]) -> Dict[str, Any]:
-    text = str(select_output.get("text", "")).strip()
+    text = _wait_feedback_text(select_output)
     decision = _optional_text(select_output.get("decision"))
     if decision == "ask":
         return {

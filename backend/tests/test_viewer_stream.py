@@ -14,16 +14,10 @@ from skills.tracking.viewer_stream import build_tracking_viewer_payload
 
 def _memory_payload() -> dict:
     return {
-        "appearance": {
-            "head_face": "短发。",
-            "upper_body": "黑色上衣。",
-            "lower_body": "",
-            "shoes": "",
-            "accessories": "",
-            "body_shape": "",
-        },
+        "core": "短发、黑色上衣。",
+        "front_view": "正面短发，黑色上衣。",
+        "back_view": "",
         "distinguish": "和旁边浅色上衣的人区分时优先看黑色上衣。",
-        "summary": "短发、黑色上衣。",
     }
 
 

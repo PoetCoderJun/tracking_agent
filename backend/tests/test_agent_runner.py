@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from PIL import Image
 
@@ -11,16 +12,10 @@ from backend.perception import LocalPerceptionService, RobotDetection, RobotFram
 
 def _structured_memory(summary: str) -> dict:
     return {
-        "appearance": {
-            "head_face": "",
-            "upper_body": "",
-            "lower_body": "",
-            "shoes": "",
-            "accessories": "",
-            "body_shape": "",
-        },
+        "core": summary,
+        "front_view": "",
+        "back_view": "",
         "distinguish": "",
-        "summary": summary,
     }
 
 
@@ -218,6 +213,65 @@ def test_runner_schedules_tracking_memory_rewrite_from_payload(monkeypatch, tmp_
     assert len(scheduled) == 1
     assert scheduled[0]["session_id"] == "sess_async"
     assert scheduled[0]["rewrite_memory_input"]["frame_id"] == "frame_000001"
+
+
+def test_recover_latest_tracking_rewrite_if_stale_marks_dead_worker_failed(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = PiAgentRunner(state_root=tmp_path / "state")
+    job_dir = tmp_path / "state" / "sessions" / "sess_stale" / "tracking_rewrite_jobs" / "rewrite_dead"
+    status_path = job_dir / "status.json"
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.write_text(
+        json.dumps(
+            {
+                "job_id": "rewrite_dead",
+                "session_id": "sess_stale",
+                "status": "running",
+                "task": "update",
+                "frame_id": "frame_000001",
+                "target_id": 12,
+                "crop_path": "/tmp/crop.jpg",
+                "frame_paths": ["/tmp/frame.jpg"],
+                "requested_at": "t0",
+                "started_at": "t1",
+                "completed_at": None,
+                "stdout_path": str(job_dir / "stdout.log"),
+                "stderr_path": str(job_dir / "stderr.log"),
+                "pid": 999999,
+            },
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+    runner.runtime.update_skill_cache(
+        "sess_stale",
+        skill_name="tracking_runtime",
+        payload={
+            "latest_rewrite_job_id": "rewrite_dead",
+            "latest_rewrite_status": "running",
+            "latest_rewrite_task": "update",
+            "latest_rewrite_status_path": str(status_path),
+            "latest_rewrite_log_dir": str(job_dir),
+            "latest_rewrite_pid": 999999,
+            "latest_rewrite_requested_at": "t0",
+        },
+    )
+
+    monkeypatch.setattr(runner_module, "_tracking_rewrite_pid_alive", lambda pid: False)
+
+    runner_module._recover_latest_tracking_rewrite_if_stale(
+        runtime=runner.runtime,
+        session_id="sess_stale",
+    )
+
+    updated = json.loads(status_path.read_text(encoding="utf-8"))
+    assert updated["status"] == "failed"
+    context = runner.runtime.context("sess_stale")
+    runtime_state = context.skill_cache["tracking_runtime"]
+    assert runtime_state["latest_rewrite_status"] == "failed"
+    assert runtime_state["latest_rewrite_reason"] == "worker_missing"
 
 
 def test_runner_schedules_init_memory_rewrite_asynchronously(monkeypatch, tmp_path: Path) -> None:

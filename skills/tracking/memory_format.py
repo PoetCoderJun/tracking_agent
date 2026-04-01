@@ -5,30 +5,27 @@ from typing import Any, Dict
 
 
 DEFAULT_MEMORY_TEXT = "等待根据最新确认画面继续补充目标特征，并说明和周围人的区分点。"
-APPEARANCE_KEYS = (
-    "head_face",
-    "upper_body",
-    "lower_body",
-    "shoes",
-    "accessories",
-    "body_shape",
+MEMORY_KEYS = (
+    "core",
+    "front_view",
+    "back_view",
+    "distinguish",
 )
-APPEARANCE_LABELS = {
-    "head_face": "头脸",
-    "upper_body": "上装",
-    "lower_body": "下装",
-    "shoes": "鞋子",
-    "accessories": "配饰",
-    "body_shape": "体型",
+PRIMARY_MEMORY_KEYS = (
+    "core",
+    "front_view",
+    "back_view",
+)
+MEMORY_LABELS = {
+    "core": "核心特征",
+    "front_view": "正面特征",
+    "back_view": "背面特征",
+    "distinguish": "区分点",
 }
 
 
 def empty_tracking_memory() -> Dict[str, Any]:
-    return {
-        "appearance": {key: "" for key in APPEARANCE_KEYS},
-        "distinguish": "",
-        "summary": DEFAULT_MEMORY_TEXT,
-    }
+    return {key: "" for key in MEMORY_KEYS}
 
 
 def _normalized_text(value: Any) -> str:
@@ -54,6 +51,10 @@ def _normalize_distinguish_text(value: Any) -> str:
     if stripped in empty_placeholders:
         return ""
     return text
+
+
+def _normalize_memory_text(value: Any) -> str:
+    return _normalize_distinguish_text(value)
 
 
 def _extract_text_from_string(memory_text: str) -> str:
@@ -109,33 +110,48 @@ def _normalize_raw_memory(memory_value: Any) -> Dict[str, Any]:
     normalized = empty_tracking_memory()
     parsed = _parse_memory_object(memory_value)
     if parsed is not None:
+        if any(key in parsed for key in PRIMARY_MEMORY_KEYS):
+            normalized["core"] = _normalize_memory_text(parsed.get("core"))
+            normalized["front_view"] = _normalize_memory_text(parsed.get("front_view"))
+            normalized["back_view"] = _normalize_memory_text(parsed.get("back_view"))
+            normalized["distinguish"] = _normalize_distinguish_text(parsed.get("distinguish"))
+            return normalized
+
         appearance = parsed.get("appearance")
+        summary = _normalized_text(parsed.get("summary"))
+        legacy_parts = []
         if isinstance(appearance, dict):
-            for key in APPEARANCE_KEYS:
-                normalized["appearance"][key] = _normalized_text(appearance.get(key))
+            legacy_parts = [
+                _normalized_text(appearance.get("head_face")),
+                _normalized_text(appearance.get("upper_body")),
+                _normalized_text(appearance.get("lower_body")),
+                _normalized_text(appearance.get("shoes")),
+                _normalized_text(appearance.get("accessories")),
+                _normalized_text(appearance.get("body_shape")),
+            ]
+        detail = "；".join(part for part in legacy_parts if part)
+        normalized["core"] = summary if summary and summary != DEFAULT_MEMORY_TEXT else detail
+        normalized["front_view"] = detail
+        normalized["back_view"] = ""
         normalized["distinguish"] = _normalize_distinguish_text(parsed.get("distinguish"))
-        normalized["summary"] = _normalized_text(parsed.get("summary"))
         return normalized
 
     text = _extract_text_from_string(_normalized_text(memory_value))
     if text:
-        normalized["summary"] = text
+        normalized["core"] = text
     return normalized
 
 
 def _compose_summary(memory_payload: Dict[str, Any]) -> str:
-    parts = [
-        _normalized_text(memory_payload.get("appearance", {}).get(key))
-        for key in APPEARANCE_KEYS
-    ]
-    detail = "；".join(part for part in parts if part)
-    distinguish = _normalized_text(memory_payload.get("distinguish"))
-    if detail and distinguish:
-        return f"{detail}。区分点：{distinguish}"
-    if detail:
-        return detail
-    if distinguish:
-        return f"区分点：{distinguish}"
+    core = _normalized_text(memory_payload.get("core"))
+    if core:
+        return core
+    front = _normalized_text(memory_payload.get("front_view"))
+    if front:
+        return front
+    back = _normalized_text(memory_payload.get("back_view"))
+    if back:
+        return back
     return DEFAULT_MEMORY_TEXT
 
 
@@ -151,26 +167,20 @@ def normalize_tracking_memory(
     current = _normalize_raw_memory(memory_value)
     current_keys = _parsed_memory_object_keys(memory_value)
 
-    for key in APPEARANCE_KEYS:
-        value = _normalized_text(current["appearance"].get(key))
+    for key in ("core", "front_view", "back_view"):
+        value = _normalize_memory_text(current.get(key))
         if value:
-            base["appearance"][key] = value
+            base[key] = value
     distinguish = _normalize_distinguish_text(current.get("distinguish"))
     if "distinguish" in current_keys:
         base["distinguish"] = distinguish
     elif distinguish:
         base["distinguish"] = distinguish
-    summary = _normalized_text(current.get("summary"))
-    if summary and summary != DEFAULT_MEMORY_TEXT:
-        base["summary"] = summary
-
-    if not _normalized_text(base.get("summary")) or base["summary"] == DEFAULT_MEMORY_TEXT:
-        base["summary"] = _compose_summary(base)
     return base
 
 
 def tracking_memory_summary(memory_value: Any) -> str:
-    return _normalized_text(normalize_tracking_memory(memory_value).get("summary")) or DEFAULT_MEMORY_TEXT
+    return _compose_summary(normalize_tracking_memory(memory_value))
 
 
 def tracking_memory_prompt_text(memory_value: Any) -> str:
@@ -184,14 +194,14 @@ def tracking_memory_prompt_text(memory_value: Any) -> str:
 def tracking_memory_display_text(memory_value: Any) -> str:
     payload = normalize_tracking_memory(memory_value)
     lines = [f"摘要：{tracking_memory_summary(payload)}"]
-    for key in APPEARANCE_KEYS:
-        value = _normalized_text(payload["appearance"].get(key))
+    for key in ("core", "front_view", "back_view"):
+        value = _normalized_text(payload.get(key))
         if not value:
             continue
-        lines.append(f"{APPEARANCE_LABELS[key]}：{value}")
+        lines.append(f"{MEMORY_LABELS[key]}：{value}")
     distinguish = _normalized_text(payload.get("distinguish"))
     if distinguish:
-        lines.append(f"区分点：{distinguish}")
+        lines.append(f"{MEMORY_LABELS['distinguish']}：{distinguish}")
     return "\n".join(lines)
 
 
@@ -201,12 +211,9 @@ def tracking_memory_flash_prompt_text(memory_value: Any) -> str:
     lines = [
         "强特征清单：",
         f"- summary: {sections['summary'] or DEFAULT_MEMORY_TEXT}",
-        f"- head_face: {sections['head_face'] or '(unknown)'}",
-        f"- upper_body: {sections['upper_body'] or '(unknown)'}",
-        f"- lower_body: {sections['lower_body'] or '(unknown)'}",
-        f"- shoes: {sections['shoes'] or '(unknown)'}",
-        f"- accessories: {sections['accessories'] or '(unknown)'}",
-        f"- body_shape: {sections['body_shape'] or '(unknown)'}",
+        f"- core: {sections['core'] or '(unknown)'}",
+        f"- front_view: {sections['front_view'] or '(unknown)'}",
+        f"- back_view: {sections['back_view'] or '(unknown)'}",
         f"- distinguish: {sections['distinguish'] or '(unknown)'}",
         "强冲突规则：",
         "- 如果当前候选出现与 memory 明显冲突的稳定特征，例如短裤变长裤、卡其短裤变深色短裤/长裤、白鞋变深色鞋、无眼镜变为清晰无眼镜、无帽子变有帽子，应优先判为 conflict。",
@@ -217,7 +224,7 @@ def tracking_memory_flash_prompt_text(memory_value: Any) -> str:
 
 def tracking_memory_sections(memory_value: Any) -> Dict[str, str]:
     payload = normalize_tracking_memory(memory_value)
-    sections = {key: _normalized_text(payload["appearance"].get(key)) for key in APPEARANCE_KEYS}
+    sections = {key: _normalized_text(payload.get(key)) for key in ("core", "front_view", "back_view")}
     sections["distinguish"] = _normalized_text(payload.get("distinguish"))
     sections["summary"] = tracking_memory_summary(payload)
     return sections

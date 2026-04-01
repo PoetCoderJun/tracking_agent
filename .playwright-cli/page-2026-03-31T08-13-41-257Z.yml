@@ -1,0 +1,30 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: connecting
+      - generic [ref=e7]: 等待 active session
+      - generic [ref=e8]: 等待消息
+      - button "重新连接" [ref=e9] [cursor=pointer]
+  - main [ref=e10]:
+    - generic [ref=e14]:
+      - strong [ref=e15]: 等待画面
+      - generic [ref=e16]: 启动 tracking perception 后会自动创建随机 active session，viewer 会只跟随这一条会话。
+    - generic [ref=e17]:
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: Memory
+          - heading "当前与历史记忆" [level=2] [ref=e21]
+        - generic [ref=e22]: 目标 未绑定
+      - generic [ref=e23]:
+        - generic [ref=e24]:
+          - generic [ref=e25]: 当前记忆
+          - generic [ref=e26]: 当前还没有 tracking memory。
+        - generic [ref=e27]:
+          - strong [ref=e28]: 历史记忆
+          - generic [ref=e29]: "0"
+        - generic [ref=e31]: 还没有历史 memory。
+    - generic [ref=e32]:
+      - generic [ref=e33]:
+        - strong [ref=e34]: 对话历史
+        - generic [ref=e35]: "0"
+      - generic [ref=e37]: 还没有对话历史。

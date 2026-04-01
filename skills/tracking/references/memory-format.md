@@ -12,42 +12,29 @@ The JSON object is the real contract. Any formatted text shown in the viewer is 
 ## Rules
 
 - Use this fixed shape:
-  - `appearance.head_face`
-  - `appearance.upper_body`
-  - `appearance.lower_body`
-  - `appearance.shoes`
-  - `appearance.accessories`
-  - `appearance.body_shape`
+  - `core`
+  - `front_view`
+  - `back_view`
   - `distinguish`
-  - `summary`
 - Each value must be a string.
+- `core` stores cross-view identity cues that are likely to remain useful later.
+- `front_view` stores a natural-language description of the person when seen from the front.
+- `back_view` stores a natural-language description of the person when seen from the back.
+- `distinguish` stores how to separate the target from the most similar confusing person in the current frame. If no clear confusing person exists, keep it empty. Only use stable appearance differences. Do not use actions, posture, hand state, gait, whether someone has hands in pockets, or similar changeable cues.
 - Keep the object optimized for the next search turn, but do not drop useful stable appearance details only to make it shorter.
-- Start from the existing memory each round, preserve details that still appear valid, and only update the body parts that are visible in the latest target crop and frame.
-- If a body part is not visible or not reliable in the latest image, keep the old value instead of clearing it.
-- Prioritize stable local appearance cues: hair, visible facial traits, eyewear or mask, upper-body clothing, lower-body clothing, shoes, body build, bags, and accessories.
-- When nearby people look similar, refine to small but stable differences such as sleeve length, collar shape, logo, stripe placement, hem length, shoe sole color, strap side, or face-framing hair.
-- `distinguish` should be concise. Fill it only when the current frame contains a genuinely confusing person.
-- If there is no obvious confusing person in the current frame, keep `distinguish` as an empty string.
-- When `distinguish` is used, directly describe the confusing person's stable features and the target's distinguishing cues against that person. Avoid filler such as location, direction, or generic future reminders.
-- Keep `summary` target-only. Put confusion handling and person-to-person comparison in `distinguish`, not in `summary`.
-- Assume the person may be visible only from the upper body, lower body, back, or a partially occluded crop.
-- Do not rely on any single feature alone; preserve multiple local appearance cues that can still work when one or two cues disappear.
+- Start from the existing memory each round, preserve details that still appear valid, and only update the views that are actually visible in the latest target crop and frame.
+- If the current frame does not show the front, keep the old `front_view` instead of clearing it. Do the same for `back_view`.
+- Let the model describe as much visible detail as possible from top to bottom; do not force it into body-part checklists.
+- Prioritize stable appearance cues over scene cues. Do not store actions, pose, transient location, bbox IDs, or confirmation state in the memory.
 - Treat invisible cues as temporarily unknown rather than disproven.
-- Do not store actions, pose, transient location, bbox IDs, or confirmation state in the memory.
 
 ## Stored JSON Example
 
 ```json
 {
-  "appearance": {
-    "head_face": "黑色偏短直发，额前有刘海，脸型偏窄，戴细框眼镜。",
-    "upper_body": "浅灰圆领短袖上衣，胸前有小块深色图案，版型偏直。",
-    "lower_body": "深色直筒长裤，裤型不贴腿。",
-    "shoes": "深色运动鞋，白色鞋底较厚。",
-    "accessories": "单肩包，包带落在右肩。",
-    "body_shape": "体型偏瘦，肩较窄。"
-  },
-  "distinguish": "相似人：浅色上衣、无眼镜、上衣更纯净；目标区别：细框眼镜、右肩包带、胸前小块深色图案，若只看下半身再看直筒长裤和厚白鞋底。",
-  "summary": "短发、细框眼镜、浅灰短袖上衣、深色直筒长裤、厚白鞋底深色运动鞋，右肩单肩包。"
+  "core": "体型偏瘦，整体是浅灰上衣配深色直筒长裤和厚白鞋底运动鞋，右肩有单肩包。",
+  "front_view": "正面看是黑色偏短直发，额前有刘海，脸型偏窄，戴细框眼镜。上身浅灰上衣前胸有小块深色图案，版型偏直。下身是深色直筒长裤，脚上是深色运动鞋配较厚的白色鞋底。",
+  "back_view": "背面看头发较短，肩窄，后背整体较干净，没有大面积夸张图案，包带从右肩落下。裤型直，鞋底从后方看仍偏白且较厚。",
+  "distinguish": "相似人A：两者都穿浅灰到深灰色系上衣和深色长裤；A 的上衣更纯净、无眼镜、没有右肩包带；目标的细框眼镜、前胸小块深色图案和右肩单肩包更明显；可以通过眼镜、胸前图案和包带明显区分。"
 }
 ```

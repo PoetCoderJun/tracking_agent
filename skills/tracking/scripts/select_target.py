@@ -127,6 +127,8 @@ def load_tracking_context(session_file: Path, memory_file: Path) -> Dict[str, An
         "memory": tracking_memory_display_text(tracking_state.get("latest_memory", "")),
         "latest_target_id": latest_target_id,
         "latest_target_crop": optional_text(tracking_state.get("latest_target_crop")),
+        "latest_front_target_crop": optional_text(tracking_state.get("latest_front_target_crop")),
+        "latest_back_target_crop": optional_text(tracking_state.get("latest_back_target_crop")),
         "latest_confirmed_frame_path": optional_text(tracking_state.get("latest_confirmed_frame_path")),
         "identity_target_crop": optional_text(tracking_state.get("identity_target_crop")),
         "latest_confirmed_bbox": tracking_state.get("latest_confirmed_bbox"),
@@ -151,6 +153,8 @@ def load_tracking_context_file(tracking_context_file: Path) -> Dict[str, Any]:
         "memory": str(payload.get("memory", "")),
         "latest_target_id": payload.get("latest_target_id"),
         "latest_target_crop": optional_text(payload.get("latest_target_crop")),
+        "latest_front_target_crop": optional_text(payload.get("latest_front_target_crop")),
+        "latest_back_target_crop": optional_text(payload.get("latest_back_target_crop")),
         "latest_confirmed_frame_path": optional_text(payload.get("latest_confirmed_frame_path")),
         "identity_target_crop": optional_text(payload.get("identity_target_crop")),
         "latest_confirmed_bbox": payload.get("latest_confirmed_bbox"),
@@ -283,8 +287,11 @@ def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
 
     text = str(result.get("text", "")).strip()
     reason = str(result.get("reason", "")).strip()
+    reject_reason = str(result.get("reject_reason", "")).strip()
     if not text:
         text = reason or ("我确认当前目标。" if found and target_id is not None else "我暂时无法确认目标。")
+    if decision == "wait" and not reject_reason:
+        reject_reason = reason
 
     return {
         "found": found and target_id is not None,
@@ -292,6 +299,7 @@ def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
         "bounding_box_id": target_id,
         "text": text,
         "reason": reason,
+        "reject_reason": reject_reason,
         "needs_clarification": needs_clarification,
         "clarification_question": clarification_question,
         "decision": decision,
@@ -308,6 +316,7 @@ def _explicit_target_result(*, target_id: int, matched: Optional[DetectionRecord
             "bounding_box_id": None,
             "text": question,
             "reason": "用户明确指定了目标 ID，但当前候选框中不存在该 ID。",
+            "reject_reason": "",
             "needs_clarification": True,
             "clarification_question": question,
             "decision": "ask",
@@ -323,9 +332,58 @@ def _explicit_target_result(*, target_id: int, matched: Optional[DetectionRecord
         "bounding_box_id": int(target_id),
         "text": text,
         "reason": "用户明确指定了候选框 ID。",
+        "reject_reason": "",
         "needs_clarification": False,
         "clarification_question": None,
         "decision": "track",
+    }
+
+
+def _normalize_invalid_model_selection(
+    *,
+    normalized: Dict[str, Any],
+    detections: List[DetectionRecord],
+    behavior: str,
+) -> Dict[str, Any]:
+    if not normalized.get("found"):
+        return normalized
+
+    target_id = normalized.get("target_id")
+    if target_id in (None, ""):
+        return normalized
+    if select_detection_by_track_id(detections, int(target_id)) is not None:
+        return normalized
+
+    invalid_reason = f"模型返回的目标 ID {int(target_id)} 不在当前候选列表中，不能直接绑定。"
+    base_reason = str(normalized.get("reason", "")).strip()
+    reason = f"{base_reason} {invalid_reason}".strip() if base_reason else invalid_reason
+
+    if behavior == "init":
+        question = "当前候选框不足以稳定确认目标，请补充特征或直接指定候选框 ID。"
+        return {
+            **normalized,
+            "found": False,
+            "target_id": None,
+            "bounding_box_id": None,
+            "text": question,
+            "reason": reason,
+            "reject_reason": "",
+            "needs_clarification": True,
+            "clarification_question": question,
+            "decision": "ask",
+        }
+
+    return {
+        **normalized,
+        "found": False,
+        "target_id": None,
+        "bounding_box_id": None,
+        "text": "当前证据不足，保持等待原目标重新出现。",
+        "reason": reason,
+        "reject_reason": invalid_reason,
+        "needs_clarification": False,
+        "clarification_question": None,
+        "decision": "wait",
     }
 
 
@@ -478,16 +536,49 @@ def _bbox_continuity_score(previous_bbox: Optional[List[int]], current_bbox: Lis
     return max(0.0, min(1.0, (distance_score * 0.6) + (size_ratio * 0.2) + (height_ratio * 0.2)))
 
 
+def _reference_crop_assets(context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def collect(candidates: tuple[tuple[str, str], ...]) -> List[Dict[str, Any]]:
+        assets: List[Dict[str, Any]] = []
+        seen: set[Path] = set()
+        for key, label in candidates:
+            text = optional_text(context.get(key))
+            if text is None:
+                continue
+            path = Path(text)
+            if not path.exists() or path in seen:
+                continue
+            assets.append({"key": key, "label": label, "path": path})
+            seen.add(path)
+        return assets
+
+    view_specific_assets = collect(
+        (
+            ("latest_front_target_crop", "最近保存的目标正面 crop"),
+            ("latest_back_target_crop", "最近保存的目标背面 crop"),
+        )
+    )
+    if view_specific_assets:
+        return view_specific_assets
+    return collect(
+        (
+            ("identity_target_crop", "身份基准 crop"),
+            ("latest_target_crop", "最近一次确认的目标 crop"),
+        )
+    )
+
+
 def _reference_crop_paths(context: Dict[str, Any]) -> List[Path]:
-    paths: List[Path] = []
-    for raw in (context.get("identity_target_crop"), context.get("latest_target_crop")):
-        text = optional_text(raw)
-        if text is None:
-            continue
-        path = Path(text)
-        if path.exists() and path not in paths:
-            paths.append(path)
-    return paths
+    return [Path(asset["path"]) for asset in _reference_crop_assets(context)]
+
+
+def _reference_crops_note(reference_assets: List[Dict[str, Any]]) -> str:
+    if not reference_assets:
+        return "无额外历史正面/背面参考 crop。"
+
+    lines: List[str] = []
+    for index, asset in enumerate(reference_assets, start=2):
+        lines.append(f"- 第{index}张图：{asset['label']}")
+    return "\n".join(lines)
 
 
 def _deterministic_track_result(
@@ -504,6 +595,7 @@ def _deterministic_track_result(
             "bounding_box_id": None,
             "text": question,
             "reason": "当前画面中没有候选人。",
+            "reject_reason": "当前帧没有任何候选人，无法建立与历史目标的身份连续性。",
             "needs_clarification": False,
             "clarification_question": None,
             "decision": "wait",
@@ -518,6 +610,7 @@ def _deterministic_track_result(
             "bounding_box_id": None,
             "text": question,
             "reason": "缺少可用于重绑定的目标参考图。",
+            "reject_reason": "缺少历史参考 crop 或参考帧，当前无法把候选人与既有目标身份做稳定比对。",
             "needs_clarification": False,
             "clarification_question": None,
             "decision": "wait",
@@ -562,6 +655,11 @@ def _deterministic_track_result(
             "bounding_box_id": None,
             "text": question,
             "reason": f"最佳候选分数过低（score={best['score']:.3f}）。",
+            "reject_reason": (
+                f"最佳候选 ID {best['track_id']} 的综合分数仅为 {best['score']:.3f}，"
+                f"其中 appearance={best['appearance_score']:.3f}、spatial={best['spatial_score']:.3f}，"
+                "还不足以支持继续绑定。"
+            ),
             "needs_clarification": False,
             "clarification_question": None,
             "decision": "wait",
@@ -574,6 +672,10 @@ def _deterministic_track_result(
             "bounding_box_id": None,
             "text": question,
             "reason": f"最佳候选与次佳候选过于接近（margin={margin:.3f}）。",
+            "reject_reason": (
+                f"最佳候选 ID {best['track_id']} 与次佳候选 ID {second_best['track_id']} 的综合分差只有 {margin:.3f}，"
+                "当前无法把两者稳定区分。"
+            ),
             "needs_clarification": False,
             "clarification_question": None,
             "decision": "wait",
@@ -593,6 +695,7 @@ def _deterministic_track_result(
         "bounding_box_id": int(best["track_id"]),
         "text": text,
         "reason": rebind_reason,
+        "reject_reason": "",
         "needs_clarification": False,
         "clarification_question": None,
         "decision": "track",
@@ -667,6 +770,11 @@ def execute_select_tool(
                 output_contract=config["contracts"]["select_init_target"],
                 max_tokens=int(config["limits"]["select_max_tokens"]),
             )
+            normalized = _normalize_invalid_model_selection(
+                normalized=normalized,
+                detections=detections,
+                behavior=behavior,
+            )
     else:
         config = load_agent_config(config_path)
         if requested_target_id is not None:
@@ -684,6 +792,8 @@ def execute_select_tool(
             reference_frame_path = Path(confirmed_frame_path)
             if not reference_frame_path.exists():
                 raise ValueError(f"Missing latest_confirmed_frame_path: {reference_frame_path}")
+            reference_crop_assets = _reference_crop_assets(context)
+            reference_crop_paths = [Path(asset["path"]) for asset in reference_crop_assets]
             candidate_crop_detections = _track_candidate_crop_detections(detections)
             candidate_crop_paths = _save_candidate_crops(
                 frame_path=persisted_current_frame_path,
@@ -694,6 +804,7 @@ def execute_select_tool(
             instruction = str(config["prompts"]["track_skill_prompt"]).format(
                 memory=tracking_memory_flash_prompt_text(context.get("memory", "")),
                 latest_target_id=context.get("latest_target_id"),
+                reference_crops_note=_reference_crops_note(reference_crop_assets),
                 candidates=candidate_summary(frame.get("detections", [])),
                 user_text=str(arguments.get("user_text", "")).strip() or "(无)",
                 recent_dialogue=_recent_dialogue_text(list(context.get("chat_history") or [])),
@@ -704,9 +815,14 @@ def execute_select_tool(
                 settings=settings,
                 model_name=settings.main_model,
                 instruction=instruction,
-                image_paths=[reference_frame_path, overlay_path, *candidate_crop_paths],
+                image_paths=[reference_frame_path, *reference_crop_paths, overlay_path, *candidate_crop_paths],
                 output_contract=config["contracts"]["select_track_target"],
                 max_tokens=int(config["limits"]["select_max_tokens"]),
+            )
+            normalized = _normalize_invalid_model_selection(
+                normalized=normalized,
+                detections=detections,
+                behavior=behavior,
             )
 
     if behavior == "track" and bool(context.get("recovery_mode")) and normalized["decision"] == "ask":
@@ -716,6 +832,7 @@ def execute_select_tool(
         normalized["needs_clarification"] = False
         normalized["clarification_question"] = None
         normalized["decision"] = "wait"
+        normalized["reject_reason"] = normalized.get("reject_reason") or "恢复模式下当前证据不足，不能从 ask 升级为重绑定。"
         if not normalized["text"]:
             normalized["text"] = "当前证据不足，保持等待原目标重新出现。"
         if normalized["reason"]:
@@ -768,6 +885,7 @@ def execute_select_tool(
         "clarification_question": normalized["clarification_question"],
         "memory": str(context.get("memory", "")),
         "reason": normalized["reason"],
+        "reject_reason": str(normalized.get("reject_reason", "")).strip(),
         "candidate_checks": list(normalized.get("candidate_checks") or []),
         "decision": normalized["decision"],
         "latest_target_crop": None if crop_path is None else str(crop_path),
