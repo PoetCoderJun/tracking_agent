@@ -141,6 +141,24 @@ def _tracking_state(memory: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
     return normalized, had_nested
 
 
+def _wait_for_tracking_target(*, state_root: Path, session_id: str, timeout_seconds: float = 5.0) -> None:
+    started = time.monotonic()
+    session_path = _session_paths(state_root, session_id)["session_path"]
+    while True:
+        if session_path.exists():
+            session = _load_json(session_path)
+            tracking_state, _ = _tracking_state(session)
+            if tracking_state.get("latest_target_id") not in (None, "") and tracking_state.get(
+                "latest_confirmed_frame_path"
+            ) not in (None, ""):
+                return
+        if time.monotonic() - started > timeout_seconds:
+            raise TimeoutError(
+                f"Timed out waiting for tracking state to settle for session {session_id}."
+            )
+        time.sleep(0.05)
+
+
 def _load_session_and_tracking_state(
     *,
     state_root: Path,
@@ -512,6 +530,8 @@ def _run_continuous_tracking_case(
     ]
     for command in commands:
         _assert_command_ok(command)
+
+    _wait_for_tracking_target(state_root=state_root, session_id=session_id)
 
     loop_events = _json_lines(commands[-1].stdout)
     loop_payload = loop_events[-1] if loop_events else {}
