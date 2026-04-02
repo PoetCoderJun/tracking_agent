@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from backend.agent.context import AgentContext
-from backend.agent.memory import AgentMemoryStore
 from backend.persistence import LiveSessionStore
 
 
@@ -57,39 +56,33 @@ class LocalAgentRuntime:
     def state_root(self) -> Path:
         return self._state_root
 
-    def _memory_store(self, session_id: str) -> AgentMemoryStore:
-        return AgentMemoryStore(self._state_root, session_id)
-
     def _ensure_session(self, session_id: str, device_id: str = "") -> None:
         self._store.load_or_create_session(session_id=session_id, device_id=device_id)
-        self._memory_store(session_id).load_or_create()
 
     def _state_paths(self, session_id: str) -> Dict[str, str]:
-        memory_store = self._memory_store(session_id)
+        session_path = self._store.session_path(session_id).resolve()
         return {
             "state_root": str(self._state_root.resolve()),
             "session_dir": str(self._store.session_dir(session_id).resolve()),
-            "session_path": str(self._store.session_path(session_id).resolve()),
-            "agent_memory_path": str(memory_store.path().resolve()),
+            "session_path": str(session_path),
+            "agent_memory_path": str(session_path),
         }
 
     def context(self, session_id: str, *, device_id: str = "") -> AgentContext:
         self._ensure_session(session_id, device_id=device_id)
         raw_session = self._store.session_payload(session_id)
-        memory = self._memory_store(session_id).load_or_create()
         return AgentContext(
             session_id=session_id,
             raw_session=raw_session,
-            user_preferences=memory.user_preferences,
-            environment_map=memory.environment_map,
-            perception_cache=memory.perception_cache,
-            skill_cache=memory.skill_cache,
+            user_preferences=dict(raw_session.get("user_preferences", {})),
+            environment_map=dict(raw_session.get("environment_map", {})),
+            perception_cache=dict(raw_session.get("perception_cache", {})),
+            skill_cache=dict(raw_session.get("skill_cache", {})),
             state_paths=self._state_paths(session_id),
         )
 
     def start_fresh_session(self, session_id: str, *, device_id: str = "") -> AgentContext:
         self._store.start_fresh_session(session_id=session_id, device_id=device_id)
-        self._memory_store(session_id).reset()
         return self.context(session_id, device_id=device_id)
 
     def append_chat_request(
@@ -160,17 +153,17 @@ class LocalAgentRuntime:
 
     def update_user_preferences(self, session_id: str, preferences: Dict[str, Any]) -> AgentContext:
         self._ensure_session(session_id)
-        self._memory_store(session_id).update_user_preferences(preferences)
+        self._store.patch_agent_state(session_id, user_preferences=preferences)
         return self.context(session_id)
 
     def update_environment_map(self, session_id: str, environment_map: Dict[str, Any]) -> AgentContext:
         self._ensure_session(session_id)
-        self._memory_store(session_id).update_environment_map(environment_map)
+        self._store.patch_agent_state(session_id, environment_map=environment_map)
         return self.context(session_id)
 
     def update_perception_cache(self, session_id: str, payload: Dict[str, Any]) -> AgentContext:
         self._ensure_session(session_id)
-        self._memory_store(session_id).update_perception_cache(payload)
+        self._store.patch_agent_state(session_id, perception_cache=payload)
         return self.context(session_id)
 
     def update_skill_cache(
@@ -181,5 +174,5 @@ class LocalAgentRuntime:
         payload: Dict[str, Any],
     ) -> AgentContext:
         self._ensure_session(session_id)
-        self._memory_store(session_id).update_skill_cache(skill_name, payload)
+        self._store.patch_agent_state(session_id, skill_cache={skill_name: payload})
         return self.context(session_id)

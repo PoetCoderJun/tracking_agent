@@ -90,7 +90,7 @@ def test_ingest_robot_event_cleans_up_expired_frame_files(tmp_path: Path) -> Non
     ]
 
 
-def test_ingest_robot_event_keeps_latest_confirmed_frame_file(tmp_path: Path) -> None:
+def test_ingest_robot_event_prunes_to_frame_buffer_without_tracking_memory_special_case(tmp_path: Path) -> None:
     store = LiveSessionStore(tmp_path / "state", frame_buffer_size=2)
 
     for index in range(2):
@@ -141,7 +141,6 @@ def test_ingest_robot_event_keeps_latest_confirmed_frame_file(tmp_path: Path) ->
 
     frames_dir = session_dir / "frames"
     assert sorted(path.name for path in frames_dir.iterdir() if path.is_file()) == [
-        "frame_000000.jpg",
         "frame_000001.jpg",
         "frame_000002.jpg",
     ]

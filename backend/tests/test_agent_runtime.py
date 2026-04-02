@@ -49,7 +49,7 @@ def test_local_agent_runtime_context_contains_generic_state(tmp_path: Path) -> N
     assert context.raw_session["recent_frames"] == []
     assert context.raw_session["conversation_history"] == []
     assert context.state_paths["session_path"].endswith("/sessions/sess_001/session.json")
-    assert context.state_paths["agent_memory_path"].endswith("/sessions/sess_001/agent_memory.json")
+    assert context.state_paths["agent_memory_path"].endswith("/sessions/sess_001/session.json")
 
 
 def test_build_perception_bundle_surfaces_memory_language_and_map(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@ from PIL import Image
 from backend.agent.memory import AgentMemoryStore
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 from backend.persistence import ActiveSessionStore, LiveSessionStore
-from skills.tracking.viewer_stream import build_tracking_viewer_payload
+from backend.tracking_viewer_stream import build_tracking_viewer_payload
 
 
 def _memory_payload() -> dict:
@@ -86,11 +86,13 @@ def test_build_tracking_viewer_payload_includes_current_frame_memory_and_history
 
     assert payload["available"] is True
     assert payload["summary"]["target_id"] == 3
-    assert "摘要：短发、黑色上衣。" in payload["current_memory"]
+    assert "核心特征：短发、黑色上衣。" in payload["current_memory"]
+    assert "摘要：" not in payload["current_memory"]
     assert payload["display_frame"]["frame_id"] == "frame_000001"
     assert payload["display_frame"]["target_id"] == 3
     assert payload["display_frame"]["image_data_url"].startswith("data:image/jpeg;base64,")
     assert payload["conversation_history"][-1]["text"] == "目标在左侧。"
+    assert payload["conversation_history"][-1]["debug"]["behavior"] == "reply"
     assert payload["memory_history"] == []
     assert payload["summary"]["status_kind"] == "tracking"
     assert payload["summary"]["status_label"] == "跟踪中"
@@ -424,3 +426,4 @@ def test_build_tracking_viewer_payload_exposes_recent_conversation_window(tmp_pa
     assert len(payload["conversation_history"]) == 8
     assert payload["conversation_history"][0]["text"] == "user turn 8"
     assert payload["conversation_history"][-1]["text"] == "assistant turn 11"
+    assert payload["conversation_history"][-1]["debug"]["request_id"] == "req_011"

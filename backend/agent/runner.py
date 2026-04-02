@@ -7,19 +7,15 @@ import shlex
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
-from uuid import uuid4
 
 from backend.agent.context import AgentContext
-from backend.agent.context_builders import RouteContextBuilder, TrackingContextBuilder
-from backend.agent.context_views import (
-    TRACKING_RUNTIME_NAMESPACE,
-)
+import backend.agent.tracking_orchestration as tracking_orchestration
 from backend.agent.runtime import LocalAgentRuntime
 from backend.config import parse_dotenv
 from backend.perception.service import LocalPerceptionService
+from skills.tracking.core.context import build_route_context, build_tracking_context
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PI_BINARY = "pi"
@@ -30,14 +26,6 @@ ENABLED_SKILLS_FIELD = "enabled_skills"
 JSON_BLOCK_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 TURN_STATUSES = frozenset({"idle", "processed"})
 TRACKING_SKILL_NAME = "tracking"
-ROUTE_CONTEXT_BUILDER = RouteContextBuilder()
-TRACKING_CONTEXT_BUILDER = TrackingContextBuilder()
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _message_text_parts(message: Dict[str, Any]) -> list[str]:
     parts = message.get("content", [])
     if not isinstance(parts, list):
@@ -444,7 +432,7 @@ def _run_pi_turn(
 
     request_dir = _request_dir(artifacts_root, context.session_id, request_id)
     route_context_path = _write_json(
-        ROUTE_CONTEXT_BUILDER.build(
+        build_route_context(
             context,
             request_id=request_id,
             enabled_skill_names=enabled_skill_names,
@@ -454,7 +442,7 @@ def _run_pi_turn(
     tracking_context_path = None
     if TRACKING_SKILL_NAME in enabled_skill_names:
         tracking_context_path = _write_json(
-            TRACKING_CONTEXT_BUILDER.build(context, request_id=request_id),
+            build_tracking_context(context, request_id=request_id),
             request_dir / "tracking_context.json",
         )
     turn_context_path = _write_json(
@@ -532,399 +520,6 @@ def _as_optional_dict(value: Any, field_name: str) -> Optional[Dict[str, Any]]:
     return dict(value)
 
 
-def _rewrite_memory_paths(request: Dict[str, Any]) -> tuple[Optional[str], list[str]]:
-    crop_path = None if request.get("crop_path") in (None, "") else str(request["crop_path"]).strip()
-    frame_paths = [
-        str(path).strip()
-        for path in list(request.get("frame_paths") or [])
-        if str(path).strip()
-    ]
-    return crop_path, frame_paths
-
-
-def _tracking_rewrite_job_dir(runtime: LocalAgentRuntime, *, session_id: str, job_id: str) -> Path:
-    context = runtime.context(session_id)
-    return Path(str(context.state_paths["session_dir"])) / "tracking_rewrite_jobs" / job_id
-
-
-def _write_tracking_rewrite_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=True),
-        encoding="utf-8",
-    )
-    return path
-
-
-def _tracking_rewrite_status_payload(
-    *,
-    job_id: str,
-    session_id: str,
-    status: str,
-    task: str,
-    frame_id: str,
-    target_id: int,
-    crop_path: str,
-    frame_paths: list[str],
-    requested_at: Optional[str] = None,
-    updated_at: Optional[str] = None,
-    started_at: Optional[str] = None,
-    completed_at: Optional[str] = None,
-    exit_code: Optional[int] = None,
-    reason: Optional[str] = None,
-    error: Optional[str] = None,
-    result_path: Optional[str] = None,
-    stdout_path: Optional[str] = None,
-    stderr_path: Optional[str] = None,
-    pid: Optional[int] = None,
-) -> Dict[str, Any]:
-    return {
-        "job_id": job_id,
-        "session_id": session_id,
-        "status": status,
-        "task": task,
-        "frame_id": frame_id,
-        "target_id": int(target_id),
-        "crop_path": crop_path,
-        "frame_paths": list(frame_paths),
-        "requested_at": requested_at,
-        "started_at": started_at,
-        "completed_at": completed_at,
-        "updated_at": updated_at or _utc_now(),
-        "exit_code": exit_code,
-        "reason": reason,
-        "error": error,
-        "result_path": result_path,
-        "stdout_path": stdout_path,
-        "stderr_path": stderr_path,
-        "pid": pid,
-    }
-
-
-def _tracking_rewrite_job_is_latest(
-    runtime: LocalAgentRuntime,
-    *,
-    session_id: str,
-    job_id: str,
-) -> bool:
-    context = runtime.context(session_id)
-    runtime_state = dict(context.skill_cache.get(TRACKING_RUNTIME_NAMESPACE) or {})
-    if str(runtime_state.get("latest_rewrite_job_id", "")).strip() == job_id:
-        return True
-    tracking_state = dict(context.skill_cache.get(TRACKING_SKILL_NAME) or {})
-    return str(tracking_state.get("latest_rewrite_job_id", "")).strip() == job_id
-
-
-def _update_latest_tracking_rewrite_state(
-    runtime: LocalAgentRuntime,
-    *,
-    session_id: str,
-    job_id: str,
-    status: str,
-    task: str,
-    log_dir: Path,
-    status_path: Path,
-    requested_at: Optional[str] = None,
-    completed_at: Optional[str] = None,
-    reason: Optional[str] = None,
-    error: Optional[str] = None,
-    result_path: Optional[Path] = None,
-    pid: Optional[int] = None,
-) -> None:
-    if not _tracking_rewrite_job_is_latest(runtime, session_id=session_id, job_id=job_id):
-        return
-    patch: Dict[str, Any] = {
-        "latest_rewrite_job_id": job_id,
-        "latest_rewrite_status": status,
-        "latest_rewrite_task": task,
-        "latest_rewrite_log_dir": str(log_dir),
-        "latest_rewrite_status_path": str(status_path),
-        "latest_rewrite_requested_at": requested_at,
-    }
-    if completed_at is not None:
-        patch["latest_rewrite_completed_at"] = completed_at
-    if reason is not None:
-        patch["latest_rewrite_reason"] = reason
-    else:
-        patch["latest_rewrite_reason"] = None
-    if error is not None:
-        patch["latest_rewrite_error"] = error
-    else:
-        patch["latest_rewrite_error"] = None
-    if result_path is not None:
-        patch["latest_rewrite_result_path"] = str(result_path)
-    else:
-        patch["latest_rewrite_result_path"] = None
-    if pid is not None:
-        patch["latest_rewrite_pid"] = int(pid)
-    else:
-        patch["latest_rewrite_pid"] = None
-    runtime.update_skill_cache(
-        session_id,
-        skill_name=TRACKING_RUNTIME_NAMESPACE,
-        payload=patch,
-    )
-
-
-def _tracking_rewrite_pid_alive(pid: Any) -> bool:
-    if pid in (None, "", 0):
-        return False
-    try:
-        os.kill(int(pid), 0)
-    except (OSError, TypeError, ValueError):
-        return False
-    return True
-
-
-def _recover_latest_tracking_rewrite_if_stale(
-    *,
-    runtime: LocalAgentRuntime,
-    session_id: str,
-) -> None:
-    context = runtime.context(session_id)
-    runtime_state = dict(context.skill_cache.get(TRACKING_RUNTIME_NAMESPACE) or {})
-    status = str(runtime_state.get("latest_rewrite_status", "")).strip()
-    if status not in {"queued", "running"}:
-        return
-
-    pid = runtime_state.get("latest_rewrite_pid")
-    if _tracking_rewrite_pid_alive(pid):
-        return
-
-    status_path_raw = str(runtime_state.get("latest_rewrite_status_path", "")).strip()
-    if not status_path_raw:
-        return
-    status_path = Path(status_path_raw)
-    if not status_path.exists():
-        return
-    try:
-        payload = json.loads(status_path.read_text(encoding="utf-8"))
-    except Exception:
-        return
-    if str(payload.get("status", "")).strip() not in {"queued", "running"}:
-        return
-    completed_at = _utc_now()
-    failed_payload = _tracking_rewrite_status_payload(
-        job_id=str(payload.get("job_id", "")).strip(),
-        session_id=str(payload.get("session_id", session_id)).strip(),
-        status="failed",
-        task=str(payload.get("task", "")).strip(),
-        frame_id=str(payload.get("frame_id", "")).strip(),
-        target_id=int(payload.get("target_id", 0)),
-        crop_path=str(payload.get("crop_path", "")).strip(),
-        frame_paths=list(payload.get("frame_paths") or []),
-        requested_at=str(payload.get("requested_at", "")).strip() or None,
-        started_at=str(payload.get("started_at", "")).strip() or None,
-        completed_at=completed_at,
-        exit_code=-1,
-        reason="worker_missing",
-        error="tracking rewrite worker exited before writing a result",
-        stdout_path=str(payload.get("stdout_path", "")).strip() or None,
-        stderr_path=str(payload.get("stderr_path", "")).strip() or None,
-        pid=None,
-    )
-    _write_tracking_rewrite_json(status_path, failed_payload)
-    _update_latest_tracking_rewrite_state(
-        runtime,
-        session_id=session_id,
-        job_id=str(payload.get("job_id", "")).strip(),
-        status="failed",
-        task=str(payload.get("task", "")).strip(),
-        log_dir=status_path.parent,
-        status_path=status_path,
-        requested_at=str(payload.get("requested_at", "")).strip() or None,
-        completed_at=completed_at,
-        reason="worker_missing",
-        error="tracking rewrite worker exited before writing a result",
-        pid=None,
-    )
-
-
-def _apply_tracking_rewrite_output(
-    *,
-    runtime: LocalAgentRuntime,
-    session_id: str,
-    rewrite_output: Dict[str, Any],
-) -> None:
-    patch: Dict[str, Any] = {"latest_memory": rewrite_output["memory"]}
-    crop_path = None if rewrite_output.get("crop_path") in (None, "") else str(rewrite_output["crop_path"]).strip()
-    reference_view = str(rewrite_output.get("reference_view", "")).strip()
-    if crop_path and reference_view == "front":
-        patch["latest_front_target_crop"] = crop_path
-    elif crop_path and reference_view == "back":
-        patch["latest_back_target_crop"] = crop_path
-    runtime.update_skill_cache(
-        session_id,
-        skill_name=TRACKING_SKILL_NAME,
-        payload=patch,
-    )
-
-
-def _schedule_tracking_memory_rewrite(
-    *,
-    runtime: LocalAgentRuntime,
-    session_id: str,
-    rewrite_memory_input: Dict[str, Any],
-    env_file: Path,
-) -> None:
-    crop_path, frame_paths = _rewrite_memory_paths(rewrite_memory_input)
-    if crop_path in (None, "") or not frame_paths:
-        return
-
-    context = runtime.context(session_id)
-    job_id = f"rewrite_{uuid4().hex}"
-    job_dir = _tracking_rewrite_job_dir(runtime, session_id=session_id, job_id=job_id)
-    status_path = job_dir / "status.json"
-    stdout_path = job_dir / "stdout.log"
-    stderr_path = job_dir / "stderr.log"
-    requested_at = _utc_now()
-    _write_tracking_rewrite_json(
-        status_path,
-        _tracking_rewrite_status_payload(
-            job_id=job_id,
-            session_id=session_id,
-            status="queued",
-            task=str(rewrite_memory_input["task"]),
-            frame_id=str(rewrite_memory_input["frame_id"]),
-            target_id=int(rewrite_memory_input["target_id"]),
-            crop_path=crop_path,
-            frame_paths=frame_paths,
-            requested_at=requested_at,
-            stdout_path=str(stdout_path),
-            stderr_path=str(stderr_path),
-        ),
-    )
-    runtime.update_skill_cache(
-        session_id,
-        skill_name=TRACKING_RUNTIME_NAMESPACE,
-        payload={
-            "latest_rewrite_job_id": job_id,
-            "latest_rewrite_status": "queued",
-            "latest_rewrite_task": str(rewrite_memory_input["task"]),
-            "latest_rewrite_log_dir": str(job_dir),
-            "latest_rewrite_status_path": str(status_path),
-            "latest_rewrite_requested_at": requested_at,
-            "latest_rewrite_error": None,
-        },
-    )
-    _update_latest_tracking_rewrite_state(
-        runtime,
-        session_id=session_id,
-        job_id=job_id,
-        status="queued",
-        task=str(rewrite_memory_input["task"]),
-        log_dir=job_dir,
-        status_path=status_path,
-        requested_at=requested_at,
-    )
-    command = [
-        sys.executable,
-        "skills/tracking/scripts/run_tracking_rewrite_worker.py",
-        "--state-root",
-        str(context.state_paths["state_root"]),
-        "--job-id",
-        job_id,
-        "--job-dir",
-        str(job_dir),
-        "--session-id",
-        session_id,
-        "--memory-file",
-        str(context.state_paths["agent_memory_path"]),
-        "--task",
-        str(rewrite_memory_input["task"]),
-        "--crop-path",
-        crop_path,
-        "--frame-id",
-        str(rewrite_memory_input["frame_id"]),
-        "--target-id",
-        str(rewrite_memory_input["target_id"]),
-        "--env-file",
-        str(env_file),
-    ]
-    for frame_path in frame_paths:
-        command.extend(["--frame-path", frame_path])
-
-    stdout_handle = stdout_path.open("a", encoding="utf-8")
-    stderr_handle = stderr_path.open("a", encoding="utf-8")
-    try:
-        process = subprocess.Popen(
-            command,
-            cwd=ROOT,
-            stdout=stdout_handle,
-            stderr=stderr_handle,
-            text=True,
-            start_new_session=True,
-        )
-    except Exception as exc:
-        stdout_handle.close()
-        stderr_handle.close()
-        completed_at = _utc_now()
-        _write_tracking_rewrite_json(
-            status_path,
-            _tracking_rewrite_status_payload(
-                job_id=job_id,
-                session_id=session_id,
-                status="failed",
-                task=str(rewrite_memory_input["task"]),
-                frame_id=str(rewrite_memory_input["frame_id"]),
-                target_id=int(rewrite_memory_input["target_id"]),
-                crop_path=crop_path,
-                frame_paths=frame_paths,
-                requested_at=requested_at,
-                completed_at=completed_at,
-                exit_code=1,
-                error=str(exc),
-                stdout_path=str(stdout_path),
-                stderr_path=str(stderr_path),
-            ),
-        )
-        _update_latest_tracking_rewrite_state(
-            runtime,
-            session_id=session_id,
-            job_id=job_id,
-            status="failed",
-            task=str(rewrite_memory_input["task"]),
-            log_dir=job_dir,
-            status_path=status_path,
-            requested_at=requested_at,
-            completed_at=completed_at,
-            error=str(exc),
-        )
-        return
-    finally:
-        stdout_handle.close()
-        stderr_handle.close()
-
-    _write_tracking_rewrite_json(
-        status_path,
-        _tracking_rewrite_status_payload(
-            job_id=job_id,
-            session_id=session_id,
-            status="queued",
-            task=str(rewrite_memory_input["task"]),
-            frame_id=str(rewrite_memory_input["frame_id"]),
-            target_id=int(rewrite_memory_input["target_id"]),
-            crop_path=crop_path,
-            frame_paths=frame_paths,
-            requested_at=requested_at,
-            stdout_path=str(stdout_path),
-            stderr_path=str(stderr_path),
-            pid=process.pid,
-        ),
-    )
-    _update_latest_tracking_rewrite_state(
-        runtime,
-        session_id=session_id,
-        job_id=job_id,
-        status="queued",
-        task=str(rewrite_memory_input["task"]),
-        log_dir=job_dir,
-        status_path=status_path,
-        requested_at=requested_at,
-        pid=process.pid,
-    )
-
-
 def _normalize_skill_state_patch(skill_name: str, patch: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if patch is None:
         return None
@@ -996,59 +591,6 @@ class PiAgentRunner:
             artifacts_root=artifacts_root,
         )
 
-    def _tracking_wait_payload(
-        self,
-        *,
-        session_id: str,
-        device_id: str,
-        reason: str,
-    ) -> Dict[str, Any]:
-        context = self._runtime.context(session_id, device_id=device_id)
-        latest_observation = LocalPerceptionService(self._runtime.state_root).latest_camera_observation(
-            session_id=session_id,
-        )
-        latest_frame_id = None
-        if latest_observation is not None:
-            latest_frame_id = (latest_observation.get("payload") or {}).get("frame_id")
-        tracking_state = dict((context.skill_cache.get("tracking") or {}))
-        target_id = tracking_state.get("latest_target_id")
-        text = "当前不确定，保持等待。"
-        return {
-            "status": "processed",
-            "skill_name": "tracking",
-            "session_result": {
-                "behavior": "track",
-                "frame_id": latest_frame_id,
-                "target_id": target_id,
-                "bounding_box_id": target_id,
-                "found": False,
-                "decision": "wait",
-                "text": text,
-                "reason": reason,
-            },
-            "latest_result_patch": None,
-            "skill_state_patch": {
-                "pending_question": None,
-            },
-            "user_preferences_patch": None,
-            "environment_map_patch": None,
-            "perception_cache_patch": None,
-            "robot_response": {
-                "action": "wait",
-                "text": text,
-            },
-            "tool": "track",
-            "tool_output": {
-                "behavior": "track",
-                "decision": "wait",
-                "text": text,
-                "reason": reason,
-            },
-            "rewrite_output": None,
-            "rewrite_memory_input": None,
-            "reason": reason,
-        }
-
     def process_tracking_request_direct(
         self,
         *,
@@ -1058,80 +600,18 @@ class PiAgentRunner:
         request_id: str,
         env_file: Path,
         artifacts_root: Path,
-        recovery_mode: bool = False,
-        missing_target_id: int | None = None,
-        candidate_track_id_floor_exclusive: int | None = None,
+        excluded_track_ids: list[int] | None = None,
     ) -> Dict[str, Any]:
-        self._runtime.append_chat_request(
+        return tracking_orchestration.process_tracking_request_direct(
+            runtime=self._runtime,
             session_id=session_id,
             device_id=device_id,
             text=text,
             request_id=request_id,
-        )
-        context = self._runtime.context(session_id, device_id=device_id)
-        request_dir = _request_dir(artifacts_root, session_id, request_id)
-        tracking_context_path = _write_json(
-            TRACKING_CONTEXT_BUILDER.build(
-                context,
-                request_id=request_id,
-                recovery_mode=recovery_mode,
-                missing_target_id=missing_target_id,
-                candidate_track_id_floor_exclusive=candidate_track_id_floor_exclusive,
-            ),
-            request_dir / "tracking_context.json",
-        )
-        command = [
-            sys.executable,
-            "skills/tracking/scripts/run_tracking_track.py",
-            "--tracking-context-file",
-            str(tracking_context_path),
-            "--user-text",
-            str(text),
-            "--env-file",
-            str(env_file),
-            "--artifacts-root",
-            str(artifacts_root),
-        ]
-        completed = subprocess.run(
-            command,
-            cwd=ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if completed.returncode != 0:
-            return self._apply_processed_payload(
-                session_id=session_id,
-                pi_payload=self._tracking_wait_payload(
-                    session_id=session_id,
-                    device_id=device_id,
-                    reason=(
-                        "Direct tracking turn failed.\n"
-                        f"exit_code={completed.returncode}\n"
-                        f"stderr={completed.stderr.strip()}\n"
-                        f"stdout={completed.stdout.strip()}"
-                    ),
-                ),
-                env_file=env_file,
-            )
-        payload = _parse_json_payload(completed.stdout)
-        if payload is None:
-            return self._apply_processed_payload(
-                session_id=session_id,
-                pi_payload=self._tracking_wait_payload(
-                    session_id=session_id,
-                    device_id=device_id,
-                    reason=(
-                        "Direct tracking turn did not return a valid turn payload.\n"
-                        f"stdout={completed.stdout.strip()}"
-                    ),
-                ),
-                env_file=env_file,
-            )
-        return self._apply_processed_payload(
-            session_id=session_id,
-            pi_payload=payload,
             env_file=env_file,
+            artifacts_root=artifacts_root,
+            excluded_track_ids=excluded_track_ids,
+            apply_processed_payload=self._apply_processed_payload,
         )
 
     def process_tracking_init_direct(
@@ -1144,48 +624,15 @@ class PiAgentRunner:
         env_file: Path,
         artifacts_root: Path,
     ) -> Dict[str, Any]:
-        context = self._runtime.context(session_id, device_id=device_id)
-        request_dir = _request_dir(artifacts_root, session_id, request_id)
-        tracking_context_path = _write_json(
-            TRACKING_CONTEXT_BUILDER.build(context, request_id=request_id),
-            request_dir / "tracking_context.json",
-        )
-        command = [
-            sys.executable,
-            "skills/tracking/scripts/run_tracking_init.py",
-            "--tracking-context-file",
-            str(tracking_context_path),
-            "--target-description",
-            str(text),
-            "--env-file",
-            str(env_file),
-            "--artifacts-root",
-            str(artifacts_root),
-        ]
-        completed = subprocess.run(
-            command,
-            cwd=ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if completed.returncode != 0:
-            raise RuntimeError(
-                "Direct tracking init failed.\n"
-                f"exit_code={completed.returncode}\n"
-                f"stderr={completed.stderr.strip()}\n"
-                f"stdout={completed.stdout.strip()}"
-            )
-        payload = _parse_json_payload(completed.stdout)
-        if payload is None:
-            raise ValueError(
-                "Direct tracking init did not return a valid turn payload.\n"
-                f"stdout={completed.stdout.strip()}"
-            )
-        return self._apply_processed_payload(
+        return tracking_orchestration.process_tracking_init_direct(
+            runtime=self._runtime,
             session_id=session_id,
-            pi_payload=payload,
+            device_id=device_id,
+            text=text,
+            request_id=request_id,
             env_file=env_file,
+            artifacts_root=artifacts_root,
+            apply_processed_payload=self._apply_processed_payload,
         )
 
     def process_session(
@@ -1317,7 +764,7 @@ class PiAgentRunner:
             )
 
         if skill_name == TRACKING_SKILL_NAME and rewrite_memory_input:
-            _schedule_tracking_memory_rewrite(
+            tracking_orchestration.schedule_tracking_memory_rewrite(
                 runtime=self._runtime,
                 session_id=session_id,
                 rewrite_memory_input=rewrite_memory_input,

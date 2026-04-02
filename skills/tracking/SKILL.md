@@ -86,11 +86,11 @@ Important:
 - These scripts already call the lower-level helpers they need.
 - These scripts already assemble the final JSON payload expected by the runner.
 - When you use one of these scripts, return its stdout as the final answer without rewriting fields by hand.
-- Do not call `select_target.py` or `rewrite_memory.py` directly from Pi for ordinary `init` or `track` turns.
+- Do not call `skills/tracking/core/select.py` or `skills/tracking/scripts/rewrite_memory.py` directly from Pi for ordinary `init` or `track` turns.
 
 The lower-level helper scripts still exist, but they are internal building blocks for the deterministic entry scripts:
 
-- `python skills/tracking/scripts/select_target.py ...`
+- `python skills/tracking/core/select.py ...`
 - `python skills/tracking/scripts/rewrite_memory.py ...`
 
 `rewrite_memory.py` is not part of Pi routing anymore.
@@ -127,7 +127,7 @@ For `reply`:
 ## Common Mistakes
 
 - Treating `init` or `track` as open-ended reasoning problems instead of fixed workflows.
-- Calling `select_target.py` and `rewrite_memory.py` manually from Pi when the entry script already does the orchestration.
+- Calling `skills/tracking/core/select.py` and `skills/tracking/scripts/rewrite_memory.py` manually from Pi when the entry script already does the orchestration.
 - Rewriting the final JSON by hand after a deterministic entry script has already returned it.
 - Running memory rewrite inline on the critical path of `continue tracking`.
 - Assuming `init` can finish successfully without producing initial tracking memory.

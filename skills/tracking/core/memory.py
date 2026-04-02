@@ -32,7 +32,7 @@ def _normalized_text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _normalize_distinguish_text(value: Any) -> str:
+def _normalize_field_text(value: Any) -> str:
     text = _normalized_text(value)
     if not text:
         return ""
@@ -51,10 +51,6 @@ def _normalize_distinguish_text(value: Any) -> str:
     if stripped in empty_placeholders:
         return ""
     return text
-
-
-def _normalize_memory_text(value: Any) -> str:
-    return _normalize_distinguish_text(value)
 
 
 def _extract_text_from_string(memory_text: str) -> str:
@@ -99,22 +95,15 @@ def _parse_memory_object(memory_value: Any) -> Dict[str, Any] | None:
     return None
 
 
-def _parsed_memory_object_keys(memory_value: Any) -> set[str]:
-    parsed = _parse_memory_object(memory_value)
-    if not isinstance(parsed, dict):
-        return set()
-    return {str(key) for key in parsed.keys()}
-
-
-def _normalize_raw_memory(memory_value: Any) -> Dict[str, Any]:
+def _normalize_raw_memory(memory_value: Any, parsed: Dict[str, Any] | None = None) -> Dict[str, Any]:
     normalized = empty_tracking_memory()
-    parsed = _parse_memory_object(memory_value)
+    parsed = parsed if isinstance(parsed, dict) else _parse_memory_object(memory_value)
     if parsed is not None:
         if any(key in parsed for key in PRIMARY_MEMORY_KEYS):
-            normalized["core"] = _normalize_memory_text(parsed.get("core"))
-            normalized["front_view"] = _normalize_memory_text(parsed.get("front_view"))
-            normalized["back_view"] = _normalize_memory_text(parsed.get("back_view"))
-            normalized["distinguish"] = _normalize_distinguish_text(parsed.get("distinguish"))
+            normalized["core"] = _normalize_field_text(parsed.get("core"))
+            normalized["front_view"] = _normalize_field_text(parsed.get("front_view"))
+            normalized["back_view"] = _normalize_field_text(parsed.get("back_view"))
+            normalized["distinguish"] = _normalize_field_text(parsed.get("distinguish"))
             return normalized
 
         appearance = parsed.get("appearance")
@@ -133,7 +122,7 @@ def _normalize_raw_memory(memory_value: Any) -> Dict[str, Any]:
         normalized["core"] = summary if summary and summary != DEFAULT_MEMORY_TEXT else detail
         normalized["front_view"] = detail
         normalized["back_view"] = ""
-        normalized["distinguish"] = _normalize_distinguish_text(parsed.get("distinguish"))
+        normalized["distinguish"] = _normalize_field_text(parsed.get("distinguish"))
         return normalized
 
     text = _extract_text_from_string(_normalized_text(memory_value))
@@ -160,18 +149,16 @@ def normalize_tracking_memory(
     *,
     previous_memory: Any | None = None,
 ) -> Dict[str, Any]:
-    if previous_memory is None:
-        base = empty_tracking_memory()
-    else:
-        base = _normalize_raw_memory(previous_memory)
-    current = _normalize_raw_memory(memory_value)
-    current_keys = _parsed_memory_object_keys(memory_value)
+    base = empty_tracking_memory() if previous_memory is None else _normalize_raw_memory(previous_memory)
+    current_parsed = _parse_memory_object(memory_value)
+    current = _normalize_raw_memory(memory_value, current_parsed)
+    current_keys = set() if current_parsed is None else {str(key) for key in current_parsed.keys()}
 
     for key in ("core", "front_view", "back_view"):
-        value = _normalize_memory_text(current.get(key))
+        value = _normalize_field_text(current.get(key))
         if value:
             base[key] = value
-    distinguish = _normalize_distinguish_text(current.get("distinguish"))
+    distinguish = _normalize_field_text(current.get("distinguish"))
     if "distinguish" in current_keys:
         base["distinguish"] = distinguish
     elif distinguish:
@@ -193,7 +180,7 @@ def tracking_memory_prompt_text(memory_value: Any) -> str:
 
 def tracking_memory_display_text(memory_value: Any) -> str:
     payload = normalize_tracking_memory(memory_value)
-    lines = [f"摘要：{tracking_memory_summary(payload)}"]
+    lines = []
     for key in ("core", "front_view", "back_view"):
         value = _normalized_text(payload.get(key))
         if not value:
@@ -210,14 +197,14 @@ def tracking_memory_flash_prompt_text(memory_value: Any) -> str:
     sections = tracking_memory_sections(payload)
     lines = [
         "强特征清单：",
-        f"- summary: {sections['summary'] or DEFAULT_MEMORY_TEXT}",
         f"- core: {sections['core'] or '(unknown)'}",
         f"- front_view: {sections['front_view'] or '(unknown)'}",
         f"- back_view: {sections['back_view'] or '(unknown)'}",
         f"- distinguish: {sections['distinguish'] or '(unknown)'}",
         "强冲突规则：",
         "- 如果当前候选出现与 memory 明显冲突的稳定特征，例如短裤变长裤、卡其短裤变深色短裤/长裤、白鞋变深色鞋、无眼镜变为清晰无眼镜、无帽子变有帽子，应优先判为 conflict。",
-        "- 当前图里看不见的特征只能写 unknown，不能当作 match。",
+        "- 当前图里看不见的特征只能写 unknown，不能当作 match，也不能当作 conflict。",
+        "- 机器人低机位或 crop 裁切时，上半身 Logo、眼镜、脸部细节经常看不全；如果这些部位没有被清楚拍到，只能写 unknown，不要写成“缺失”。",
     ]
     return "\n".join(lines)
 
@@ -226,7 +213,6 @@ def tracking_memory_sections(memory_value: Any) -> Dict[str, str]:
     payload = normalize_tracking_memory(memory_value)
     sections = {key: _normalized_text(payload.get(key)) for key in ("core", "front_view", "back_view")}
     sections["distinguish"] = _normalized_text(payload.get("distinguish"))
-    sections["summary"] = tracking_memory_summary(payload)
     return sections
 
 

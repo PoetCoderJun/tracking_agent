@@ -211,7 +211,7 @@ if [[ "${REALTIME_PLAYBACK}" == "1" ]]; then
   PERCEPTION_CMD+=(--realtime-playback)
 fi
 
-BACKEND_CMD=(uv run python -m scripts.run_tracking_backend
+BACKEND_CMD=(uv run python -m scripts.run_tracking_viewer_stream
   --state-root "${STATE_ROOT}"
   --host "${BACKEND_HOST}"
   --port "${BACKEND_PORT}"

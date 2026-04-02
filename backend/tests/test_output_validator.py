@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.tracking.output_validator import validate_locate_result
+from skills.tracking.core.validator import validate_locate_result
 
 
 def test_validate_locate_result_accepts_bounding_box_id() -> None:

@@ -201,6 +201,7 @@ function MemoryEntry({ entry }) {
 
 function ConversationEntry({ entry }) {
   const role = entry.role === "assistant" ? "assistant" : "user";
+  const debugText = entry?.debug ? JSON.stringify(entry.debug, null, 2) : "";
   return (
     <article className="list-entry">
       <div className="entry-head">
@@ -210,6 +211,7 @@ function ConversationEntry({ entry }) {
         <span className="entry-time">{formatTime(entry.timestamp)}</span>
       </div>
       <div className="entry-body">{entry.text || "空内容"}</div>
+      {debugText ? <pre className="entry-debug">{debugText}</pre> : null}
     </article>
   );
 }
@@ -239,15 +241,17 @@ function loadStoredHistory(sessionId) {
 
 function mergeConversationHistory(existing, incoming) {
   const merged = [...existing];
-  const seen = new Set(
-    merged.map((entry) => `${entry.timestamp || ""}|${entry.role || ""}|${entry.text || ""}`),
+  const indexByKey = new Map(
+    merged.map((entry, index) => [`${entry.timestamp || ""}|${entry.role || ""}|${entry.text || ""}`, index]),
   );
   for (const entry of incoming || []) {
     const key = `${entry?.timestamp || ""}|${entry?.role || ""}|${entry?.text || ""}`;
-    if (seen.has(key)) {
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex !== undefined) {
+      merged[existingIndex] = entry;
       continue;
     }
-    seen.add(key);
+    indexByKey.set(key, merged.length);
     merged.push(entry);
   }
   return merged;

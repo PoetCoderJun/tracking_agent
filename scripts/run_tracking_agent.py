@@ -14,27 +14,22 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.config import parse_dotenv
-from backend.perception.service import LocalPerceptionService
+from backend.agent.tracking_bootstrap import (
+    build_tracking_chat_command,
+    float_env_value,
+    load_tracking_env_values,
+    run_tracking_chat_command,
+    wait_for_first_tracking_frame,
+)
 from backend.persistence import resolve_session_id
 from backend.project_paths import resolve_project_path
-
-
-def _float_env_value(values: Dict[str, str], key: str, default: float) -> float:
-    raw = str(values.get(key, "")).strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
 
 
 def parse_args() -> argparse.Namespace:
     bootstrap_parser = argparse.ArgumentParser(add_help=False)
     bootstrap_parser.add_argument("--env-file", default=".ENV")
     bootstrap_args, _ = bootstrap_parser.parse_known_args()
-    env_values = parse_dotenv(resolve_project_path(bootstrap_args.env_file))
+    env_values = load_tracking_env_values(bootstrap_args.env_file)
 
     parser = argparse.ArgumentParser(
         description="Run the tracking agent loop and print appended agent chat logs."
@@ -49,26 +44,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--interval-seconds",
         type=float,
-        default=_float_env_value(env_values, "QUERY_INTERVAL_SECONDS", 3.0),
+        default=float_env_value(env_values, "QUERY_INTERVAL_SECONDS", 3.0),
     )
     parser.add_argument(
         "--recovery-interval-seconds",
         type=float,
-        default=_float_env_value(env_values, "TRACKING_RECOVERY_INTERVAL_SECONDS", 1.0),
+        default=float_env_value(env_values, "TRACKING_RECOVERY_INTERVAL_SECONDS", 1.0),
     )
     parser.add_argument(
         "--idle-sleep-seconds",
         type=float,
-        default=_float_env_value(env_values, "TRACKING_IDLE_SLEEP_SECONDS", 3.0),
+        default=float_env_value(env_values, "TRACKING_IDLE_SLEEP_SECONDS", 3.0),
     )
     parser.add_argument(
         "--presence-check-seconds",
         type=float,
-        default=_float_env_value(env_values, "TRACKING_PRESENCE_CHECK_SECONDS", 1.0),
+        default=float_env_value(env_values, "TRACKING_PRESENCE_CHECK_SECONDS", 1.0),
     )
-    parser.add_argument("--viewer-host", default="127.0.0.1")
-    parser.add_argument("--viewer-port", type=int, default=8765)
-    parser.add_argument("--viewer-poll-interval", type=float, default=1.0)
     parser.add_argument("--max-turns", type=int, default=None)
     parser.add_argument("--stop-file", default=None)
     parser.add_argument("--chat-poll-interval", type=float, default=0.5)
@@ -102,13 +94,6 @@ def _loop_command(args: argparse.Namespace) -> list[str]:
         str(args.idle_sleep_seconds),
         "--presence-check-seconds",
         str(args.presence_check_seconds),
-        "--viewer-host",
-        str(args.viewer_host),
-        "--viewer-port",
-        str(args.viewer_port),
-        "--viewer-poll-interval",
-        str(args.viewer_poll_interval),
-        "--no-viewer-stream",
     ]
     if args.session_id not in (None, ""):
         command.extend(["--session-id", str(args.session_id)])
@@ -117,6 +102,18 @@ def _loop_command(args: argparse.Namespace) -> list[str]:
     if args.stop_file not in (None, ""):
         command.extend(["--stop-file", str(args.stop_file)])
     return command
+
+
+def _chat_command(args: argparse.Namespace, *, session_id: str, text: str) -> list[str]:
+    return build_tracking_chat_command(
+        session_id=session_id,
+        text=text,
+        device_id=str(args.device_id),
+        state_root=str(args.state_root),
+        artifacts_root=str(args.artifacts_root),
+        env_file=str(args.env_file),
+        pi_binary=str(args.pi_binary),
+    )
 
 
 def _session_file(state_root: Path, session_id: str) -> Path:
@@ -169,50 +166,20 @@ def _tail_chat_logs(args: argparse.Namespace, stop_event: threading.Event) -> No
         stop_event.wait(args.chat_poll_interval)
 
 
-def _session_has_frame(state_root: Path, session_id: str, *, device_id: str) -> bool:
-    _ = device_id
-    return LocalPerceptionService(state_root=state_root).latest_camera_observation(session_id=session_id) is not None
-
-
 def _run_init_chat(args: argparse.Namespace) -> int:
     init_text = str(args.init_text or "").strip()
     if not init_text:
         return 0
 
     state_root = resolve_project_path(args.state_root)
-    started = time.monotonic()
-    session_id: Optional[str] = args.session_id
-    while True:
-        session_id = resolve_session_id(state_root=state_root, session_id=session_id)
-        if session_id is not None and _session_has_frame(state_root, session_id, device_id=str(args.device_id)):
-            break
-        if time.monotonic() - started > float(args.startup_timeout_seconds):
-            raise TimeoutError("Timed out waiting for the first perception frame before init chat.")
-        time.sleep(0.5)
+    session_id = wait_for_first_tracking_frame(
+        state_root=state_root,
+        requested_session_id=args.session_id,
+        timeout_seconds=float(args.startup_timeout_seconds),
+    )
 
-    command = [
-        sys.executable,
-        "-m",
-        "backend.cli",
-        "chat",
-        "--session-id",
-        str(session_id),
-        "--text",
-        init_text,
-        "--device-id",
-        str(args.device_id),
-        "--state-root",
-        str(args.state_root),
-        "--artifacts-root",
-        str(args.artifacts_root),
-        "--env-file",
-        str(args.env_file),
-        "--pi-binary",
-        str(args.pi_binary),
-        "--skill",
-        "tracking",
-    ]
-    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    command = _chat_command(args, session_id=str(session_id), text=init_text)
+    completed = run_tracking_chat_command(command)
     if completed.stdout.strip():
         print(completed.stdout.strip(), flush=True)
     if completed.stderr.strip():

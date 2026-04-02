@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import mimetypes
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -10,25 +9,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from websockets.exceptions import ConnectionClosed
 from websockets.legacy.server import WebSocketServerProtocol, serve
 
-from backend.agent.memory import AgentMemoryStore
 from backend.perception.service import LocalPerceptionService
 from backend.persistence import ActiveSessionStore, LiveSessionStore, resolve_session_id
 from backend.project_paths import resolve_project_path
-from skills.tracking.memory_format import normalize_tracking_memory, tracking_memory_display_text
-
-
-def _normalize_tracking_state(memory_payload: Dict[str, Any]) -> Dict[str, Any]:
-    raw = dict(((memory_payload.get("skill_cache") or {}).get("tracking") or {}))
-    latest_memory = normalize_tracking_memory(raw.get("latest_memory", raw.get("memory", "")))
-    return {
-        **raw,
-        "latest_target_id": raw.get("latest_target_id", raw.get("target_id")),
-        "latest_memory": latest_memory,
-        "latest_memory_text": tracking_memory_display_text(latest_memory),
-        "pending_question": str(
-            raw.get("pending_question", raw.get("clarification_question", "")) or ""
-        ).strip(),
-    }
+from backend.session_frames import observation_recent_frames
+from skills.tracking.core.context import tracking_state_snapshot
 
 
 def _image_data_url(path_value: Any) -> Optional[str]:
@@ -101,6 +86,38 @@ def _viewer_tracking_status(
     return {"kind": "idle", "label": "等待中"}
 
 
+def _enriched_conversation_history(
+    *,
+    session_payload: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    raw_history = list(session_payload.get("conversation_history") or [])
+    result_history = list(session_payload.get("result_history") or [])
+    debug_by_timestamp: Dict[str, Dict[str, Any]] = {}
+    for item in result_history:
+        if not isinstance(item, dict):
+            continue
+        timestamp = str(item.get("updated_at", "")).strip()
+        if not timestamp:
+            continue
+        debug_by_timestamp[timestamp] = dict(item)
+
+    enriched: List[Dict[str, Any]] = []
+    for entry in raw_history:
+        if not isinstance(entry, dict):
+            continue
+        normalized = {
+            "role": str(entry.get("role", "")).strip(),
+            "text": str(entry.get("text", "")).strip(),
+            "timestamp": str(entry.get("timestamp", "")).strip(),
+        }
+        if normalized["role"] == "assistant":
+            debug_payload = debug_by_timestamp.get(normalized["timestamp"])
+            if debug_payload is not None:
+                normalized["debug"] = debug_payload
+        enriched.append(normalized)
+    return enriched
+
+
 def build_tracking_viewer_payload(*, state_root: Path, session_id: str | None = None) -> Dict[str, Any]:
     store = LiveSessionStore(state_root=state_root)
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
@@ -112,7 +129,6 @@ def build_tracking_viewer_payload(*, state_root: Path, session_id: str | None = 
             "message": "No active session yet.",
         }
 
-    memory_store = AgentMemoryStore(state_root, resolved_session_id)
     session_path = store.session_path(resolved_session_id)
 
     if not session_path.exists():
@@ -125,23 +141,13 @@ def build_tracking_viewer_payload(*, state_root: Path, session_id: str | None = 
 
     session = store.session_payload(resolved_session_id)
     perception = LocalPerceptionService(state_root)
-    memory_payload = (
-        json.loads(memory_store.path().read_text(encoding="utf-8"))
-        if memory_store.path().exists()
-        else {"skill_cache": {}}
-    )
     perception_snapshot = perception.read_snapshot(resolved_session_id)
     stream_status = dict(perception_snapshot.get("stream_status") or {})
-    tracking_state = _normalize_tracking_state(memory_payload)
-    recent_frames = [
-        {
-            "frame_id": str((item.get("payload") or {}).get("frame_id", item.get("id", ""))).strip(),
-            "timestamp_ms": int(item.get("ts_ms", 0)),
-            "image_path": str((item.get("payload") or {}).get("image_path", "")).strip(),
-            "detections": list((item.get("meta") or {}).get("detections") or []),
-        }
-        for item in perception.recent_camera_observations(session_id=resolved_session_id)
-    ]
+    tracking_state = tracking_state_snapshot((session.get("skill_cache") or {}).get("tracking"))
+    recent_frames = observation_recent_frames(
+        state_root=state_root,
+        session_id=resolved_session_id,
+    )
     latest_result = dict(session.get("latest_result") or {})
     viewer_status = _viewer_tracking_status(
         latest_result=latest_result,
@@ -177,8 +183,8 @@ def build_tracking_viewer_payload(*, state_root: Path, session_id: str | None = 
         "display_frame": display_frame_payload,
         "current_memory": tracking_state.get("latest_memory_text", ""),
         "memory_history": [],
-        "conversation_history": list(session.get("conversation_history") or []),
-        "turn_history": list(session.get("result_history") or [])[-6:],
+        "conversation_history": _enriched_conversation_history(session_payload=session),
+        "turn_history": list(session.get("result_history") or []),
         "summary": {
             "target_id": tracking_state.get("latest_target_id"),
             "pending_question": tracking_state.get("pending_question"),
@@ -201,12 +207,10 @@ def _file_signature(*, state_root: Path, session_id: str | None = None) -> Tuple
         return (active_session_mtime, -1, -1)
 
     session_path = LiveSessionStore(state_root=state_root).session_path(resolved_session_id)
-    memory_path = AgentMemoryStore(state_root, resolved_session_id).path()
     perception_path = state_root / "perception" / "sessions" / resolved_session_id / "snapshot.json"
     session_mtime = session_path.stat().st_mtime_ns if session_path.exists() else -1
-    memory_mtime = memory_path.stat().st_mtime_ns if memory_path.exists() else -1
     perception_mtime = perception_path.stat().st_mtime_ns if perception_path.exists() else -1
-    return (active_session_mtime, session_mtime, memory_mtime ^ perception_mtime)
+    return (active_session_mtime, session_mtime, perception_mtime)
 
 
 class TrackingViewerStreamServer:

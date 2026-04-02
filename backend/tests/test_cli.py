@@ -114,12 +114,12 @@ def test_main_start_persists_enabled_skills_and_active_session(
 
     payload = json.loads(capsys.readouterr().out)
     session_id = payload["session_id"]
-    agent_memory = json.loads(
+    session_payload = json.loads(
         (
             resolve_project_path(str(state_root))
             / "sessions"
             / session_id
-            / "agent_memory.json"
+            / "session.json"
         ).read_text(encoding="utf-8")
     )
     active_session = json.loads(
@@ -127,5 +127,5 @@ def test_main_start_persists_enabled_skills_and_active_session(
     )
 
     assert payload["enabled_skills"] == ["tracking", "speech"]
-    assert agent_memory["environment_map"]["agent_runtime"]["enabled_skills"] == ["tracking", "speech"]
+    assert session_payload["environment_map"]["agent_runtime"]["enabled_skills"] == ["tracking", "speech"]
     assert active_session["session_id"] == session_id

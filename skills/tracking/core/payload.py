@@ -9,6 +9,8 @@ def _optional_text(value: Any) -> Optional[str]:
     if value in (None, ""):
         return None
     text = str(value).strip()
+    if text.lower() in {"none", "null"}:
+        return None
     return text or None
 
 
@@ -77,6 +79,10 @@ def _skill_state_patch(select_output: Dict[str, Any]) -> Dict[str, Any]:
     if not bool(select_output.get("found", False)):
         patch["pending_question"] = None
         return patch
+
+    if bool(select_output.get("reset_reference_crops", False)):
+        patch["latest_front_target_crop"] = None
+        patch["latest_back_target_crop"] = None
 
     confirmed_frame_path = _confirmed_frame_path(select_output)
     if confirmed_frame_path is not None:

@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.project_paths import resolve_project_path
-from skills.tracking.viewer_stream import TrackingViewerStreamServer
+from backend.tracking_viewer_stream import TrackingViewerStreamServer
 
 
 def parse_args() -> argparse.Namespace:

@@ -4,7 +4,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from backend.agent import LocalAgentRuntime, RouteContextBuilder, TrackingContextBuilder
+from backend.agent import LocalAgentRuntime
+from skills.tracking.core.context import build_route_context, build_tracking_context
 from backend.perception import (
     CAMERA_SENSOR_NAME,
     PERSON_DETECTION_KIND,
@@ -166,7 +167,7 @@ def test_local_perception_service_describes_saved_state(tmp_path: Path) -> None:
     assert description["persisted"]["saved_keyframe_count"] == 1
 
 
-def test_context_builder_classes_match_existing_tracking_payload_shape(tmp_path: Path) -> None:
+def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     runtime = LocalAgentRuntime(state_root)
     perception = LocalPerceptionService(state_root)
@@ -189,12 +190,12 @@ def test_context_builder_classes_match_existing_tracking_payload_shape(tmp_path:
     )
     context = runtime.context("sess_001")
 
-    route_context = RouteContextBuilder().build(
+    route_context = build_route_context(
         context,
         request_id="req_001",
         enabled_skill_names=["tracking"],
     )
-    tracking_context = TrackingContextBuilder().build(
+    tracking_context = build_tracking_context(
         context,
         request_id="req_001",
     )
@@ -205,7 +206,7 @@ def test_context_builder_classes_match_existing_tracking_payload_shape(tmp_path:
     assert tracking_context["frames"][0]["detections"][0]["track_id"] == 7
 
 
-def test_context_builders_prefer_perception_store_over_raw_session_frames(tmp_path: Path) -> None:
+def test_tracking_context_helpers_prefer_perception_store_over_raw_session_frames(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     runtime = LocalAgentRuntime(state_root)
     perception = LocalPerceptionService(state_root)
@@ -225,12 +226,12 @@ def test_context_builders_prefer_perception_store_over_raw_session_frames(tmp_pa
     context = runtime.context("sess_001")
     context.raw_session["recent_frames"] = []
 
-    route_context = RouteContextBuilder().build(
+    route_context = build_route_context(
         context,
         request_id="req_009",
         enabled_skill_names=["tracking"],
     )
-    tracking_context = TrackingContextBuilder().build(
+    tracking_context = build_tracking_context(
         context,
         request_id="req_009",
     )
@@ -238,3 +239,36 @@ def test_context_builders_prefer_perception_store_over_raw_session_frames(tmp_pa
     assert route_context["latest_frame"]["frame_id"] == "frame_000009"
     assert tracking_context["frames"][0]["frame_id"] == "frame_000009"
     assert tracking_context["frames"][0]["detections"][0]["track_id"] == 42
+
+
+def test_tracking_context_filters_excluded_track_ids(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    runtime = LocalAgentRuntime(state_root)
+    perception = LocalPerceptionService(state_root)
+    frame_path = _frame_image(tmp_path / "frame.jpg")
+
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_001",
+            device_id="robot_01",
+            frame=RobotFrame(frame_id="frame_000011", timestamp_ms=1710000000000, image_path=str(frame_path)),
+            detections=[
+                RobotDetection(track_id=7, bbox=[10, 20, 30, 40], score=0.95),
+                RobotDetection(track_id=12, bbox=[30, 20, 50, 40], score=0.92),
+                RobotDetection(track_id=21, bbox=[50, 20, 70, 40], score=0.90),
+            ],
+            text="继续跟踪",
+        ),
+        request_id="req_011",
+        request_function="chat",
+    )
+    context = runtime.context("sess_001")
+
+    tracking_context = build_tracking_context(
+        context,
+        request_id="req_011",
+        excluded_track_ids=[12],
+    )
+
+    assert tracking_context["excluded_track_ids"] == [12]
+    assert [detection["track_id"] for detection in tracking_context["frames"][0]["detections"]] == [7, 21]

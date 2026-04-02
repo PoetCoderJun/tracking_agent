@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from skills.tracking.scripts.select_target import execute_select_tool
-from skills.tracking.scripts.turn_payload import build_tracking_turn_payload, ensure_rewrite_paths_exist
+from skills.tracking.core.select import execute_select_tool
+from skills.tracking.core.payload import build_tracking_turn_payload, ensure_rewrite_paths_exist
 
 
 def parse_args() -> argparse.Namespace:

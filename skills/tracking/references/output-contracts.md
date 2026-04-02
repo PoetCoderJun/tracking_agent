@@ -153,17 +153,13 @@ Only include tracking-owned fields directly under `skill_cache["tracking"]`:
   "latest_target_id": 12,
   "latest_confirmed_frame_path": "/abs/path/to/frame.jpg",
   "latest_target_crop": "/abs/path/to/crop.jpg",
+  "latest_front_target_crop": "/abs/path/to/front-crop.jpg",
+  "latest_back_target_crop": "/abs/path/to/back-crop.jpg",
   "latest_memory": {
-    "appearance": {
-      "head_face": "...",
-      "upper_body": "...",
-      "lower_body": "...",
-      "shoes": "...",
-      "accessories": "...",
-      "body_shape": "..."
-    },
-    "distinguish": "...",
-    "summary": "..."
+    "core": "...",
+    "front_view": "...",
+    "back_view": "...",
+    "distinguish": "..."
   },
   "target_description": "黑衣服的人",
   "pending_question": null
@@ -187,8 +183,10 @@ Do not wrap these fields again under `"tracking": {...}`.
   "pending_question": null,
   "memory": "上一次 tracking memory 的展示文本",
   "reason": "brief explanation",
+  "reject_reason": "仅在 wait 时填写的拒绝绑定理由，否则为空字符串",
   "latest_target_crop": "/abs/path/to/crop.jpg",
   "target_description": "用户描述",
+  "reset_reference_crops": false,
   "rewrite_memory_input": {
     "task": "init" | "update",
     "crop_path": "/abs/path/to/crop.jpg",
@@ -210,20 +208,15 @@ When the user explicitly names an invalid candidate ID, this helper already retu
 {
   "task": "init" | "update",
   "memory": {
-    "appearance": {
-      "head_face": "...",
-      "upper_body": "...",
-      "lower_body": "...",
-      "shoes": "...",
-      "accessories": "...",
-      "body_shape": "..."
-    },
-    "distinguish": "...",
-    "summary": "..."
+    "core": "...",
+    "front_view": "...",
+    "back_view": "...",
+    "distinguish": "..."
   },
   "frame_id": "frame_000123",
   "target_id": 12,
   "crop_path": "/abs/path/to/crop.jpg",
+  "reference_view": "front" | "back" | "unknown",
   "elapsed_seconds": 0.08
 }
 ```

@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 
 from backend.config import load_settings
 from backend.llm_client import call_model
-from skills.tracking.memory_format import normalize_tracking_memory, tracking_memory_prompt_text
+from skills.tracking.core.memory import normalize_tracking_memory, tracking_memory_prompt_text
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +41,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame-path", action="append", dest="frame_paths", default=[])
     parser.add_argument("--frame-id", required=True)
     parser.add_argument("--target-id", type=int, required=True)
+    parser.add_argument("--confirmation-reason", default="")
+    parser.add_argument("--candidate-checks-json", default="")
     parser.add_argument("--env-file", default=".ENV")
     return parser.parse_args()
 
@@ -82,6 +84,37 @@ def _reference_view_from_response_text(response_text: str) -> str:
     return "unknown"
 
 
+def _optional_text(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    return str(value).strip()
+
+
+def _normalize_candidate_checks(value: Any) -> list[Dict[str, Any]]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        try:
+            value = json.loads(stripped)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, list):
+        return []
+    normalized: list[Dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(dict(item))
+    return normalized
+
+
+def _candidate_checks_prompt_text(candidate_checks: list[Dict[str, Any]]) -> str:
+    if not candidate_checks:
+        return "[]"
+    return json.dumps(candidate_checks, ensure_ascii=False, indent=2)
+
+
 def execute_rewrite_memory_tool(
     *,
     memory_file: Path,
@@ -105,8 +138,12 @@ def execute_rewrite_memory_tool(
     config = load_agent_config(config_path)
     previous_memory = _load_previous_memory(memory_file)
     prompt_key = "memory_init_prompt" if task == "init" else "memory_optimize_prompt"
+    confirmation_reason = _optional_text(arguments.get("confirmation_reason"))
+    candidate_checks = _normalize_candidate_checks(arguments.get("candidate_checks"))
     prompt = str(config["prompts"][prompt_key]).format(
         current_memory=tracking_memory_prompt_text(previous_memory),
+        confirmation_reason=confirmation_reason or "(none)",
+        candidate_checks=_candidate_checks_prompt_text(candidate_checks),
     )
     output = call_model(
         api_key=settings.api_key,
@@ -142,6 +179,8 @@ def main() -> int:
             "frame_paths": list(args.frame_paths),
             "frame_id": args.frame_id,
             "target_id": int(args.target_id),
+            "confirmation_reason": args.confirmation_reason,
+            "candidate_checks": args.candidate_checks_json,
         },
         env_file=Path(args.env_file),
     )

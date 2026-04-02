@@ -25,10 +25,7 @@ robot-agent = "backend.cli:main"
 robot-agent-perception = "backend.perception.cli:main"
 robot-agent-tracking-perception = "scripts.run_tracking_perception:main"
 robot-agent-tracking-loop = "scripts.run_tracking_loop:main"
-robot-agent-tracking-agent = "scripts.run_tracking_agent:main"
-robot-agent-tracking-backend = "scripts.run_tracking_backend:main"
 robot-agent-tracking-viewer-stream = "scripts.run_tracking_viewer_stream:main"
-robot-agent-tracking-stack = "scripts.run_tracking_stack:main"
 
 [dependency-groups]
 dev = [

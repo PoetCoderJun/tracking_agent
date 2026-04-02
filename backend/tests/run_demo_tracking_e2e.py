@@ -120,7 +120,6 @@ def _session_paths(state_root: Path, session_id: str) -> Dict[str, Path]:
     return {
         "session_dir": session_dir,
         "session_path": session_dir / "session.json",
-        "memory_path": session_dir / "agent_memory.json",
     }
 
 
@@ -247,8 +246,7 @@ def _case_report(
 ) -> CaseReport:
     paths = _session_paths(state_root, session_id)
     session = _load_json(paths["session_path"])
-    memory = _load_json(paths["memory_path"])
-    tracking_state, _ = _tracking_state(memory)
+    tracking_state, _ = _tracking_state(session)
     return CaseReport(
         name=name,
         session_id=session_id,
@@ -306,8 +304,7 @@ def _run_small_context_case(
     turn_payload = _last_json_payload(commands[-1].stdout)
     paths = _session_paths(state_root, session_id)
     session = _load_json(paths["session_path"])
-    memory = _load_json(paths["memory_path"])
-    tracking_state, had_nested_tracking = _tracking_state(memory)
+    tracking_state, had_nested_tracking = _tracking_state(session)
     latest_result = session.get("latest_result") or {}
     checks = [
         _check(turn_payload.get("status") == "processed", "turn processed", f"status={turn_payload.get('status')}"),
@@ -367,8 +364,7 @@ def _run_large_context_case(
     final_turn = _last_json_payload(commands[-1].stdout)
     paths = _session_paths(state_root, session_id)
     session = _load_json(paths["session_path"])
-    memory = _load_json(paths["memory_path"])
-    tracking_state, _ = _tracking_state(memory)
+    tracking_state, _ = _tracking_state(session)
     checks = [
         _check(
             all(_last_json_payload(command.stdout).get("status") in {"processed", "idle"} for command in commands[1:-1]),
@@ -488,16 +484,41 @@ def _run_continuous_tracking_case(
     for command in commands:
         _assert_command_ok(command)
 
-    loop_payload = _last_json_payload(commands[-1].stdout)
+    loop_events = _json_lines(commands[-1].stdout)
+    loop_payload = loop_events[-1] if loop_events else {}
+    saw_tracking_bound = any(
+        str(event.get("status", "")).strip() == "tracking_bound" for event in loop_events
+    )
+    saw_processed_tracking = any(
+        str(event.get("status", "")).strip() == "processed"
+        and str(event.get("skill_name", "")).strip() == "tracking"
+        for event in loop_events
+    )
     paths = _session_paths(state_root, session_id)
     session = _load_json(paths["session_path"])
-    memory = _load_json(paths["memory_path"])
-    tracking_state, _ = _tracking_state(memory)
+    tracking_state, _ = _tracking_state(session)
+    latest_frame_id = loop_payload.get("frame_id") or (session.get("latest_result") or {}).get("frame_id")
     checks = [
-        _check(loop_payload.get("status") == "processed", "loop dispatched a processed turn", f"status={loop_payload.get('status')}"),
-        _check(loop_payload.get("skill_name") == "tracking", "loop stayed on tracking", f"skill={loop_payload.get('skill_name')}"),
+        _check(
+            saw_processed_tracking or saw_tracking_bound,
+            "loop advanced tracking",
+            f"statuses={[event.get('status') for event in loop_events]}",
+        ),
+        _check(
+            saw_processed_tracking
+            or (
+                saw_tracking_bound
+                and str(loop_payload.get("status", "")).strip() in {"tracking_bound", "completed"}
+            ),
+            "loop stayed on tracking",
+            f"final_status={loop_payload.get('status')} skill={loop_payload.get('skill_name')}",
+        ),
         _check(tracking_state.get("latest_target_id") == 1, "active target persisted", f"memory.latest_target_id={tracking_state.get('latest_target_id')}"),
-        _check(session.get("latest_result", {}).get("frame_id") == "frame_000005", "latest result moved to the newest sampled frame", f"frame_id={session.get('latest_result', {}).get('frame_id')}"),
+        _check(
+            latest_frame_id == "frame_000005",
+            "loop reached the newest sampled frame",
+            f"frame_id={latest_frame_id}",
+        ),
     ]
     return _case_report(
         name="continuous_tracking_loop",
@@ -554,8 +575,7 @@ def _run_tracking_chat_case(
     where_payload = _last_json_payload(commands[2].stdout)
     same_target_payload = _last_json_payload(commands[3].stdout)
     session = _load_json(_session_paths(state_root, session_id)["session_path"])
-    memory = _load_json(_session_paths(state_root, session_id)["memory_path"])
-    tracking_state, _ = _tracking_state(memory)
+    tracking_state, _ = _tracking_state(session)
     checks = [
         _check(where_payload.get("status") == "processed", "where-question answered", f"status={where_payload.get('status')}"),
         _check(same_target_payload.get("status") == "processed", "same-target question answered", f"status={same_target_payload.get('status')}"),
@@ -720,14 +740,17 @@ def _render_markdown(summary: Dict[str, Any], reports: List[CaseReport]) -> str:
 
 
 def _render_html(markdown_text: str, html_path: Path) -> None:
-    result = subprocess.run(
-        ["pandoc", "-f", "gfm", "-t", "html5", "-s", "-o", str(html_path)],
-        input=markdown_text,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode == 0 and html_path.exists():
+    try:
+        result = subprocess.run(
+            ["pandoc", "-f", "gfm", "-t", "html5", "-s", "-o", str(html_path)],
+            input=markdown_text,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        result = None
+    if result is not None and result.returncode == 0 and html_path.exists():
         return
     fallback = (
         "<!doctype html><html><head><meta charset='utf-8'>"
@@ -742,13 +765,16 @@ def _render_html(markdown_text: str, html_path: Path) -> None:
 
 
 def _render_pdf(html_path: Path, pdf_path: Path) -> bool:
-    result = subprocess.run(
-        ["playwright", "pdf", html_path.as_uri(), str(pdf_path)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["playwright", "pdf", html_path.as_uri(), str(pdf_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False
     return result.returncode == 0 and pdf_path.exists()
 
 

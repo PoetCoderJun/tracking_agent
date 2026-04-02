@@ -5,10 +5,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL_ROOT = ROOT / "skills" / "tracking"
+TRACKING_CORE_ROOT = SKILL_ROOT / "core"
 SPEECH_SKILL_ROOT = ROOT / "skills" / "speech"
 CLI_PATH = ROOT / "backend" / "cli.py"
 TRACKING_SCRIPT_ROOT = SKILL_ROOT / "scripts"
 REPO_SCRIPT_ROOT = ROOT / "scripts"
+TRACKING_VIEWER_ROOT = ROOT / "apps" / "tracking-viewer"
 PI_SETTINGS_PATH = ROOT / ".pi" / "settings.json"
 
 
@@ -19,19 +21,25 @@ def test_skill_package_contains_expected_files() -> None:
         SKILL_ROOT / "references" / "output-contracts.md",
         SKILL_ROOT / "references" / "interaction-policy.md",
         SKILL_ROOT / "references" / "robot-agent-config.json",
-        TRACKING_SCRIPT_ROOT / "select_target.py",
+        TRACKING_CORE_ROOT / "select.py",
+        TRACKING_CORE_ROOT / "payload.py",
+        TRACKING_CORE_ROOT / "context.py",
+        TRACKING_CORE_ROOT / "memory.py",
+        TRACKING_CORE_ROOT / "crop.py",
+        TRACKING_CORE_ROOT / "validator.py",
+        TRACKING_CORE_ROOT / "visualization.py",
         TRACKING_SCRIPT_ROOT / "rewrite_memory.py",
         TRACKING_SCRIPT_ROOT / "run_tracking_init.py",
         TRACKING_SCRIPT_ROOT / "run_tracking_track.py",
-        TRACKING_SCRIPT_ROOT / "run_tracking_rewrite_worker.py",
         REPO_SCRIPT_ROOT / "run_tracking_perception.py",
         REPO_SCRIPT_ROOT / "run_tracking_loop.py",
         REPO_SCRIPT_ROOT / "run_tracking_agent.py",
-        REPO_SCRIPT_ROOT / "run_tracking_backend.py",
         REPO_SCRIPT_ROOT / "run_tracking_viewer_stream.py",
-        REPO_SCRIPT_ROOT / "run_tracking_stack.py",
+        REPO_SCRIPT_ROOT / "run_tracking_viewer_stream.py",
         REPO_SCRIPT_ROOT / "run_tracking_stack.sh",
         REPO_SCRIPT_ROOT / "run_tracking_frontend.sh",
+        TRACKING_VIEWER_ROOT / "package.json",
+        TRACKING_VIEWER_ROOT / "src" / "App.jsx",
     ]
 
     for path in expected_paths:
@@ -56,19 +64,19 @@ def test_tracking_operational_scripts_live_under_repo_scripts() -> None:
     assert (REPO_SCRIPT_ROOT / "run_tracking_perception.py").exists()
     assert (REPO_SCRIPT_ROOT / "run_tracking_loop.py").exists()
     assert (REPO_SCRIPT_ROOT / "run_tracking_agent.py").exists()
-    assert (REPO_SCRIPT_ROOT / "run_tracking_backend.py").exists()
     assert (REPO_SCRIPT_ROOT / "run_tracking_viewer_stream.py").exists()
-    assert (REPO_SCRIPT_ROOT / "run_tracking_stack.py").exists()
+    assert (REPO_SCRIPT_ROOT / "run_tracking_viewer_stream.py").exists()
     assert (REPO_SCRIPT_ROOT / "run_tracking_stack.sh").exists()
     assert (REPO_SCRIPT_ROOT / "run_tracking_frontend.sh").exists()
 
 
 def test_tracking_skill_scripts_only_keep_single_turn_helpers() -> None:
-    assert (TRACKING_SCRIPT_ROOT / "select_target.py").exists()
     assert (TRACKING_SCRIPT_ROOT / "rewrite_memory.py").exists()
     assert (TRACKING_SCRIPT_ROOT / "run_tracking_init.py").exists()
     assert (TRACKING_SCRIPT_ROOT / "run_tracking_track.py").exists()
-    assert (TRACKING_SCRIPT_ROOT / "run_tracking_rewrite_worker.py").exists()
+    assert not (TRACKING_SCRIPT_ROOT / "run_tracking_rewrite_worker.py").exists()
+    assert not (TRACKING_SCRIPT_ROOT / "select_target.py").exists()
+    assert not (TRACKING_SCRIPT_ROOT / "turn_payload.py").exists()
     assert not (TRACKING_SCRIPT_ROOT / "run_tracking_perception.py").exists()
     assert not (TRACKING_SCRIPT_ROOT / "run_tracking_loop.py").exists()
 
@@ -142,7 +150,7 @@ def test_tracking_skill_requires_memory_rewrite_after_successful_init_or_track()
 
     assert "For `init`, memory rewrite is off the critical path." in skill
     assert "For `track`, memory rewrite is off the critical path." in skill
-    assert "Do not call `select_target.py` or `rewrite_memory.py` directly from Pi" in skill
+    assert "Do not call `skills/tracking/core/select.py` or `skills/tracking/scripts/rewrite_memory.py` directly from Pi" in skill
 
 
 def test_memory_reference_clarifies_model_output_vs_stored_json() -> None:

@@ -1,22 +1,22 @@
 # Robot Agent Runtime
 
-这是一个运行在 robot / Pi 侧的 multi-skills agent runtime。
+这是一个运行在 robot / Pi 侧的 chat-first embodied agent kernel。
 
-- `backend/` 是通用 runtime、状态管理和 `robot-agent chat`
+- `backend/` 是 perception、runner、状态管理和 `robot-agent chat`
 - `backend/perception/cli.py` 是独立感知服务的查询入口，供 Runtime / Pi 通过 CLI 读取
-- `skills/` 是可插拔 skill
+- `skills/` 提供 capability 实现，当前重点是 tracking 和 speech
 - `scripts/` 是流程性脚本，用来把 perception、轮询、viewer 这些进程跑起来
 - `skills/tracking/` 是当前主力 skill
 - `skills/speech/` 是已安装的 TTS skill
 
 ## 推荐启动
 
-当前推荐把 tracking 系统拆成 4 个独立进程：
+当前推荐把 tracking 系统拆成 3 个长期进程，加上一个可选前端：
 
 1. perception：持续写入检测与帧
-2. backend：viewer websocket 后端
-3. agent：初始化目标、恢复态请求、并打印 agent 聊天日志
-4. frontend：viewer 前端
+2. tracking loop：按事件驱动 tracking continuation / recovery
+3. viewer stream：输出 viewer websocket
+4. frontend：可选的 viewer 前端
 
 `scripts/run_tracking_stack.sh` 现在只是一个薄壳：
 - 同时启动上面 4 个进程
@@ -38,11 +38,11 @@ bash scripts/run_tracking_stack.sh \
 ```
 
 启动后：
-- 后端 websocket 默认在 `ws://127.0.0.1:8765`
-- agent 日志会直接打印到终端，包括新增的聊天记录
+- websocket 默认在 `ws://127.0.0.1:8765`
+- tracking loop 会持续读取 perception 并在需要时触发 runner
 - stack 默认不启动前端，避免把 viewer 强耦合进主流程
 
-如果你更看重可控性，也可以把 4 个进程分开启动。
+如果你更看重可控性，也可以把 perception、loop、viewer 分开启动。
 
 
 ## 常用手工命令
@@ -57,31 +57,6 @@ uv run robot-agent-tracking-perception \
   --tracker bytetrack.yaml \
   --interval-seconds 1
 ```
-
-只启动 backend websocket：
-
-```bash
-uv run robot-agent-tracking-backend \
-  --state-root ./.runtime/agent-runtime \
-  --host 127.0.0.1 \
-  --port 8765
-```
-
-只启动 agent：
-
-```bash
-uv run robot-agent-tracking-agent \
-  --state-root ./.runtime/agent-runtime \
-  --artifacts-root ./.runtime/pi-agent \
-  --env-file .ENV \
-  --init-text "开始跟踪穿黑衣服的人"
-```
-
-这个入口会：
-- 等待 perception 写出首帧
-- 自动发起初始化 chat
-- 后续运行 tracking loop
-- 持续打印 agent 聊天日志
 
 只启动前端：
 
@@ -150,12 +125,13 @@ uv run robot-agent-tracking-viewer-stream \
 ## 目录
 
 - `backend/`: 通用 runtime
+- `backend/`: perception + runner + session state
 - `scripts/`: 仓库级流程脚本
   - `run_tracking_perception.py`: 感知入口
-  - `run_tracking_backend.py`: viewer websocket 后端入口
-  - `run_tracking_agent.py`: tracking agent 入口，包含 init + loop + 聊天日志打印
+  - `run_tracking_viewer_stream.py`: viewer websocket 后端入口
   - `run_tracking_frontend.sh`: viewer 前端入口
-  - `run_tracking_stack.sh`: 纯启动壳，同时拉起 perception/backend/agent/frontend
+  - `run_tracking_stack.sh`: 兼容性启动壳
+- `apps/tracking-viewer/`: tracking viewer 前端项目
 - `skills/tracking/`: tracking skill 与单轮 helper
 - `skills/speech/`: speech skill
 - `docs/agent-architecture.md`: 补充说明

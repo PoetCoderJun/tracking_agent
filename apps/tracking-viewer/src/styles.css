@@ -500,6 +500,19 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.entry-debug {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(34, 31, 25, 0.06);
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
 .empty-inline {
   padding: 18px 10px;
   text-align: center;

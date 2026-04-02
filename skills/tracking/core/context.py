@@ -4,10 +4,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.agent.context import AgentContext
-from skills.tracking.memory_format import tracking_memory_display_text, tracking_memory_summary
+from backend.session_frames import tracking_recent_frames
+from skills.tracking.core.memory import normalize_tracking_memory, tracking_memory_display_text, tracking_memory_summary
 
-TRACKING_SKILL_NAME = "tracking"
-TRACKING_RUNTIME_NAMESPACE = "tracking_runtime"
 ROUTE_DIALOGUE_LIMIT = 6
 TRACKING_DIALOGUE_LIMIT = 6
 
@@ -37,117 +36,36 @@ def _latest_user_text(raw_session: Dict[str, Any]) -> str:
     return ""
 
 
-def _recent_frames(
-    raw_session: Dict[str, Any],
-    *,
-    candidate_track_id_floor_exclusive: Optional[int] = None,
-) -> List[Dict[str, Any]]:
-    frames: List[Dict[str, Any]] = []
-    for frame in list(raw_session.get("recent_frames") or []):
-        if not isinstance(frame, dict):
-            continue
-        detections: List[Dict[str, Any]] = []
-        for detection in list(frame.get("detections") or []):
-            if not isinstance(detection, dict):
-                continue
-            bbox = detection.get("bbox")
-            if not isinstance(bbox, list) or len(bbox) != 4:
-                continue
-            track_id = int(detection["track_id"])
-            if (
-                candidate_track_id_floor_exclusive is not None
-                and track_id <= int(candidate_track_id_floor_exclusive)
-            ):
-                continue
-            detections.append(
-                {
-                    "track_id": track_id,
-                    "bbox": [int(value) for value in bbox],
-                    "score": float(detection.get("score", 1.0)),
-                    "label": str(detection.get("label", "person")),
-                }
-            )
-        frames.append(
-            {
-                "frame_id": str(frame.get("frame_id", "")).strip(),
-                "timestamp_ms": int(frame.get("timestamp_ms", 0)),
-                "image_path": str(frame.get("image_path", "")).strip(),
-                "detections": detections,
-            }
-        )
-    return frames
-
-
-def _perception_service(context: AgentContext):
-    from backend.perception.service import LocalPerceptionService
-
-    return LocalPerceptionService(Path(context.state_paths["state_root"]))
-
-
-def _recent_frames_from_perception(
-    context: AgentContext,
-    *,
-    candidate_track_id_floor_exclusive: Optional[int] = None,
-) -> List[Dict[str, Any]]:
-    service = _perception_service(context)
-    frames: List[Dict[str, Any]] = []
-    for observation in service.recent_camera_observations(session_id=context.session_id):
-        payload = dict(observation.get("payload") or {})
-        meta = dict(observation.get("meta") or {})
-        detections: List[Dict[str, Any]] = []
-        for detection in list(meta.get("detections") or []):
-            if not isinstance(detection, dict):
-                continue
-            bbox = detection.get("bbox")
-            if not isinstance(bbox, list) or len(bbox) != 4:
-                continue
-            track_id = int(detection["track_id"])
-            if (
-                candidate_track_id_floor_exclusive is not None
-                and track_id <= int(candidate_track_id_floor_exclusive)
-            ):
-                continue
-            detections.append(
-                {
-                    "track_id": track_id,
-                    "bbox": [int(value) for value in bbox],
-                    "score": float(detection.get("score", 1.0)),
-                    "label": str(detection.get("label", "person")),
-                }
-            )
-        frames.append(
-            {
-                "frame_id": str(payload.get("frame_id", observation.get("id", ""))).strip(),
-                "timestamp_ms": int(observation.get("ts_ms", 0)),
-                "image_path": str(payload.get("image_path", "")).strip(),
-                "detections": detections,
-            }
-        )
-    return frames
-
-
 def _tracking_frames(
     context: AgentContext,
     *,
-    candidate_track_id_floor_exclusive: Optional[int] = None,
+    excluded_track_ids: Optional[List[int]] = None,
 ) -> List[Dict[str, Any]]:
-    frames = _recent_frames_from_perception(
-        context,
-        candidate_track_id_floor_exclusive=candidate_track_id_floor_exclusive,
-    )
-    if frames:
-        return frames
-    return _recent_frames(
-        context.raw_session,
-        candidate_track_id_floor_exclusive=candidate_track_id_floor_exclusive,
+    return tracking_recent_frames(
+        state_root=Path(context.state_paths["state_root"]),
+        session_id=context.session_id,
+        raw_session=context.raw_session,
+        excluded_track_ids=excluded_track_ids,
     )
 
 
-def tracking_state_view(context: AgentContext) -> Dict[str, Any]:
-    raw = dict((context.skill_cache.get(TRACKING_SKILL_NAME) or {}))
+def _normalized_track_id_set(raw_track_ids: Any) -> set[int]:
+    normalized: set[int] = set()
+    for track_id in list(raw_track_ids or []):
+        try:
+            normalized.add(int(track_id))
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+def tracking_state_snapshot(raw_tracking_state: Any) -> Dict[str, Any]:
+    raw = dict(raw_tracking_state or {})
     latest_target_id = raw.get("latest_target_id", raw.get("target_id"))
     if latest_target_id not in (None, ""):
         latest_target_id = int(latest_target_id)
+
+    latest_memory = normalize_tracking_memory(raw.get("latest_memory", raw.get("memory", "")))
     return {
         "target_description": str(raw.get("target_description", "")).strip(),
         "latest_target_id": latest_target_id,
@@ -158,15 +76,13 @@ def tracking_state_view(context: AgentContext) -> Dict[str, Any]:
         "identity_target_crop": str(raw.get("identity_target_crop", "")).strip(),
         "latest_confirmed_bbox": raw.get("latest_confirmed_bbox"),
         "init_frame_snapshot": raw.get("init_frame_snapshot"),
-        "pending_question": str(raw.get("pending_question", "")).strip(),
-        "latest_memory": raw.get("latest_memory", ""),
-        "latest_memory_text": tracking_memory_display_text(raw.get("latest_memory", "")),
-        "memory_summary": tracking_memory_summary(raw.get("latest_memory", "")),
+        "pending_question": str(
+            raw.get("pending_question", raw.get("clarification_question", "")) or ""
+        ).strip(),
+        "latest_memory": latest_memory,
+        "latest_memory_text": tracking_memory_display_text(latest_memory),
+        "memory_summary": tracking_memory_summary(latest_memory),
     }
-
-
-def tracking_runtime_view(context: AgentContext) -> Dict[str, Any]:
-    return dict((context.skill_cache.get(TRACKING_RUNTIME_NAMESPACE) or {}))
 
 
 def build_route_context(
@@ -179,7 +95,7 @@ def build_route_context(
     frames = _tracking_frames(context)
     latest_frame = None if not frames else frames[-1]
     latest_result = dict(raw_session.get("latest_result") or {})
-    tracking_state = tracking_state_view(context)
+    tracking_state = tracking_state_snapshot((context.skill_cache.get("tracking") or {}))
     return {
         "session_id": context.session_id,
         "request_id": request_id,
@@ -225,17 +141,16 @@ def build_tracking_context(
     context: AgentContext,
     *,
     request_id: str,
-    recovery_mode: bool = False,
-    missing_target_id: Optional[int] = None,
-    candidate_track_id_floor_exclusive: Optional[int] = None,
+    excluded_track_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     raw_session = context.raw_session
-    tracking_state = tracking_state_view(context)
+    tracking_state = tracking_state_snapshot((context.skill_cache.get("tracking") or {}))
+    normalized_excluded_track_ids = sorted(_normalized_track_id_set(excluded_track_ids))
     return {
         "session_id": context.session_id,
         "request_id": request_id,
         "target_description": tracking_state.get("target_description", ""),
-        "memory": tracking_state.get("latest_memory_text", ""),
+        "memory": tracking_state.get("latest_memory", ""),
         "latest_target_id": tracking_state.get("latest_target_id"),
         "latest_target_crop": tracking_state.get("latest_target_crop") or None,
         "latest_front_target_crop": tracking_state.get("latest_front_target_crop") or None,
@@ -248,15 +163,9 @@ def build_tracking_context(
             raw_session.get("conversation_history"),
             limit=TRACKING_DIALOGUE_LIMIT,
         ),
-        "recovery_mode": bool(recovery_mode),
-        "missing_target_id": None if missing_target_id is None else int(missing_target_id),
-        "candidate_track_id_floor_exclusive": (
-            None
-            if candidate_track_id_floor_exclusive is None
-            else int(candidate_track_id_floor_exclusive)
-        ),
+        "excluded_track_ids": normalized_excluded_track_ids,
         "frames": _tracking_frames(
             context,
-            candidate_track_id_floor_exclusive=candidate_track_id_floor_exclusive,
+            excluded_track_ids=normalized_excluded_track_ids,
         ),
     }

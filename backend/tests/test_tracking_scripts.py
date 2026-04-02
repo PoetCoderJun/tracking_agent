@@ -14,6 +14,8 @@ from backend.perception import LocalPerceptionService, RobotDetection, RobotFram
 
 ROOT = Path(__file__).resolve().parents[2]
 TRACKING_SCRIPT_ROOT = ROOT / "skills" / "tracking" / "scripts"
+TRACKING_CORE_ROOT = ROOT / "skills" / "tracking" / "core"
+TRACKING_WORKER_PATH = ROOT / "backend" / "agent" / "tracking_rewrite_worker.py"
 
 
 def _load_module(name: str, path: Path):
@@ -27,7 +29,7 @@ def _load_module(name: str, path: Path):
 
 
 def _load_select():
-    return _load_module("tracking_select", TRACKING_SCRIPT_ROOT / "select_target.py")
+    return _load_module("tracking_select", TRACKING_CORE_ROOT / "select.py")
 
 
 def _load_rewrite():
@@ -35,7 +37,7 @@ def _load_rewrite():
 
 
 def _load_turn_payload():
-    return _load_module("tracking_turn_payload", TRACKING_SCRIPT_ROOT / "turn_payload.py")
+    return _load_module("tracking_turn_payload", TRACKING_CORE_ROOT / "payload.py")
 
 
 def _load_run_init():
@@ -47,11 +49,11 @@ def _load_run_track():
 
 
 def _load_run_worker():
-    return _load_module("tracking_run_rewrite_worker", TRACKING_SCRIPT_ROOT / "run_tracking_rewrite_worker.py")
+    return _load_module("tracking_run_rewrite_worker", TRACKING_WORKER_PATH)
 
 
 def _load_target_crop():
-    return _load_module("tracking_target_crop", ROOT / "skills" / "tracking" / "target_crop.py")
+    return _load_module("tracking_target_crop", TRACKING_CORE_ROOT / "crop.py")
 
 
 def _frame_image(path: Path) -> Path:
@@ -178,6 +180,68 @@ def test_select_target_init_uses_seeded_first_frame_snapshot(tmp_path: Path) -> 
     )
 
     assert payload["found"] is True
+
+
+def test_select_target_init_uses_sub_model(tmp_path: Path, monkeypatch) -> None:
+    select = _load_select()
+    frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
+    session_file = tmp_path / "session.json"
+    memory_file = tmp_path / "agent_memory.json"
+    session = _session_payload(frame_path)
+    session["recent_frames"][0]["detections"] = [
+        {"track_id": 15, "bbox": [10, 12, 36, 44], "score": 0.95},
+    ]
+    session_file.write_text(json.dumps(session), encoding="utf-8")
+    memory_file.write_text(json.dumps(_memory_payload()), encoding="utf-8")
+
+    def fake_settings(_: Path) -> Settings:
+        return Settings(
+            api_key="",
+            base_url="http://example.test",
+            model="main",
+            main_model="main",
+            sub_model="sub",
+            timeout_seconds=30,
+            sample_fps=1.0,
+            query_interval_seconds=3,
+            recent_frame_count=3,
+            chat_model="chat",
+        )
+
+    calls: list[dict[str, object]] = []
+
+    def fake_call_model(**kwargs):
+        calls.append(kwargs)
+        return {
+            "elapsed_seconds": 0.04,
+            "response_text": json.dumps(
+                {
+                    "found": True,
+                    "bounding_box_id": 15,
+                    "text": "已确认目标。",
+                    "reason": "外观匹配。",
+                    "needs_clarification": False,
+                    "clarification_question": None,
+                },
+                ensure_ascii=False,
+            ),
+        }
+
+    monkeypatch.setattr(select, "load_settings", fake_settings)
+    monkeypatch.setattr(select, "call_model", fake_call_model)
+
+    payload = select.execute_select_tool(
+        session_file=session_file,
+        memory_file=memory_file,
+        behavior="init",
+        arguments={"target_description": "穿黑衣服的人"},
+        env_file=tmp_path / ".ENV",
+        artifacts_root=tmp_path / "artifacts",
+    )
+
+    assert payload["found"] is True
+    assert len(calls) == 1
+    assert calls[0]["model"] == "sub"
     assert payload["frame_id"] == "frame_000001"
     assert payload["target_id"] == 15
 
@@ -294,18 +358,17 @@ def test_select_target_track_uses_model_with_memory_guidance(tmp_path: Path, mon
     assert payload["confirmed_bbox"] == [8, 8, 36, 56]
     assert len(calls) == 1
     assert calls[0]["model"] == "main"
-    assert len(calls[0]["image_paths"]) == 6
-    assert str(reference_path) == str(calls[0]["image_paths"][0])
-    assert str(latest_front_target_crop) == str(calls[0]["image_paths"][1])
-    assert str(latest_back_target_crop) == str(calls[0]["image_paths"][2])
+    assert len(calls[0]["image_paths"]) == 3
+    assert str(latest_front_target_crop) == str(calls[0]["image_paths"][0])
+    assert str(latest_back_target_crop) == str(calls[0]["image_paths"][1])
+    assert str(calls[0]["image_paths"][2]).endswith("agent_artifacts/frame_000001_overlay.jpg")
     assert "tracking memory" in calls[0]["instruction"]
-    assert "强特征清单" in calls[0]["instruction"]
+    assert "看图顺序" in calls[0]["instruction"]
     assert "历史参考 crop 说明" in calls[0]["instruction"]
     assert "最近保存的目标正面 crop" in calls[0]["instruction"]
-    assert "候选 crop 对照" in calls[0]["instruction"]
     assert "黑衣服，短发。" in calls[0]["instruction"]
-    assert "frame_000001_candidate_42.jpg" in str(calls[0]["image_paths"][4])
-    assert "frame_000001_candidate_16.jpg" in str(calls[0]["image_paths"][5])
+    assert "默认按从下到上核验" in calls[0]["instruction"]
+    assert "下半身特征已经足够稳定且没有明显冲突，可以直接 track" in calls[0]["instruction"]
 
 
 def test_select_target_track_survives_source_frame_cleanup(tmp_path: Path, monkeypatch) -> None:
@@ -393,7 +456,7 @@ def test_select_target_recovery_downgrades_ask_to_wait(tmp_path: Path, monkeypat
         "chat_history": [{"role": "user", "text": "继续跟踪", "timestamp": "t1"}],
         "recovery_mode": True,
         "missing_target_id": 54,
-        "candidate_track_id_floor_exclusive": 54,
+        "excluded_track_ids": [12, 41],
         "frames": [
             {
                 "frame_id": "frame_000050",
@@ -463,6 +526,47 @@ def test_select_target_recovery_downgrades_ask_to_wait(tmp_path: Path, monkeypat
     assert payload["candidate_checks"][0]["bounding_box_id"] == 63
 
 
+def test_load_tracking_context_file_preserves_structured_memory_object(tmp_path: Path) -> None:
+    select = _load_select()
+    tracking_context = {
+        "session_id": "sess_ctx",
+        "target_description": "黑衣服的人",
+        "memory": {
+            "core": "黑色连帽外套、彩色鞋",
+            "front_view": "正面可见左胸白色圆形 Logo。",
+            "back_view": "",
+            "distinguish": "和灰白鞋的人区分。",
+        },
+        "latest_target_id": 2,
+        "excluded_track_ids": [3],
+        "frames": [],
+    }
+    tracking_context_file = tmp_path / "tracking_context.json"
+    tracking_context_file.write_text(json.dumps(tracking_context), encoding="utf-8")
+
+    loaded = select.load_tracking_context_file(tracking_context_file)
+
+    assert isinstance(loaded["memory"], dict)
+    assert loaded["memory"]["core"] == "黑色连帽外套、彩色鞋"
+
+
+def test_load_tracking_context_preserves_structured_memory_object(tmp_path: Path) -> None:
+    select = _load_select()
+    frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
+    session_file = tmp_path / "session.json"
+    memory_file = tmp_path / "agent_memory.json"
+    session_file.write_text(json.dumps(_session_payload(frame_path)), encoding="utf-8")
+    memory_file.write_text(
+        json.dumps(_memory_payload(latest_memory=_structured_memory("黑色连帽外套、彩色鞋"))),
+        encoding="utf-8",
+    )
+
+    loaded = select.load_tracking_context(session_file, memory_file)
+
+    assert isinstance(loaded["memory"], dict)
+    assert loaded["memory"]["core"] == "黑色连帽外套、彩色鞋"
+
+
 def test_select_target_track_rejects_model_target_not_in_current_candidates(
     tmp_path: Path,
     monkeypatch,
@@ -487,7 +591,7 @@ def test_select_target_track_rejects_model_target_not_in_current_candidates(
         "chat_history": [{"role": "user", "text": "继续跟踪", "timestamp": "t1"}],
         "recovery_mode": True,
         "missing_target_id": 2,
-        "candidate_track_id_floor_exclusive": 2,
+        "excluded_track_ids": [7, 9],
         "frames": [
             {
                 "frame_id": "frame_000020",
@@ -619,6 +723,14 @@ def test_rewrite_memory_uses_sub_model_and_normalizes_memory(tmp_path: Path, mon
             "frame_paths": [str(frame_path)],
             "frame_id": "frame_000001",
             "target_id": 15,
+            "confirmation_reason": "当前 crop 里的黑色上衣和浅色裤子与历史目标一致。",
+            "candidate_checks": [
+                {
+                    "bounding_box_id": 15,
+                    "status": "match",
+                    "evidence": "黑色上衣、浅色裤子和整体体型一致。",
+                }
+            ],
         },
         env_file=tmp_path / ".ENV",
     )
@@ -631,14 +743,18 @@ def test_rewrite_memory_uses_sub_model_and_normalizes_memory(tmp_path: Path, mon
     assert len(calls) == 1
     assert calls[0]["model"] == "sub"
     assert "core、front_view、back_view、distinguish、reference_view" in calls[0]["instruction"]
-    assert "尽量从上到下连续描述尽量多的细节特征" in calls[0]["instruction"]
+    assert "更新规则" in calls[0]["instruction"]
     assert "空字符串" in calls[0]["instruction"]
-    assert "不写位置和动作" in calls[0]["instruction"]
-    assert "当前画面里确实有一个与目标存在相似之处" in calls[0]["instruction"]
+    assert "后续最容易混淆的人" in calls[0]["instruction"]
+    assert "和周边最像的人如何区分" in calls[0]["instruction"]
+    assert "位置、动作、姿态、手势、步态、朝向、bbox、轨迹 ID、确认状态都不能进入任何字段" in calls[0]["instruction"]
     assert "不要沿用旧场景描述" in calls[0]["instruction"]
-    assert "身份特征" in calls[0]["instruction"]
     assert "保留已有 front_view" in calls[0]["instruction"]
     assert "front、back 或 unknown" in calls[0]["instruction"]
+    assert "本轮成功确认理由" in calls[0]["instruction"]
+    assert "本轮候选核验记录(JSON)" in calls[0]["instruction"]
+    assert "黑色上衣和浅色裤子与历史目标一致" in calls[0]["instruction"]
+    assert '"bounding_box_id": 15' in calls[0]["instruction"]
 
 
 def test_turn_payload_builds_processed_tracking_payload(tmp_path: Path) -> None:
@@ -656,6 +772,9 @@ def test_turn_payload_builds_processed_tracking_payload(tmp_path: Path) -> None:
             "decision": "track",
             "text": "已确认继续跟踪 ID 为 15 的目标。",
             "reason": "外观一致",
+            "candidate_checks": [
+                {"bounding_box_id": 15, "status": "match", "evidence": "外观一致"}
+            ],
             "latest_target_crop": str(crop_path),
             "latest_front_target_crop": str(crop_path),
             "target_description": "黑衣服的人",
@@ -665,6 +784,10 @@ def test_turn_payload_builds_processed_tracking_payload(tmp_path: Path) -> None:
                 "frame_paths": [str(frame_path)],
                 "frame_id": "frame_000001",
                 "target_id": 15,
+                "confirmation_reason": "外观一致",
+                "candidate_checks": [
+                    {"bounding_box_id": 15, "status": "match", "evidence": "外观一致"}
+                ],
             },
         }
     )
@@ -677,6 +800,7 @@ def test_turn_payload_builds_processed_tracking_payload(tmp_path: Path) -> None:
     assert payload["robot_response"]["action"] == "track"
     assert payload["skill_state_patch"]["latest_confirmed_frame_path"] == str(frame_path)
     assert payload["rewrite_memory_input"]["frame_paths"] == [str(frame_path)]
+    assert payload["rewrite_memory_input"]["confirmation_reason"] == "外观一致"
 
 
 def test_turn_payload_builds_wait_response_without_pending_question() -> None:
@@ -703,6 +827,63 @@ def test_turn_payload_builds_wait_response_without_pending_question() -> None:
     assert payload["skill_state_patch"]["pending_question"] is None
     assert payload["robot_response"]["action"] == "wait"
     assert "原因：" in payload["robot_response"]["text"]
+
+
+def test_turn_payload_resets_view_specific_reference_crops_for_new_target(tmp_path: Path) -> None:
+    payload_module = _load_turn_payload()
+    runtime = LocalAgentRuntime(tmp_path / "state")
+    runtime.update_skill_cache(
+        "sess_reset",
+        skill_name="tracking",
+        payload={
+            "latest_front_target_crop": "/old/front.jpg",
+            "latest_back_target_crop": "/old/back.jpg",
+        },
+    )
+
+    payload = payload_module.build_tracking_turn_payload(
+        {
+            "behavior": "init",
+            "frame_id": "frame_000020",
+            "target_id": 99,
+            "bounding_box_id": 99,
+            "found": True,
+            "decision": "track",
+            "text": "已确认新目标。",
+            "reason": "direct init",
+            "reset_reference_crops": True,
+            "target_description": "新目标",
+        }
+    )
+
+    runtime.update_skill_cache(
+        "sess_reset",
+        skill_name="tracking",
+        payload=payload["skill_state_patch"],
+    )
+
+    tracking_state = runtime.context("sess_reset").skill_cache["tracking"]
+    assert payload["skill_state_patch"]["latest_front_target_crop"] is None
+    assert payload["skill_state_patch"]["latest_back_target_crop"] is None
+    assert tracking_state["latest_front_target_crop"] is None
+    assert tracking_state["latest_back_target_crop"] is None
+
+
+def test_normalize_select_result_treats_string_none_as_missing_clarification_question(tmp_path: Path) -> None:
+    select = _load_select()
+
+    payload = select.normalize_select_result(
+        {
+            "found": True,
+            "bounding_box_id": 2,
+            "text": "已确认目标。",
+            "reason": "ok",
+            "clarification_question": "None",
+            "decision": "track",
+        }
+    )
+
+    assert payload["clarification_question"] is None
 
 
 def test_run_tracking_track_script_returns_final_payload(tmp_path: Path, monkeypatch) -> None:
@@ -796,11 +977,9 @@ def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypat
         payload={
             "latest_target_id": 15,
             "latest_confirmed_frame_path": str(frame_path),
-            "latest_rewrite_job_id": "rewrite_test_latest",
         },
     )
     memory_file = Path(runtime.context("sess_worker").state_paths["agent_memory_path"])
-    job_dir = tmp_path / "job"
 
     monkeypatch.setattr(
         worker,
@@ -822,10 +1001,6 @@ def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypat
             "run_tracking_rewrite_worker.py",
             "--state-root",
             str(state_root),
-            "--job-id",
-            "rewrite_test_latest",
-            "--job-dir",
-            str(job_dir),
             "--session-id",
             "sess_worker",
             "--memory-file",
@@ -849,11 +1024,6 @@ def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypat
     context = runtime.context("sess_worker")
     assert context.skill_cache["tracking"]["latest_memory"] == _structured_memory("新的 memory")
     assert context.skill_cache["tracking"]["latest_front_target_crop"] == str(crop_path)
-    status_payload = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
-    assert status_payload["status"] == "succeeded"
-    assert status_payload["exit_code"] == 0
-    result_payload = json.loads((job_dir / "result.json").read_text(encoding="utf-8"))
-    assert result_payload["memory"] == _structured_memory("新的 memory")
 
 
 def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> None:
@@ -887,14 +1057,12 @@ def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> Non
         "sess_worker_skip",
         skill_name="tracking",
         payload={
-            "latest_target_id": 15,
-            "latest_confirmed_frame_path": str(frame_path),
+            "latest_target_id": 99,
+            "latest_confirmed_frame_path": str(tmp_path / "other_frame.jpg"),
             "latest_memory": _structured_memory("旧 memory"),
-            "latest_rewrite_job_id": "rewrite_newer_job",
         },
     )
     memory_file = Path(runtime.context("sess_worker_skip").state_paths["agent_memory_path"])
-    job_dir = tmp_path / "job_skip"
 
     monkeypatch.setattr(
         worker,
@@ -908,10 +1076,6 @@ def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> Non
             "run_tracking_rewrite_worker.py",
             "--state-root",
             str(state_root),
-            "--job-id",
-            "rewrite_old_job",
-            "--job-dir",
-            str(job_dir),
             "--session-id",
             "sess_worker_skip",
             "--memory-file",
@@ -934,6 +1098,3 @@ def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> Non
     assert exit_code == 0
     context = runtime.context("sess_worker_skip")
     assert context.skill_cache["tracking"]["latest_memory"] == _structured_memory("旧 memory")
-    status_payload = json.loads((job_dir / "status.json").read_text(encoding="utf-8"))
-    assert status_payload["status"] == "skipped"
-    assert status_payload["reason"] == "superseded"

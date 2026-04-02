@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from skills.tracking.detection_visualization import save_detection_visualization
+from skills.tracking.core.visualization import save_detection_visualization
 
 
 class _Detection:

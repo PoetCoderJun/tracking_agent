@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from skills.tracking.memory_format import (
+from skills.tracking.core.memory import (
     DEFAULT_MEMORY_TEXT,
     normalize_tracking_memory,
+    tracking_memory_flash_prompt_text,
     tracking_memory_display_text,
     tracking_memory_prompt_text,
     tracking_memory_summary,
@@ -65,10 +66,24 @@ def test_tracking_memory_display_text_renders_sections() -> None:
         }
     )
 
-    assert "摘要：短发、黑色上衣、浅色裤子、白鞋。" in display_text
     assert "核心特征：短发、黑色上衣、浅色裤子、白鞋。" in display_text
     assert "正面特征：正面短发，黑色上衣，浅色裤子，白鞋。" in display_text
     assert "区分点：相似人A为深色长裤；目标区别是浅色裤子和白鞋。" in display_text
+    assert "摘要：" not in display_text
+
+
+def test_tracking_memory_flash_prompt_text_omits_summary_line() -> None:
+    prompt_text = tracking_memory_flash_prompt_text(
+        {
+            "core": "短发、黑色上衣、浅色裤子、白鞋。",
+            "front_view": "正面短发，黑色上衣，浅色裤子，白鞋。",
+            "back_view": "",
+            "distinguish": "优先看浅色裤子和白鞋。",
+        }
+    )
+
+    assert "- core: 短发、黑色上衣、浅色裤子、白鞋。" in prompt_text
+    assert "- summary:" not in prompt_text
 
 
 def test_normalize_tracking_memory_clears_distinguish_when_no_confusing_person() -> None:

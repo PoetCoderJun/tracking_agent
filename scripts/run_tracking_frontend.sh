@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VIEWER_DIR="${ROOT_DIR}/skills/tracking/viewer"
+VIEWER_DIR="${ROOT_DIR}/apps/tracking-viewer"
 HOST="127.0.0.1"
 PORT="5173"
 WS_URL=""

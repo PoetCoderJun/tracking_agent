@@ -4,8 +4,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from skills.tracking.output_validator import denormalize_bbox_from_1000_scale
-from skills.tracking.target_crop import save_target_crop
+from skills.tracking.core.validator import denormalize_bbox_from_1000_scale
+from skills.tracking.core.crop import save_target_crop
 
 
 def test_save_target_crop_expands_tiny_bbox_to_minimum_size(tmp_path: Path) -> None:

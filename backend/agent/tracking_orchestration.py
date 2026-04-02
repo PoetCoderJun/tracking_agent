@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional
+
+from backend.agent.runtime import LocalAgentRuntime
+from backend.perception.service import LocalPerceptionService
+from backend.project_paths import resolve_project_path
+from skills.tracking.core.context import build_tracking_context
+from skills.tracking.core.select import (
+    build_rewrite_memory_input,
+    ensure_session_dirs,
+    persist_reference_frame,
+    rewrite_memory_frame_paths,
+    execute_select_tool,
+)
+from skills.tracking.core.crop import save_target_crop
+from skills.tracking.core.payload import build_tracking_turn_payload, ensure_rewrite_paths_exist
+
+ROOT = Path(__file__).resolve().parents[2]
+TRACKING_SKILL_NAME = "tracking"
+
+
+def _as_optional_dict(value: Any, field_name: str) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object or null")
+    return dict(value)
+
+
+def _rewrite_memory_paths(request: Dict[str, Any]) -> tuple[Optional[str], list[str]]:
+    crop_path = None if request.get("crop_path") in (None, "") else str(request["crop_path"]).strip()
+    frame_paths = [
+        str(path).strip()
+        for path in list(request.get("frame_paths") or [])
+        if str(path).strip()
+    ]
+    return crop_path, frame_paths
+
+
+def apply_tracking_rewrite_output(
+    *,
+    runtime: LocalAgentRuntime,
+    session_id: str,
+    rewrite_output: Dict[str, Any],
+) -> None:
+    patch: Dict[str, Any] = {"latest_memory": rewrite_output["memory"]}
+    crop_path = None if rewrite_output.get("crop_path") in (None, "") else str(rewrite_output["crop_path"]).strip()
+    reference_view = str(rewrite_output.get("reference_view", "")).strip()
+    if crop_path and reference_view == "front":
+        patch["latest_front_target_crop"] = crop_path
+    elif crop_path and reference_view == "back":
+        patch["latest_back_target_crop"] = crop_path
+    runtime.update_skill_cache(
+        session_id,
+        skill_name=TRACKING_SKILL_NAME,
+        payload=patch,
+    )
+
+
+def schedule_tracking_memory_rewrite(
+    *,
+    runtime: LocalAgentRuntime,
+    session_id: str,
+    rewrite_memory_input: Dict[str, Any],
+    env_file: Path,
+) -> None:
+    crop_path, frame_paths = _rewrite_memory_paths(rewrite_memory_input)
+    if crop_path in (None, "") or not frame_paths:
+        return
+
+    context = runtime.context(session_id)
+    command = [
+        sys.executable,
+        "backend/agent/tracking_rewrite_worker.py",
+        "--state-root",
+        str(context.state_paths["state_root"]),
+        "--session-id",
+        session_id,
+        "--memory-file",
+        str(context.state_paths["agent_memory_path"]),
+        "--task",
+        str(rewrite_memory_input["task"]),
+        "--crop-path",
+        crop_path,
+        "--frame-id",
+        str(rewrite_memory_input["frame_id"]),
+        "--target-id",
+        str(rewrite_memory_input["target_id"]),
+        "--env-file",
+        str(env_file),
+    ]
+    confirmation_reason = rewrite_memory_input.get("confirmation_reason")
+    if confirmation_reason not in (None, ""):
+        command.extend(["--confirmation-reason", confirmation_reason])
+    candidate_checks = rewrite_memory_input.get("candidate_checks")
+    if isinstance(candidate_checks, list) and candidate_checks:
+        command.extend(["--candidate-checks-json", json.dumps(candidate_checks, ensure_ascii=False)])
+    for frame_path in frame_paths:
+        command.extend(["--frame-path", frame_path])
+
+    try:
+        subprocess.Popen(
+            command,
+            cwd=ROOT,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"failed to launch tracking rewrite worker: {exc}") from exc
+
+
+def schedule_bound_tracking_memory_rewrite(
+    *,
+    runtime: LocalAgentRuntime,
+    session_id: str,
+    tracking_state: Dict[str, Any],
+    frame: Dict[str, Any],
+    detection: Dict[str, Any],
+    env_file: Path,
+    artifacts_root: Path,
+) -> bool:
+    image_path = str(frame.get("image_path", "")).strip()
+    frame_id = str(frame.get("frame_id", "")).strip()
+    if not image_path or not frame_id:
+        return False
+
+    target_id = tracking_state.get("latest_target_id")
+    if target_id in (None, "", []):
+        return False
+
+    bbox = detection.get("bbox")
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        return False
+
+    persisted_current_frame_path = resolve_project_path(image_path)
+    if not persisted_current_frame_path.exists():
+        return False
+
+    session_dirs = ensure_session_dirs(artifacts_root, session_id)
+    crop_path = session_dirs["crops_dir"] / f"{persisted_current_frame_path.stem}_id_{target_id}.jpg"
+    save_target_crop(persisted_current_frame_path, bbox, crop_path)
+    confirmed_frame_path = persist_reference_frame(
+        persisted_current_frame_path,
+        session_dirs["frames_dir"] / f"{persisted_current_frame_path.stem}.jpg",
+    )
+    runtime.update_skill_cache(
+        session_id,
+        skill_name=TRACKING_SKILL_NAME,
+        payload={
+            "latest_target_id": int(target_id),
+            "latest_confirmed_frame_path": str(confirmed_frame_path),
+            "latest_confirmed_bbox": [int(value) for value in bbox],
+            "latest_target_crop": str(crop_path),
+        },
+    )
+    schedule_tracking_memory_rewrite(
+        runtime=runtime,
+        session_id=session_id,
+        rewrite_memory_input=build_rewrite_memory_input(
+            behavior="track",
+            crop_path=crop_path,
+            frame_paths=rewrite_memory_frame_paths(
+                behavior="track",
+                current_frame_path=confirmed_frame_path,
+                latest_confirmed_frame_path=tracking_state.get("latest_confirmed_frame_path"),
+            ),
+            frame_id=frame_id,
+            target_id=int(target_id),
+        ),
+        env_file=env_file,
+    )
+    return True
+
+
+def recover_latest_tracking_rewrite_if_stale(*, runtime: LocalAgentRuntime, session_id: str) -> None:
+    _ = runtime
+    _ = session_id
+    return None
+
+
+def build_tracking_wait_payload(
+    *,
+    runtime: LocalAgentRuntime,
+    session_id: str,
+    device_id: str,
+    reason: str,
+) -> Dict[str, Any]:
+    context = runtime.context(session_id, device_id=device_id)
+    latest_observation = LocalPerceptionService(runtime.state_root).latest_camera_observation(session_id=session_id)
+    latest_frame_id = None if latest_observation is None else (latest_observation.get("payload") or {}).get("frame_id")
+    tracking_state = dict((context.skill_cache.get(TRACKING_SKILL_NAME) or {}))
+    target_id = tracking_state.get("latest_target_id")
+    text = "当前不确定，保持等待。"
+    return {
+        "status": "processed",
+        "skill_name": TRACKING_SKILL_NAME,
+        "session_result": {
+            "behavior": "track",
+            "frame_id": latest_frame_id,
+            "target_id": target_id,
+            "bounding_box_id": target_id,
+            "found": False,
+            "decision": "wait",
+            "text": text,
+            "reason": reason,
+        },
+        "latest_result_patch": None,
+        "skill_state_patch": {"pending_question": None},
+        "user_preferences_patch": None,
+        "environment_map_patch": None,
+        "perception_cache_patch": None,
+        "robot_response": {"action": "wait", "text": text},
+        "tool": "track",
+        "tool_output": {"behavior": "track", "decision": "wait", "text": text, "reason": reason},
+        "rewrite_output": None,
+        "rewrite_memory_input": None,
+        "reason": reason,
+    }
+
+
+def process_tracking_request_direct(
+    *,
+    runtime: LocalAgentRuntime,
+    session_id: str,
+    device_id: str,
+    text: str,
+    request_id: str,
+    env_file: Path,
+    artifacts_root: Path,
+    excluded_track_ids: list[int] | None = None,
+    apply_processed_payload: Callable[..., Dict[str, Any]],
+) -> Dict[str, Any]:
+    runtime.append_chat_request(
+        session_id=session_id,
+        device_id=device_id,
+        text=text,
+        request_id=request_id,
+    )
+    context = runtime.context(session_id, device_id=device_id)
+    tracking_context = build_tracking_context(
+        context,
+        request_id=request_id,
+        excluded_track_ids=excluded_track_ids,
+    )
+    try:
+        payload = ensure_rewrite_paths_exist(
+            build_tracking_turn_payload(
+                execute_select_tool(
+                    tracking_context=tracking_context,
+                    behavior="track",
+                    arguments={"user_text": str(text)},
+                    env_file=env_file,
+                    artifacts_root=artifacts_root,
+                )
+            )
+        )
+    except Exception as exc:
+        return apply_processed_payload(
+            session_id=session_id,
+            pi_payload=build_tracking_wait_payload(
+                runtime=runtime,
+                session_id=session_id,
+                device_id=device_id,
+                reason=f"Direct tracking turn failed.\n{exc}",
+            ),
+            env_file=env_file,
+        )
+    return apply_processed_payload(session_id=session_id, pi_payload=payload, env_file=env_file)
+
+
+def process_tracking_init_direct(
+    *,
+    runtime: LocalAgentRuntime,
+    session_id: str,
+    device_id: str,
+    text: str,
+    request_id: str,
+    env_file: Path,
+    artifacts_root: Path,
+    apply_processed_payload: Callable[..., Dict[str, Any]],
+) -> Dict[str, Any]:
+    context = runtime.context(session_id, device_id=device_id)
+    tracking_context = build_tracking_context(
+        context,
+        request_id=request_id,
+    )
+    payload = ensure_rewrite_paths_exist(
+        build_tracking_turn_payload(
+            execute_select_tool(
+                tracking_context=tracking_context,
+                behavior="init",
+                arguments={"target_description": str(text)},
+                env_file=env_file,
+                artifacts_root=artifacts_root,
+            )
+        )
+    )
+    return apply_processed_payload(session_id=session_id, pi_payload=payload, env_file=env_file)

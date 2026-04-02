@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+_SESSION_STORE_LOCKS: dict[str, threading.RLock] = {}
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -58,6 +60,22 @@ def _normalized_session_result(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalized_section(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): _copy_jsonish(item) for key, item in value.items()}
+
+
+def _merge_nested(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_nested(dict(merged[key]), value)
+            continue
+        merged[key] = _copy_jsonish(value)
+    return merged
+
+
 @dataclass(frozen=True)
 class BackendDetection:
     track_id: int
@@ -84,6 +102,10 @@ class BackendSession:
     result_history: List[Dict[str, Any]]
     conversation_history: List[Dict[str, str]]
     recent_frames: List[BackendFrame]
+    user_preferences: Dict[str, Any]
+    environment_map: Dict[str, Any]
+    perception_cache: Dict[str, Any]
+    skill_cache: Dict[str, Any]
     created_at: str
     updated_at: str
 
@@ -94,8 +116,9 @@ class BackendStore:
             raise ValueError("frame_buffer_size must be positive")
         self._state_root = state_root
         self._frame_buffer_size = frame_buffer_size
-        self._lock = threading.RLock()
         self._state_root.mkdir(parents=True, exist_ok=True)
+        registry_key = str(self._state_root.resolve())
+        self._lock = _SESSION_STORE_LOCKS.setdefault(registry_key, threading.RLock())
 
     def session_dir(self, session_id: str) -> Path:
         return self._state_root / "sessions" / session_id
@@ -139,6 +162,10 @@ class BackendStore:
                     for entry in payload.get("conversation_history", [])
                 ],
                 recent_frames=recent_frames,
+                user_preferences=_normalized_section(payload.get("user_preferences")),
+                environment_map=_normalized_section(payload.get("environment_map")),
+                perception_cache=_normalized_section(payload.get("perception_cache")),
+                skill_cache=_normalized_section(payload.get("skill_cache")),
                 created_at=str(payload["created_at"]),
                 updated_at=str(payload["updated_at"]),
             )
@@ -163,6 +190,10 @@ class BackendStore:
                 result_history=[],
                 conversation_history=[],
                 recent_frames=[],
+                user_preferences={},
+                environment_map={},
+                perception_cache={},
+                skill_cache={},
                 created_at=now,
                 updated_at=now,
             )
@@ -188,6 +219,10 @@ class BackendStore:
                 result_history=[],
                 conversation_history=[],
                 recent_frames=[],
+                user_preferences={},
+                environment_map={},
+                perception_cache={},
+                skill_cache={},
                 created_at=now,
                 updated_at=now,
             )
@@ -287,6 +322,10 @@ class BackendStore:
                     else list(session.conversation_history)
                 ),
                 recent_frames=updated_frames,
+                user_preferences=session.user_preferences,
+                environment_map=session.environment_map,
+                perception_cache=session.perception_cache,
+                skill_cache=session.skill_cache,
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
@@ -320,6 +359,10 @@ class BackendStore:
                     text=cleaned_text,
                 ),
                 recent_frames=session.recent_frames,
+                user_preferences=session.user_preferences,
+                environment_map=session.environment_map,
+                perception_cache=session.perception_cache,
+                skill_cache=session.skill_cache,
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
@@ -390,6 +433,10 @@ class BackendStore:
                 result_history=result_history,
                 conversation_history=conversation_history,
                 recent_frames=session.recent_frames,
+                user_preferences=session.user_preferences,
+                environment_map=session.environment_map,
+                perception_cache=session.perception_cache,
+                skill_cache=session.skill_cache,
                 created_at=session.created_at,
                 updated_at=updated_at,
             )
@@ -451,11 +498,109 @@ class BackendStore:
                 result_history=updated_history,
                 conversation_history=session.conversation_history,
                 recent_frames=session.recent_frames,
+                user_preferences=session.user_preferences,
+                environment_map=session.environment_map,
+                perception_cache=session.perception_cache,
+                skill_cache=session.skill_cache,
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
             self._write_session(updated)
             return updated
+
+    def patch_agent_state(
+        self,
+        session_id: str,
+        *,
+        device_id: str = "",
+        user_preferences: Optional[Dict[str, Any]] = None,
+        environment_map: Optional[Dict[str, Any]] = None,
+        perception_cache: Optional[Dict[str, Any]] = None,
+        skill_cache: Optional[Dict[str, Any]] = None,
+    ) -> BackendSession:
+        with self._lock:
+            session = self.load_or_create_session(session_id=session_id, device_id=device_id)
+            updated = BackendSession(
+                session_id=session.session_id,
+                device_id=session.device_id or device_id,
+                latest_request_id=session.latest_request_id,
+                latest_request_function=session.latest_request_function,
+                latest_result=session.latest_result,
+                result_history=session.result_history,
+                conversation_history=session.conversation_history,
+                recent_frames=session.recent_frames,
+                user_preferences=(
+                    session.user_preferences
+                    if user_preferences is None
+                    else _merge_nested(session.user_preferences, _normalized_section(user_preferences))
+                ),
+                environment_map=(
+                    session.environment_map
+                    if environment_map is None
+                    else _merge_nested(session.environment_map, _normalized_section(environment_map))
+                ),
+                perception_cache=(
+                    session.perception_cache
+                    if perception_cache is None
+                    else _merge_nested(session.perception_cache, _normalized_section(perception_cache))
+                ),
+                skill_cache=(
+                    session.skill_cache
+                    if skill_cache is None
+                    else _merge_nested(session.skill_cache, _normalized_section(skill_cache))
+                ),
+                created_at=session.created_at,
+                updated_at=_utc_now(),
+            )
+            self._write_session(updated)
+            return updated
+
+    def replace_agent_state(
+        self,
+        session_id: str,
+        *,
+        device_id: str = "",
+        user_preferences: Optional[Dict[str, Any]] = None,
+        environment_map: Optional[Dict[str, Any]] = None,
+        perception_cache: Optional[Dict[str, Any]] = None,
+        skill_cache: Optional[Dict[str, Any]] = None,
+    ) -> BackendSession:
+        with self._lock:
+            session = self.load_or_create_session(session_id=session_id, device_id=device_id)
+            updated = BackendSession(
+                session_id=session.session_id,
+                device_id=session.device_id or device_id,
+                latest_request_id=session.latest_request_id,
+                latest_request_function=session.latest_request_function,
+                latest_result=session.latest_result,
+                result_history=session.result_history,
+                conversation_history=session.conversation_history,
+                recent_frames=session.recent_frames,
+                user_preferences=_normalized_section(
+                    session.user_preferences if user_preferences is None else user_preferences
+                ),
+                environment_map=_normalized_section(
+                    session.environment_map if environment_map is None else environment_map
+                ),
+                perception_cache=_normalized_section(
+                    session.perception_cache if perception_cache is None else perception_cache
+                ),
+                skill_cache=_normalized_section(session.skill_cache if skill_cache is None else skill_cache),
+                created_at=session.created_at,
+                updated_at=_utc_now(),
+            )
+            self._write_session(updated)
+            return updated
+
+    def reset_agent_state(self, session_id: str, *, device_id: str = "") -> BackendSession:
+        return self.replace_agent_state(
+            session_id,
+            device_id=device_id,
+            user_preferences={},
+            environment_map={},
+            perception_cache={},
+            skill_cache={},
+        )
 
     def reset_session_context(self, session_id: str) -> BackendSession:
         with self._lock:
@@ -481,6 +626,10 @@ class BackendStore:
                 result_history=[],
                 conversation_history=session.conversation_history,
                 recent_frames=session.recent_frames,
+                user_preferences=session.user_preferences,
+                environment_map=session.environment_map,
+                perception_cache=session.perception_cache,
+                skill_cache=session.skill_cache,
                 created_at=session.created_at,
                 updated_at=updated_at,
             )
@@ -561,22 +710,6 @@ class BackendStore:
                 continue
             if frame_path.parent == frames_dir.resolve():
                 pinned_paths.add(frame_path)
-
-        memory_path = self.session_dir(session.session_id) / "agent_memory.json"
-        if memory_path.exists():
-            try:
-                memory_payload = json.loads(memory_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                memory_payload = {}
-            tracking_state = dict(((memory_payload.get("skill_cache") or {}).get("tracking") or {}))
-            confirmed_frame_path = tracking_state.get("latest_confirmed_frame_path")
-            if confirmed_frame_path not in (None, ""):
-                try:
-                    confirmed_path = Path(str(confirmed_frame_path)).resolve()
-                except OSError:
-                    confirmed_path = None
-                if confirmed_path is not None and confirmed_path.parent == frames_dir.resolve():
-                    pinned_paths.add(confirmed_path)
 
         for candidate in frames_dir.iterdir():
             if not candidate.is_file():

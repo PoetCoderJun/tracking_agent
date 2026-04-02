@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import sys
-import threading
 import time
 from pathlib import Path
 from typing import Any, Dict
@@ -14,44 +12,27 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.config import parse_dotenv
+from backend.agent.tracking_bootstrap import float_env_value, load_tracking_env_values
 from backend.agent.runner import (
     PiAgentRunner,
-    _recover_latest_tracking_rewrite_if_stale,
-    _schedule_tracking_memory_rewrite,
+)
+from backend.agent.tracking_orchestration import (
+    schedule_bound_tracking_memory_rewrite as _schedule_bound_tracking_memory_rewrite,
 )
 from backend.perception.service import LocalPerceptionService
 from backend.perception.stream import generate_request_id
 from backend.persistence import resolve_session_id
 from backend.project_paths import resolve_project_path
-from skills.tracking.scripts.select_target import (
-    _persist_reference_frame,
-    build_rewrite_memory_input,
-    ensure_session_dirs,
-    rewrite_memory_frame_paths,
-)
-from skills.tracking.target_crop import save_target_crop
-from skills.tracking.viewer_stream import TrackingViewerStreamServer
+from skills.tracking.core.context import tracking_state_snapshot
 
 TRACKING_SKILL_NAME = "tracking"
-TRACKING_RUNTIME_NAMESPACE = "tracking_runtime"
-
-
-def _float_env_value(values: Dict[str, str], key: str, default: float) -> float:
-    raw = str(values.get(key, "")).strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
 
 
 def parse_args() -> argparse.Namespace:
     bootstrap_parser = argparse.ArgumentParser(add_help=False)
     bootstrap_parser.add_argument("--env-file", default=".ENV")
     bootstrap_args, _ = bootstrap_parser.parse_known_args()
-    env_values = parse_dotenv(resolve_project_path(bootstrap_args.env_file))
+    env_values = load_tracking_env_values(bootstrap_args.env_file)
 
     parser = argparse.ArgumentParser(
         description=(
@@ -74,41 +55,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--interval-seconds",
         type=float,
-        default=_float_env_value(env_values, "QUERY_INTERVAL_SECONDS", 3.0),
+        default=float_env_value(env_values, "QUERY_INTERVAL_SECONDS", 3.0),
     )
     parser.add_argument(
         "--recovery-interval-seconds",
         type=float,
-        default=_float_env_value(env_values, "TRACKING_RECOVERY_INTERVAL_SECONDS", 1.0),
+        default=float_env_value(env_values, "TRACKING_RECOVERY_INTERVAL_SECONDS", 1.0),
     )
     parser.add_argument(
         "--idle-sleep-seconds",
         type=float,
-        default=_float_env_value(env_values, "TRACKING_IDLE_SLEEP_SECONDS", 3.0),
+        default=float_env_value(env_values, "TRACKING_IDLE_SLEEP_SECONDS", 3.0),
     )
     parser.add_argument(
         "--presence-check-seconds",
         type=float,
-        default=_float_env_value(env_values, "TRACKING_PRESENCE_CHECK_SECONDS", 1.0),
+        default=float_env_value(env_values, "TRACKING_PRESENCE_CHECK_SECONDS", 1.0),
     )
     parser.add_argument(
         "--rewrite-interval-seconds",
         type=float,
-        default=_float_env_value(env_values, "TRACKING_MEMORY_REWRITE_INTERVAL_SECONDS", 2.0),
+        default=float_env_value(env_values, "TRACKING_MEMORY_REWRITE_INTERVAL_SECONDS", 2.0),
     )
     parser.add_argument("--max-turns", type=int, default=None)
-    parser.add_argument("--viewer-host", default="127.0.0.1")
-    parser.add_argument("--viewer-port", type=int, default=8765)
-    parser.add_argument("--viewer-poll-interval", type=float, default=1.0)
     parser.add_argument(
         "--stop-file",
         default=None,
         help="Optional file path. When this file exists, the loop exits after the current turn.",
-    )
-    parser.add_argument(
-        "--no-viewer-stream",
-        action="store_true",
-        help="Disable the websocket stream normally coupled to the tracking runtime loop.",
     )
     return parser.parse_args()
 
@@ -123,10 +96,7 @@ def _runner_from_args(args: argparse.Namespace) -> PiAgentRunner:
 
 
 def _tracking_state(context: Any) -> Dict[str, Any]:
-    state = dict((context.skill_cache.get(TRACKING_SKILL_NAME) or {}))
-    if "latest_target_id" not in state and state.get("target_id") not in (None, ""):
-        state["latest_target_id"] = state.get("target_id")
-    return state
+    return tracking_state_snapshot((context.skill_cache.get(TRACKING_SKILL_NAME) or {}))
 
 
 def _has_active_target(tracking_state: Dict[str, Any]) -> bool:
@@ -173,10 +143,6 @@ def _latest_target_id(tracking_state: Dict[str, Any]) -> int | None:
     return int(target_id)
 
 
-def _tracking_runtime_state(context: Any) -> Dict[str, Any]:
-    return dict((context.skill_cache.get(TRACKING_RUNTIME_NAMESPACE) or {}))
-
-
 def _track_id_present_in_frame(frame: Dict[str, Any], target_id: int | None) -> bool:
     if target_id is None:
         return False
@@ -201,18 +167,21 @@ def _bound_detection(frame: Dict[str, Any], target_id: int | None) -> Dict[str, 
     return None
 
 
-def _eligible_recovery_track_ids(frame: Dict[str, Any], target_id: int | None) -> list[int]:
-    if target_id is None:
-        return []
-    eligible: list[int] = []
+def _frame_track_ids(frame: Dict[str, Any]) -> set[int]:
+    track_ids: set[int] = set()
     for detection in list(frame.get("detections") or []):
         try:
-            candidate_id = int(detection.get("track_id"))
+            track_ids.add(int(detection.get("track_id")))
         except (TypeError, ValueError):
             continue
-        if candidate_id > int(target_id):
-            eligible.append(candidate_id)
-    return eligible
+    return track_ids
+
+
+def _non_target_track_ids(frame: Dict[str, Any], target_id: int | None) -> set[int]:
+    track_ids = _frame_track_ids(frame)
+    if target_id is not None:
+        track_ids.discard(int(target_id))
+    return track_ids
 
 
 def _next_dispatch_deadline(
@@ -236,18 +205,11 @@ def _stop_requested(stop_file: str | None) -> bool:
     return resolve_project_path(stop_file).exists()
 
 
-def _rewrite_in_progress(runtime_state: Dict[str, Any]) -> bool:
-    return str(runtime_state.get("latest_rewrite_status", "")).strip() in {"queued", "running"}
-
-
 def _should_schedule_rewrite(
     *,
     next_rewrite_at: float | None,
     now: float,
-    runtime_state: Dict[str, Any],
 ) -> bool:
-    if _rewrite_in_progress(runtime_state):
-        return False
     if next_rewrite_at is None:
         return True
     return now >= next_rewrite_at
@@ -257,8 +219,8 @@ def _stream_completed(stream_status: Dict[str, Any]) -> bool:
     return str(stream_status.get("status", "")).strip() == "completed"
 
 
-def _should_request_recovery_for_frame(*, latest_frame_id: str | None, last_recovery_frame_id: str | None) -> bool:
-    return latest_frame_id not in (None, "") and latest_frame_id != last_recovery_frame_id
+def _should_request_track_for_frame(*, latest_frame_id: str | None, last_track_frame_id: str | None) -> bool:
+    return latest_frame_id not in (None, "") and latest_frame_id != last_track_frame_id
 
 
 def _schedule_bound_memory_rewrite(
@@ -271,116 +233,15 @@ def _schedule_bound_memory_rewrite(
     env_file: Path,
     artifacts_root: Path,
 ) -> bool:
-    image_path = str(frame.get("image_path", "")).strip()
-    frame_id = str(frame.get("frame_id", "")).strip()
-    if not image_path or not frame_id:
-        return False
-    target_id = _latest_target_id(tracking_state)
-    if target_id is None:
-        return False
-    bbox = detection.get("bbox")
-    if not isinstance(bbox, list) or len(bbox) != 4:
-        return False
-
-    session_dirs = ensure_session_dirs(artifacts_root, session_id)
-    persisted_current_frame_path = resolve_project_path(image_path)
-    if not persisted_current_frame_path.exists():
-        return False
-
-    crop_path = session_dirs["crops_dir"] / f"{Path(image_path).stem}_id_{target_id}.jpg"
-    save_target_crop(persisted_current_frame_path, bbox, crop_path)
-    confirmed_frame_path = _persist_reference_frame(
-        persisted_current_frame_path,
-        session_dirs["frames_dir"] / f"{Path(image_path).stem}.jpg",
-    )
-    runner.runtime.update_skill_cache(
-        session_id,
-        skill_name=TRACKING_SKILL_NAME,
-        payload={
-            "latest_target_id": target_id,
-            "latest_confirmed_frame_path": str(confirmed_frame_path),
-            "latest_confirmed_bbox": [int(value) for value in bbox],
-            "latest_target_crop": str(crop_path),
-        },
-    )
-    rewrite_memory_input = build_rewrite_memory_input(
-        behavior="track",
-        crop_path=crop_path,
-        frame_paths=rewrite_memory_frame_paths(
-            behavior="track",
-            current_frame_path=confirmed_frame_path,
-            latest_confirmed_frame_path=tracking_state.get("latest_confirmed_frame_path"),
-        ),
-        frame_id=frame_id,
-        target_id=target_id,
-    )
-    _schedule_tracking_memory_rewrite(
+    return _schedule_bound_tracking_memory_rewrite(
         runtime=runner.runtime,
         session_id=session_id,
-        rewrite_memory_input=rewrite_memory_input,
+        tracking_state=tracking_state,
+        frame=frame,
+        detection=detection,
         env_file=env_file,
+        artifacts_root=artifacts_root,
     )
-    return True
-
-
-def _start_viewer_stream(args: argparse.Namespace) -> threading.Thread | None:
-    viewer_host = str(args.viewer_host or "").strip()
-    if args.no_viewer_stream or not viewer_host:
-        return None
-
-    print(
-        json.dumps(
-            {
-                "status": "viewer_stream_starting",
-                "url": f"ws://{viewer_host}:{args.viewer_port}",
-            },
-            ensure_ascii=True,
-        ),
-        flush=True,
-    )
-
-    def _serve() -> None:
-        server = TrackingViewerStreamServer(
-            state_root=resolve_project_path(args.state_root),
-            session_id=args.session_id,
-            host=viewer_host,
-            port=args.viewer_port,
-            poll_interval=args.viewer_poll_interval,
-        )
-        try:
-            asyncio.run(server.serve_forever())
-        except OSError as exc:
-            print(
-                json.dumps(
-                    {
-                        "status": "viewer_stream_skipped",
-                        "url": f"ws://{viewer_host}:{args.viewer_port}",
-                        "reason": str(exc),
-                    },
-                    ensure_ascii=True,
-                ),
-                flush=True,
-            )
-        except Exception as exc:  # pragma: no cover
-            print(
-                json.dumps(
-                    {
-                        "status": "viewer_stream_stopped",
-                        "url": f"ws://{viewer_host}:{args.viewer_port}",
-                        "reason": str(exc),
-                    },
-                    ensure_ascii=True,
-                ),
-                flush=True,
-            )
-
-    thread = threading.Thread(
-        target=_serve,
-        name="tracking-viewer-stream",
-        daemon=True,
-    )
-    thread.start()
-    return thread
 
 
 def main() -> int:
@@ -397,10 +258,6 @@ def main() -> int:
         raise ValueError("--rewrite-interval-seconds must be positive")
     if args.max_turns is not None and args.max_turns <= 0:
         raise ValueError("--max-turns must be positive when provided")
-    if args.viewer_port <= 0:
-        raise ValueError("--viewer-port must be positive")
-    if args.viewer_poll_interval <= 0:
-        raise ValueError("--viewer-poll-interval must be positive")
 
     runner = _runner_from_args(args)
     env_file = resolve_project_path(args.env_file)
@@ -408,10 +265,10 @@ def main() -> int:
     dispatched_turns = 0
     next_dispatch_at: float | None = None
     next_rewrite_at: float | None = None
-    recovery_missing_target_id: int | None = None
+    missing_target_id_for_track: int | None = None
+    excluded_track_ids: set[int] = set()
     last_bound_signature: tuple[str | None, int | None] | None = None
-    last_recovery_frame_id: str | None = None
-    _start_viewer_stream(args)
+    last_track_frame_id: str | None = None
 
     while True:
         if _stop_requested(args.stop_file):
@@ -442,9 +299,10 @@ def main() -> int:
         if not _has_active_target(tracking_state):
             next_dispatch_at = None
             next_rewrite_at = None
-            recovery_missing_target_id = None
+            missing_target_id_for_track = None
+            excluded_track_ids.clear()
             last_bound_signature = None
-            last_recovery_frame_id = None
+            last_track_frame_id = None
             print(
                 json.dumps(
                     {
@@ -462,9 +320,10 @@ def main() -> int:
         if _waiting_for_user(tracking_state):
             next_dispatch_at = None
             next_rewrite_at = None
-            recovery_missing_target_id = None
+            missing_target_id_for_track = None
+            excluded_track_ids.clear()
             last_bound_signature = None
-            last_recovery_frame_id = None
+            last_track_frame_id = None
             print(
                 json.dumps(
                     {
@@ -484,8 +343,9 @@ def main() -> int:
         bound_detection = _bound_detection(latest_frame, current_target_id)
         if bound_detection is not None:
             next_dispatch_at = None
-            recovery_missing_target_id = None
-            last_recovery_frame_id = None
+            missing_target_id_for_track = None
+            last_track_frame_id = None
+            excluded_track_ids.update(_non_target_track_ids(latest_frame, current_target_id))
             current_signature = _bound_status_signature(latest_frame, current_target_id)
             if current_signature != last_bound_signature:
                 print(
@@ -515,16 +375,10 @@ def main() -> int:
                     flush=True,
                 )
                 return 0
-            _recover_latest_tracking_rewrite_if_stale(
-                runtime=runner.runtime,
-                session_id=session_id,
-            )
-            runtime_state = _tracking_runtime_state(runner.runtime.context(session_id, device_id=args.device_id))
             now = time.monotonic()
             if _should_schedule_rewrite(
                 next_rewrite_at=next_rewrite_at,
                 now=now,
-                runtime_state=runtime_state,
             ):
                 if _schedule_bound_memory_rewrite(
                     runner=runner,
@@ -544,7 +398,7 @@ def main() -> int:
         next_rewrite_at = None
         latest_frame_id = str(latest_frame.get("frame_id", "")).strip() or None
         stream_completed = _stream_completed(stream_status)
-        if stream_completed and latest_frame_id is not None and latest_frame_id == last_recovery_frame_id:
+        if stream_completed and latest_frame_id is not None and latest_frame_id == last_track_frame_id:
             print(
                 json.dumps(
                     {
@@ -558,10 +412,10 @@ def main() -> int:
                 flush=True,
             )
             return 0
-        if recovery_missing_target_id != current_target_id:
-            recovery_missing_target_id = current_target_id
+        if missing_target_id_for_track != current_target_id:
+            missing_target_id_for_track = current_target_id
             next_dispatch_at = now
-            last_recovery_frame_id = None
+            last_track_frame_id = None
         elif next_dispatch_at is None:
             next_dispatch_at = now
         if now < next_dispatch_at:
@@ -570,9 +424,9 @@ def main() -> int:
         if latest_frame_id is None:
             time.sleep(min(args.recovery_interval_seconds, args.presence_check_seconds))
             continue
-        if not _should_request_recovery_for_frame(
+        if not _should_request_track_for_frame(
             latest_frame_id=latest_frame_id,
-            last_recovery_frame_id=last_recovery_frame_id,
+            last_track_frame_id=last_track_frame_id,
         ):
             if stream_completed:
                 print(
@@ -599,10 +453,14 @@ def main() -> int:
             request_id=request_id,
             env_file=env_file,
             artifacts_root=artifacts_root,
-            recovery_mode=True,
-            missing_target_id=current_target_id,
-            candidate_track_id_floor_exclusive=current_target_id,
+            excluded_track_ids=sorted(excluded_track_ids),
         )
+        session_result = dict(payload.get("session_result") or {})
+        selected_target_id = session_result.get("target_id")
+        if selected_target_id not in (None, "", []):
+            excluded_track_ids.update(_non_target_track_ids(latest_frame, int(selected_target_id)))
+        else:
+            excluded_track_ids.update(_frame_track_ids(latest_frame))
         print(
             json.dumps(
                 {
@@ -619,7 +477,7 @@ def main() -> int:
         )
 
         dispatched_turns += 1
-        last_recovery_frame_id = latest_frame_id
+        last_track_frame_id = latest_frame_id
         if args.max_turns is not None and dispatched_turns >= args.max_turns:
             return 0
         next_dispatch_at = _next_dispatch_deadline(

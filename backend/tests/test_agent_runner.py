@@ -6,6 +6,7 @@ import json
 from PIL import Image
 
 import backend.agent.runner as runner_module
+import backend.agent.tracking_orchestration as tracking_orchestration_module
 from backend.agent import PiAgentRunner
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 
@@ -162,7 +163,8 @@ def test_runner_schedules_tracking_memory_rewrite_from_payload(monkeypatch, tmp_
     scheduled: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        "backend.agent.runner._schedule_tracking_memory_rewrite",
+        tracking_orchestration_module,
+        "schedule_tracking_memory_rewrite",
         lambda **kwargs: scheduled.append(kwargs),
     )
     monkeypatch.setattr(
@@ -195,6 +197,10 @@ def test_runner_schedules_tracking_memory_rewrite_from_payload(monkeypatch, tmp_
                 "frame_paths": [str(frame_path)],
                 "frame_id": "frame_000001",
                 "target_id": 12,
+                "confirmation_reason": "黑衣服和浅色裤子一致。",
+                "candidate_checks": [
+                    {"bounding_box_id": 12, "status": "match", "evidence": "核心特征一致"}
+                ],
             },
             "reason": None,
         },
@@ -213,65 +219,7 @@ def test_runner_schedules_tracking_memory_rewrite_from_payload(monkeypatch, tmp_
     assert len(scheduled) == 1
     assert scheduled[0]["session_id"] == "sess_async"
     assert scheduled[0]["rewrite_memory_input"]["frame_id"] == "frame_000001"
-
-
-def test_recover_latest_tracking_rewrite_if_stale_marks_dead_worker_failed(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    runner = PiAgentRunner(state_root=tmp_path / "state")
-    job_dir = tmp_path / "state" / "sessions" / "sess_stale" / "tracking_rewrite_jobs" / "rewrite_dead"
-    status_path = job_dir / "status.json"
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    status_path.write_text(
-        json.dumps(
-            {
-                "job_id": "rewrite_dead",
-                "session_id": "sess_stale",
-                "status": "running",
-                "task": "update",
-                "frame_id": "frame_000001",
-                "target_id": 12,
-                "crop_path": "/tmp/crop.jpg",
-                "frame_paths": ["/tmp/frame.jpg"],
-                "requested_at": "t0",
-                "started_at": "t1",
-                "completed_at": None,
-                "stdout_path": str(job_dir / "stdout.log"),
-                "stderr_path": str(job_dir / "stderr.log"),
-                "pid": 999999,
-            },
-            ensure_ascii=True,
-        ),
-        encoding="utf-8",
-    )
-    runner.runtime.update_skill_cache(
-        "sess_stale",
-        skill_name="tracking_runtime",
-        payload={
-            "latest_rewrite_job_id": "rewrite_dead",
-            "latest_rewrite_status": "running",
-            "latest_rewrite_task": "update",
-            "latest_rewrite_status_path": str(status_path),
-            "latest_rewrite_log_dir": str(job_dir),
-            "latest_rewrite_pid": 999999,
-            "latest_rewrite_requested_at": "t0",
-        },
-    )
-
-    monkeypatch.setattr(runner_module, "_tracking_rewrite_pid_alive", lambda pid: False)
-
-    runner_module._recover_latest_tracking_rewrite_if_stale(
-        runtime=runner.runtime,
-        session_id="sess_stale",
-    )
-
-    updated = json.loads(status_path.read_text(encoding="utf-8"))
-    assert updated["status"] == "failed"
-    context = runner.runtime.context("sess_stale")
-    runtime_state = context.skill_cache["tracking_runtime"]
-    assert runtime_state["latest_rewrite_status"] == "failed"
-    assert runtime_state["latest_rewrite_reason"] == "worker_missing"
+    assert scheduled[0]["rewrite_memory_input"]["confirmation_reason"] == "黑衣服和浅色裤子一致。"
 
 
 def test_runner_schedules_init_memory_rewrite_asynchronously(monkeypatch, tmp_path: Path) -> None:
@@ -288,7 +236,8 @@ def test_runner_schedules_init_memory_rewrite_asynchronously(monkeypatch, tmp_pa
 
     scheduled: list[dict[str, object]] = []
     monkeypatch.setattr(
-        "backend.agent.runner._schedule_tracking_memory_rewrite",
+        tracking_orchestration_module,
+        "schedule_tracking_memory_rewrite",
         lambda **kwargs: scheduled.append(kwargs),
     )
     monkeypatch.setattr(
@@ -355,16 +304,22 @@ def test_runner_processes_direct_tracking_request(monkeypatch, tmp_path: Path) -
         detections=[RobotDetection(track_id=12, bbox=[10, 20, 30, 40], score=0.95)],
     )
 
-    class Completed:
-        returncode = 0
-        stderr = ""
-        stdout = (
-            '{"status":"processed","skill_name":"tracking","session_result":{"behavior":"track","frame_id":"frame_000001","target_id":12,"bounding_box_id":12,"found":true,"text":"已确认继续跟踪 ID 12。","reason":"deterministic rebind"},"latest_result_patch":null,"skill_state_patch":{"latest_target_id":12,"latest_confirmed_frame_path":"'
-            + str(frame_path)
-            + '","latest_confirmed_bbox":[10,20,30,40]},"user_preferences_patch":null,"environment_map_patch":null,"perception_cache_patch":null,"robot_response":{"action":"track","target_id":12,"text":"已确认继续跟踪 ID 12。"},"tool":"track","tool_output":{"behavior":"track","decision":"track"},"rewrite_output":null,"rewrite_memory_input":null,"reason":null}'
-        )
-
-    monkeypatch.setattr(runner_module.subprocess, "run", lambda *args, **kwargs: Completed())
+    monkeypatch.setattr(
+        tracking_orchestration_module,
+        "execute_select_tool",
+        lambda **_: {
+            "behavior": "track",
+            "frame_id": "frame_000001",
+            "target_id": 12,
+            "bounding_box_id": 12,
+            "found": True,
+            "decision": "track",
+            "text": "已确认继续跟踪 ID 12。",
+            "reason": "deterministic rebind",
+            "confirmed_frame_path": str(frame_path),
+            "confirmed_bbox": [10, 20, 30, 40],
+        },
+    )
 
     result = runner.process_tracking_request_direct(
         session_id="sess_direct",
@@ -395,16 +350,22 @@ def test_runner_process_chat_request_bypasses_pi_for_tracking_init(monkeypatch, 
         detections=[RobotDetection(track_id=12, bbox=[10, 20, 30, 40], score=0.95)],
     )
 
-    class Completed:
-        returncode = 0
-        stderr = ""
-        stdout = (
-            '{"status":"processed","skill_name":"tracking","session_result":{"behavior":"init","frame_id":"frame_000001","target_id":12,"bounding_box_id":12,"found":true,"text":"已确认目标。","reason":"direct init"},"latest_result_patch":null,"skill_state_patch":{"latest_target_id":12,"latest_confirmed_frame_path":"'
-            + str(frame_path)
-            + '","latest_confirmed_bbox":[10,20,30,40]},"user_preferences_patch":null,"environment_map_patch":null,"perception_cache_patch":null,"robot_response":{"action":"track","target_id":12,"text":"已确认目标。"},"tool":"init","tool_output":{"behavior":"init","decision":"track"},"rewrite_output":null,"rewrite_memory_input":null,"reason":null}'
-        )
-
-    monkeypatch.setattr(runner_module.subprocess, "run", lambda *args, **kwargs: Completed())
+    monkeypatch.setattr(
+        tracking_orchestration_module,
+        "execute_select_tool",
+        lambda **_: {
+            "behavior": "init",
+            "frame_id": "frame_000001",
+            "target_id": 12,
+            "bounding_box_id": 12,
+            "found": True,
+            "decision": "track",
+            "text": "已确认目标。",
+            "reason": "direct init",
+            "confirmed_frame_path": str(frame_path),
+            "confirmed_bbox": [10, 20, 30, 40],
+        },
+    )
     monkeypatch.setattr(
         PiAgentRunner,
         "process_session",
@@ -439,14 +400,20 @@ def test_runner_direct_tracking_returns_wait_without_pi_fallback_on_uncertainty(
         detections=[RobotDetection(track_id=12, bbox=[10, 20, 30, 40], score=0.95)],
     )
 
-    class Completed:
-        returncode = 0
-        stderr = ""
-        stdout = (
-            '{"status":"processed","skill_name":"tracking","session_result":{"behavior":"track","frame_id":"frame_000001","target_id":12,"bounding_box_id":12,"found":false,"decision":"wait","text":"当前不确定，保持等待。","reason":"ambiguous"},"latest_result_patch":null,"skill_state_patch":{"pending_question":null},"user_preferences_patch":null,"environment_map_patch":null,"perception_cache_patch":null,"robot_response":{"action":"wait","text":"当前不确定，保持等待。"},"tool":"track","tool_output":{"behavior":"track","decision":"wait"},"rewrite_output":null,"rewrite_memory_input":null,"reason":null}'
-        )
-
-    monkeypatch.setattr(runner_module.subprocess, "run", lambda *args, **kwargs: Completed())
+    monkeypatch.setattr(
+        tracking_orchestration_module,
+        "execute_select_tool",
+        lambda **_: {
+            "behavior": "track",
+            "frame_id": "frame_000001",
+            "target_id": 12,
+            "bounding_box_id": 12,
+            "found": False,
+            "decision": "wait",
+            "text": "当前不确定，保持等待。",
+            "reason": "ambiguous",
+        },
+    )
     monkeypatch.setattr(
         PiAgentRunner,
         "process_session",
@@ -497,9 +464,9 @@ def test_schedule_tracking_memory_rewrite_spawns_subprocess_worker(monkeypatch, 
 
         return FakeProcess()
 
-    monkeypatch.setattr(runner_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(tracking_orchestration_module.subprocess, "Popen", fake_popen)
 
-    runner_module._schedule_tracking_memory_rewrite(
+    tracking_orchestration_module.schedule_tracking_memory_rewrite(
         runtime=runner.runtime,
         session_id="sess_worker",
         rewrite_memory_input={
@@ -514,23 +481,12 @@ def test_schedule_tracking_memory_rewrite_spawns_subprocess_worker(monkeypatch, 
 
     assert len(spawned) == 1
     command = spawned[0]["command"]
-    assert "skills/tracking/scripts/run_tracking_rewrite_worker.py" in command
+    assert "backend/agent/tracking_rewrite_worker.py" in command
     assert "--session-id" in command
     assert "sess_worker" in command
-    assert "--job-id" in command
-    assert "--job-dir" in command
     assert "--frame-path" in command
     assert str(frame_path) in command
     assert spawned[0]["kwargs"]["start_new_session"] is True
-    context = runner.runtime.context("sess_worker")
-    runtime_state = context.skill_cache[runner_module.TRACKING_RUNTIME_NAMESPACE]
-    assert runtime_state["latest_rewrite_status"] == "queued"
-    assert runtime_state["latest_rewrite_job_id"].startswith("rewrite_")
-    status_path = Path(runtime_state["latest_rewrite_status_path"])
-    assert status_path.exists()
-    status_payload = runner_module.json.loads(status_path.read_text(encoding="utf-8"))
-    assert status_payload["status"] == "queued"
-    assert status_payload["pid"] == 43210
 
 
 def test_pi_agent_runner_returns_idle_from_pi(tmp_path: Path, monkeypatch) -> None:
