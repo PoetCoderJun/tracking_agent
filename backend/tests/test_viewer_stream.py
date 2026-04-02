@@ -73,10 +73,10 @@ def test_build_tracking_viewer_payload_includes_current_frame_memory_and_history
             "memory": _memory_payload(),
         },
     )
-    AgentSessionStore(state_root).update_skill_cache(
+    AgentSessionStore(state_root).patch_skill_state(
         "sess_001",
         skill_name="tracking",
-        payload={
+        patch={
             "latest_target_id": 3,
             "latest_memory": _memory_payload(),
             "pending_question": "",
@@ -216,10 +216,10 @@ def test_build_tracking_viewer_payload_follows_latest_perception_frame_after_con
         ),
         request_function="observation",
     )
-    AgentSessionStore(state_root).update_skill_cache(
+    AgentSessionStore(state_root).patch_skill_state(
         "sess_live",
         skill_name="tracking",
-        payload={
+        patch={
             "latest_target_id": 3,
             "latest_memory": _memory_payload(),
             "pending_question": "",
@@ -271,10 +271,10 @@ def test_build_tracking_viewer_payload_marks_completed_stream(tmp_path: Path) ->
             "text": "当前画面中未发现与历史目标特征一致的人，暂时无法继续绑定。",
         },
     )
-    AgentSessionStore(state_root).update_skill_cache(
+    AgentSessionStore(state_root).patch_skill_state(
         "sess_done",
         skill_name="tracking",
-        payload={
+        patch={
             "latest_target_id": 3,
             "latest_memory": _memory_payload(),
             "pending_question": "",
@@ -326,10 +326,10 @@ def test_build_tracking_viewer_payload_keeps_display_frame_during_wait(tmp_path:
             "text": "当前画面中未发现与历史目标特征一致的人，暂时无法继续绑定。",
         },
     )
-    AgentSessionStore(state_root).update_skill_cache(
+    AgentSessionStore(state_root).patch_skill_state(
         "sess_wait_live",
         skill_name="tracking",
-        payload={
+        patch={
             "latest_target_id": 8,
             "latest_memory": _memory_payload(),
             "pending_question": "",
@@ -376,10 +376,10 @@ def test_build_tracking_viewer_payload_marks_wait_result_as_seeking(tmp_path: Pa
             "text": "当前证据不足。",
         },
     )
-    AgentSessionStore(state_root).update_skill_cache(
+    AgentSessionStore(state_root).patch_skill_state(
         "sess_wait",
         skill_name="tracking",
-        payload={
+        patch={
             "latest_target_id": 5,
             "latest_memory": _memory_payload(),
             "pending_question": "",

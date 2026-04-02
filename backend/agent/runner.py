@@ -698,6 +698,7 @@ class PiAgentRunner:
             session_id=session_id,
             pi_payload=pi_payload,
             env_file=env_file,
+            base_session=session,
         )
 
     def _apply_processed_payload(
@@ -706,6 +707,7 @@ class PiAgentRunner:
         session_id: str,
         pi_payload: Dict[str, Any],
         env_file: Path,
+        base_session: AgentSession | None = None,
     ) -> Dict[str, Any]:
         skill_name = str(pi_payload.get("skill_name", "")).strip()
         if not skill_name:
@@ -720,7 +722,11 @@ class PiAgentRunner:
         if session_result is None:
             raise ValueError("Processed Pi payload is missing session_result")
 
-        current_session = self._sessions.apply_skill_result(session_id, session_result)
+        current_session = self._sessions.apply_skill_result(
+            session_id,
+            session_result,
+            base_session=base_session,
+        )
         latest_result_patch = _as_optional_dict(
             pi_payload.get("latest_result_patch"),
             "latest_result_patch",

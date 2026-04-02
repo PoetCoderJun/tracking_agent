@@ -141,6 +141,33 @@ def _tracking_state(memory: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
     return normalized, had_nested
 
 
+def _load_session_and_tracking_state(
+    *,
+    state_root: Path,
+    session_id: str,
+    wait_for_memory: bool = False,
+    timeout_seconds: float = 5.0,
+    poll_interval_seconds: float = 0.1,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    paths = _session_paths(state_root, session_id)
+    deadline = time.monotonic() + timeout_seconds
+    last_session = _load_json(paths["session_path"])
+    last_tracking_state, _ = _tracking_state(last_session)
+    if not wait_for_memory:
+        return last_session, last_tracking_state
+
+    while True:
+        session = _load_json(paths["session_path"])
+        tracking_state, _ = _tracking_state(session)
+        if tracking_state.get("latest_memory"):
+            return session, tracking_state
+        last_session = session
+        last_tracking_state = tracking_state
+        if time.monotonic() >= deadline:
+            return last_session, last_tracking_state
+        time.sleep(poll_interval_seconds)
+
+
 def _prime_session(
     *,
     session_id: str,
@@ -362,9 +389,11 @@ def _run_large_context_case(
         _assert_command_ok(command)
 
     final_turn = _last_json_payload(commands[-1].stdout)
-    paths = _session_paths(state_root, session_id)
-    session = _load_json(paths["session_path"])
-    tracking_state, _ = _tracking_state(session)
+    session, tracking_state = _load_session_and_tracking_state(
+        state_root=state_root,
+        session_id=session_id,
+        wait_for_memory=True,
+    )
     checks = [
         _check(
             all(_last_json_payload(command.stdout).get("status") in {"processed", "idle"} for command in commands[1:-1]),

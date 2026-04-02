@@ -108,22 +108,14 @@ def test_ingest_robot_event_prunes_to_frame_buffer_without_tracking_memory_speci
 
     session_dir = tmp_path / "state" / "sessions" / "sess_001"
     confirmed_path = session_dir / "frames" / "frame_000000.jpg"
-    (session_dir / "agent_memory.json").write_text(
-        json.dumps(
-            {
-                "messages": [],
-                "skill_cache": {
-                    "tracking": {
-                        "latest_confirmed_frame_path": str(confirmed_path),
-                    }
-                },
-                "user_preferences": {},
-                "environment_map": {},
-                "perception_cache": {},
-            },
-            indent=2,
-            ensure_ascii=True,
-        ),
+    session_payload = json.loads((session_dir / "session.json").read_text(encoding="utf-8"))
+    session_payload["skill_cache"] = {
+        "tracking": {
+            "latest_confirmed_frame_path": str(confirmed_path),
+        }
+    }
+    (session_dir / "session.json").write_text(
+        json.dumps(session_payload, indent=2, ensure_ascii=True),
         encoding="utf-8",
     )
 

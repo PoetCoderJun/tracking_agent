@@ -126,22 +126,22 @@ def test_pi_agent_runner_processes_event_and_updates_memory(monkeypatch, tmp_pat
     assert result["skill_name"] == "tracking"
     assert result["tool"] == "track"
     assert "memory" not in result["latest_result"]
-    context = runner.sessions.context("sess_001")
+    context = runner.sessions.load("sess_001")
     assert context.skill_cache["tracking"]["last_tool"] == "track"
     assert context.skill_cache["tracking"]["pi_orchestrated"] is True
 
 
 def test_start_fresh_session_resets_tracking_memory(tmp_path: Path) -> None:
     runner = PiAgentRunner(state_root=tmp_path / "state")
-    runner.sessions.update_skill_cache(
+    runner.sessions.patch_skill_state(
         "sess_reset",
         skill_name="tracking",
-        payload={"latest_memory": _structured_memory("旧 memory"), "latest_target_id": 9},
+        patch={"latest_memory": _structured_memory("旧 memory"), "latest_target_id": 9},
     )
 
     runner.sessions.start_fresh_session("sess_reset", device_id="robot_01")
 
-    context = runner.sessions.context("sess_reset")
+    context = runner.sessions.load("sess_reset")
     assert context.user_preferences == {}
     assert context.environment_map == {}
     assert context.perception_cache == {}
@@ -288,7 +288,7 @@ def test_runner_schedules_init_memory_rewrite_asynchronously(monkeypatch, tmp_pa
     assert scheduled[0]["rewrite_memory_input"]["task"] == "init"
     assert result["rewrite_output"] is None
     assert "memory" not in result["latest_result"]
-    context = runner.sessions.context("sess_init")
+    context = runner.sessions.load("sess_init")
     assert "latest_memory" not in context.skill_cache["tracking"]
 
 
@@ -334,7 +334,7 @@ def test_runner_processes_direct_tracking_request(monkeypatch, tmp_path: Path) -
     assert result["tool"] == "track"
     assert result["session_result"]["target_id"] == 12
     assert result["robot_response"]["action"] == "track"
-    context = runner.sessions.context("sess_direct")
+    context = runner.sessions.load("sess_direct")
     assert context.skill_cache["tracking"]["latest_target_id"] == 12
 
 
@@ -445,10 +445,10 @@ def test_schedule_tracking_memory_rewrite_spawns_subprocess_worker(monkeypatch, 
         request_id="req_obs_worker",
         detections=[RobotDetection(track_id=12, bbox=[10, 20, 30, 40], score=0.95)],
     )
-    runner.sessions.update_skill_cache(
+    runner.sessions.patch_skill_state(
         "sess_worker",
         skill_name="tracking",
-        payload={
+        patch={
             "latest_target_id": 12,
             "latest_confirmed_frame_path": str(frame_path),
         },
@@ -567,7 +567,7 @@ def test_runner_prompt_points_pi_to_context_views(tmp_path: Path) -> None:
         request_id="req_prompt",
     )
 
-    context = runner.sessions.context("sess_prompt")
+    context = runner.sessions.load("sess_prompt")
     request_dir = tmp_path / "artifacts" / "requests" / "sess_prompt" / "req_prompt"
     request_dir.mkdir(parents=True, exist_ok=True)
     turn_context_path = runner_module._write_json(
@@ -698,7 +698,7 @@ def test_runner_uses_session_enabled_skills_when_present(monkeypatch, tmp_path: 
         text="hello",
         request_id="req_enabled_skills",
     )
-    runner.sessions.update_environment_map(
+    runner.sessions.patch_environment(
         "sess_enabled_skills",
         {"agent_runtime": {"enabled_skills": ["speech"]}},
     )
@@ -772,7 +772,7 @@ def test_runner_flattens_redundant_skill_state_wrapper(monkeypatch, tmp_path: Pa
         artifacts_root=tmp_path / "artifacts",
     )
 
-    context = runner.sessions.context("sess_nested")
+    context = runner.sessions.load("sess_nested")
     assert context.skill_cache["tracking"]["latest_target_id"] == 1
     assert "tracking" not in context.skill_cache["tracking"]
 
@@ -837,7 +837,7 @@ def test_runner_does_not_backfill_tracking_fields_from_tool_outputs(monkeypatch,
         "behavior": "reply",
         "text": "还不能确认。",
     }
-    context = runner.sessions.context("sess_backfill")
+    context = runner.sessions.load("sess_backfill")
     assert context.skill_cache == {}
 
 

@@ -201,7 +201,7 @@ def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_pa
     runtime = AgentSessionStore(state_root=state_root)
     perception = LocalPerceptionService(state_root=state_root)
     runtime.start_fresh_session("sess_001", device_id="robot_01")
-    runtime.update_skill_cache("sess_001", skill_name="tracking", payload={"latest_target_id": 7})
+    runtime.patch_skill_state("sess_001", skill_name="tracking", patch={"latest_target_id": 7})
 
     _prepare_perception_session(
         perception_service=perception,
@@ -210,7 +210,7 @@ def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_pa
         fresh_session=False,
     )
 
-    context = runtime.context("sess_001")
+    context = runtime.load("sess_001")
     assert context.skill_cache["tracking"]["latest_target_id"] == 7
 
 
@@ -222,7 +222,7 @@ def test_prepare_perception_session_resets_existing_session_when_requested(tmp_p
     runtime = AgentSessionStore(state_root=state_root)
     perception = LocalPerceptionService(state_root=state_root)
     runtime.start_fresh_session("sess_001", device_id="robot_01")
-    runtime.update_skill_cache("sess_001", skill_name="tracking", payload={"latest_target_id": 7})
+    runtime.patch_skill_state("sess_001", skill_name="tracking", patch={"latest_target_id": 7})
 
     _prepare_perception_session(
         perception_service=perception,
@@ -231,5 +231,5 @@ def test_prepare_perception_session_resets_existing_session_when_requested(tmp_p
         fresh_session=True,
     )
 
-    context = runtime.context("sess_001")
+    context = runtime.load("sess_001")
     assert context.skill_cache == {}

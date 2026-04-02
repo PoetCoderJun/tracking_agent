@@ -815,10 +815,10 @@ def test_turn_payload_builds_wait_response_without_pending_question() -> None:
 def test_turn_payload_resets_view_specific_reference_crops_for_new_target(tmp_path: Path) -> None:
     payload_module = _load_turn_payload()
     runtime = AgentSessionStore(tmp_path / "state")
-    runtime.update_skill_cache(
+    runtime.patch_skill_state(
         "sess_reset",
         skill_name="tracking",
-        payload={
+        patch={
             "latest_front_target_crop": "/old/front.jpg",
             "latest_back_target_crop": "/old/back.jpg",
         },
@@ -839,13 +839,13 @@ def test_turn_payload_resets_view_specific_reference_crops_for_new_target(tmp_pa
         }
     )
 
-    runtime.update_skill_cache(
+    runtime.patch_skill_state(
         "sess_reset",
         skill_name="tracking",
-        payload=payload["skill_state_patch"],
+        patch=payload["skill_state_patch"],
     )
 
-    tracking_state = runtime.context("sess_reset").skill_cache["tracking"]
+    tracking_state = runtime.load("sess_reset").skill_cache["tracking"]
     assert payload["skill_state_patch"]["latest_front_target_crop"] is None
     assert payload["skill_state_patch"]["latest_back_target_crop"] is None
     assert tracking_state["latest_front_target_crop"] is None
@@ -952,15 +952,15 @@ def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypat
         "sess_worker",
         {"behavior": "track", "frame_id": "frame_000001", "target_id": 15, "found": True, "text": "继续跟踪"},
     )
-    runtime.update_skill_cache(
+    runtime.patch_skill_state(
         "sess_worker",
         skill_name="tracking",
-        payload={
+        patch={
             "latest_target_id": 15,
             "latest_confirmed_frame_path": str(frame_path),
         },
     )
-    memory_file = Path(runtime.context("sess_worker").state_paths["agent_memory_path"])
+    memory_file = Path(runtime.load("sess_worker").state_paths["session_path"])
 
     monkeypatch.setattr(
         worker,
@@ -1002,7 +1002,7 @@ def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypat
     exit_code = worker.main()
 
     assert exit_code == 0
-    context = runtime.context("sess_worker")
+    context = runtime.load("sess_worker")
     assert context.skill_cache["tracking"]["latest_memory"] == _structured_memory("新的 memory")
     assert context.skill_cache["tracking"]["latest_front_target_crop"] == str(crop_path)
 
@@ -1034,16 +1034,16 @@ def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> Non
         "sess_worker_skip",
         {"behavior": "track", "frame_id": "frame_000001", "target_id": 15, "found": True, "text": "继续跟踪"},
     )
-    runtime.update_skill_cache(
+    runtime.patch_skill_state(
         "sess_worker_skip",
         skill_name="tracking",
-        payload={
+        patch={
             "latest_target_id": 99,
             "latest_confirmed_frame_path": str(tmp_path / "other_frame.jpg"),
             "latest_memory": _structured_memory("旧 memory"),
         },
     )
-    memory_file = Path(runtime.context("sess_worker_skip").state_paths["agent_memory_path"])
+    memory_file = Path(runtime.load("sess_worker_skip").state_paths["session_path"])
 
     monkeypatch.setattr(
         worker,
@@ -1077,5 +1077,5 @@ def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> Non
     exit_code = worker.main()
 
     assert exit_code == 0
-    context = runtime.context("sess_worker_skip")
+    context = runtime.load("sess_worker_skip")
     assert context.skill_cache["tracking"]["latest_memory"] == _structured_memory("旧 memory")

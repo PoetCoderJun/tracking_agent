@@ -20,13 +20,13 @@ def _frame_image(path: Path) -> Path:
     return path
 
 
-def test_local_agent_runtime_context_contains_generic_state(tmp_path: Path) -> None:
+def test_agent_session_store_load_contains_generic_state(tmp_path: Path) -> None:
     runtime = AgentSessionStore(tmp_path / "state")
     perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
 
-    runtime.update_user_preferences("sess_001", {"language": "zh"})
-    runtime.update_environment_map("sess_001", {"rooms": {"lab": {"visible": True}}})
+    runtime.patch_user_preferences("sess_001", {"language": "zh"})
+    runtime.patch_environment("sess_001", {"rooms": {"lab": {"visible": True}}})
     perception.write_observation(
         RobotIngestEvent(
             session_id="sess_001",
@@ -42,22 +42,22 @@ def test_local_agent_runtime_context_contains_generic_state(tmp_path: Path) -> N
         request_id="req_001",
         request_function="tracking",
     )
-    context = runtime.context("sess_001", device_id="robot_01")
+    context = runtime.load("sess_001", device_id="robot_01")
 
     assert context.user_preferences["language"] == "zh"
     assert context.environment_map["rooms"]["lab"]["visible"] is True
     assert context.raw_session["recent_frames"] == []
     assert context.raw_session["conversation_history"] == []
     assert context.state_paths["session_path"].endswith("/sessions/sess_001/session.json")
-    assert context.state_paths["agent_memory_path"].endswith("/sessions/sess_001/session.json")
+    assert context.state_paths["session_path"].endswith("/sessions/sess_001/session.json")
 
 
-def test_build_perception_bundle_surfaces_memory_language_and_map(tmp_path: Path) -> None:
+def test_agent_session_store_builds_perception_bundle(tmp_path: Path) -> None:
     runtime = AgentSessionStore(tmp_path / "state")
     perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
-    runtime.update_user_preferences("sess_001", {"language": "zh"})
-    runtime.update_environment_map("sess_001", {"map_id": "lab-01"})
+    runtime.patch_user_preferences("sess_001", {"language": "zh"})
+    runtime.patch_environment("sess_001", {"map_id": "lab-01"})
     perception.write_observation(
         RobotIngestEvent(
             session_id="sess_001",
@@ -73,7 +73,7 @@ def test_build_perception_bundle_surfaces_memory_language_and_map(tmp_path: Path
         request_id="req_001",
         request_function="tracking",
     )
-    context = runtime.context("sess_001", device_id="robot_01")
+    context = runtime.load("sess_001", device_id="robot_01")
 
     bundle = build_perception_bundle(context)
 
@@ -83,7 +83,7 @@ def test_build_perception_bundle_surfaces_memory_language_and_map(tmp_path: Path
     assert bundle.environment_map["map_id"] == "lab-01"
 
 
-def test_observation_ingest_updates_state_without_polluting_chat_history(tmp_path: Path) -> None:
+def test_agent_session_store_observation_ingest_does_not_pollute_chat_history(tmp_path: Path) -> None:
     runtime = AgentSessionStore(tmp_path / "state")
     perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
@@ -103,14 +103,14 @@ def test_observation_ingest_updates_state_without_polluting_chat_history(tmp_pat
         request_id="req_obs_001",
         request_function="observation",
     )
-    context = runtime.context("sess_obs", device_id="robot_01")
+    context = runtime.load("sess_obs", device_id="robot_01")
 
     assert context.raw_session["latest_request_function"] is None
     assert context.raw_session["conversation_history"] == []
     assert context.raw_session["recent_frames"] == []
 
 
-def test_apply_skill_result_stores_runtime_summary_not_full_result_copy(tmp_path: Path) -> None:
+def test_agent_session_store_apply_skill_result_keeps_runtime_summary_small(tmp_path: Path) -> None:
     runtime = AgentSessionStore(tmp_path / "state")
     perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")

@@ -172,10 +172,10 @@ def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -
     runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
-    runtime.update_skill_cache(
+    runtime.patch_skill_state(
         "sess_001",
         skill_name="tracking",
-        payload={"latest_target_id": 7, "target_description": "黑衣服的人"},
+        patch={"latest_target_id": 7, "target_description": "黑衣服的人"},
     )
     perception.write_observation(
         RobotIngestEvent(
@@ -188,7 +188,7 @@ def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -
         request_id="req_001",
         request_function="chat",
     )
-    context = runtime.context("sess_001")
+    context = runtime.load("sess_001")
 
     route_context = build_route_context(
         context,
@@ -223,7 +223,7 @@ def test_tracking_context_helpers_prefer_perception_store_over_raw_session_frame
         request_id="req_009",
         request_function="chat",
     )
-    context = runtime.context("sess_001")
+    context = runtime.load("sess_001")
     context.raw_session["recent_frames"] = []
 
     route_context = build_route_context(
@@ -262,7 +262,7 @@ def test_tracking_context_filters_excluded_track_ids(tmp_path: Path) -> None:
         request_id="req_011",
         request_function="chat",
     )
-    context = runtime.context("sess_001")
+    context = runtime.load("sess_001")
 
     tracking_context = build_tracking_context(
         context,

@@ -142,46 +142,49 @@ class BackendStore:
             if payload is None:
                 assert last_error is not None
                 raise last_error
-            recent_frames = [
-                BackendFrame(
-                    frame_id=str(frame["frame_id"]),
-                    timestamp_ms=int(frame["timestamp_ms"]),
-                    image_path=str(frame["image_path"]),
-                    detections=[
-                        BackendDetection(
-                            track_id=int(detection["track_id"]),
-                            bbox=[int(value) for value in detection["bbox"]],
-                            score=float(detection.get("score", 1.0)),
-                            label=str(detection.get("label", "person")),
-                        )
-                        for detection in frame.get("detections", [])
-                    ],
-                )
-                for frame in payload.get("recent_frames", [])
-            ]
-            return BackendSession(
-                session_id=str(payload["session_id"]),
-                device_id=str(payload.get("device_id", "")),
-                latest_request_id=payload.get("latest_request_id"),
-                latest_request_function=payload.get("latest_request_function"),
-                latest_result=payload.get("latest_result"),
-                result_history=list(payload.get("result_history", [])),
-                conversation_history=[
-                    {
-                        "role": str(entry.get("role", "")),
-                        "text": str(entry.get("text", "")),
-                        "timestamp": str(entry.get("timestamp", "")),
-                    }
-                    for entry in payload.get("conversation_history", [])
+            return self._session_from_payload(payload)
+
+    def _session_from_payload(self, payload: Dict[str, Any]) -> BackendSession:
+        recent_frames = [
+            BackendFrame(
+                frame_id=str(frame["frame_id"]),
+                timestamp_ms=int(frame["timestamp_ms"]),
+                image_path=str(frame["image_path"]),
+                detections=[
+                    BackendDetection(
+                        track_id=int(detection["track_id"]),
+                        bbox=[int(value) for value in detection["bbox"]],
+                        score=float(detection.get("score", 1.0)),
+                        label=str(detection.get("label", "person")),
+                    )
+                    for detection in frame.get("detections", [])
                 ],
-                recent_frames=recent_frames,
-                user_preferences=_normalized_section(payload.get("user_preferences")),
-                environment_map=_normalized_section(payload.get("environment_map")),
-                perception_cache=_normalized_section(payload.get("perception_cache")),
-                skill_cache=_normalized_section(payload.get("skill_cache")),
-                created_at=str(payload["created_at"]),
-                updated_at=str(payload["updated_at"]),
             )
+            for frame in payload.get("recent_frames", [])
+        ]
+        return BackendSession(
+            session_id=str(payload["session_id"]),
+            device_id=str(payload.get("device_id", "")),
+            latest_request_id=payload.get("latest_request_id"),
+            latest_request_function=payload.get("latest_request_function"),
+            latest_result=payload.get("latest_result"),
+            result_history=list(payload.get("result_history", [])),
+            conversation_history=[
+                {
+                    "role": str(entry.get("role", "")),
+                    "text": str(entry.get("text", "")),
+                    "timestamp": str(entry.get("timestamp", "")),
+                }
+                for entry in payload.get("conversation_history", [])
+            ],
+            recent_frames=recent_frames,
+            user_preferences=_normalized_section(payload.get("user_preferences")),
+            environment_map=_normalized_section(payload.get("environment_map")),
+            perception_cache=_normalized_section(payload.get("perception_cache")),
+            skill_cache=_normalized_section(payload.get("skill_cache")),
+            created_at=str(payload["created_at"]),
+            updated_at=str(payload["updated_at"]),
+        )
 
     def load_or_create_session(
         self,
@@ -386,9 +389,15 @@ class BackendStore:
         self,
         session_id: str,
         result: Dict[str, Any],
+        *,
+        session_payload: Optional[Dict[str, Any]] = None,
     ) -> BackendSession:
         with self._lock:
-            session = self.load_session(session_id)
+            session = (
+                self._session_from_payload(dict(session_payload))
+                if isinstance(session_payload, dict)
+                else self.load_session(session_id)
+            )
             latest_frame = session.recent_frames[-1] if session.recent_frames else None
             request_id = (
                 None
