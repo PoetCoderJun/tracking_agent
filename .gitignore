@@ -19,6 +19,7 @@ __pycache__/
 venv/
 env/
 .pi/
+.omx/
 build/
 dist/
 node_modules/
