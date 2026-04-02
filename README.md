@@ -134,5 +134,4 @@ uv run robot-agent-tracking-viewer-stream \
 - `apps/tracking-viewer/`: tracking viewer 前端项目
 - `skills/tracking/`: tracking skill 与单轮 helper
 - `skills/speech/`: speech skill
-- `docs/agent-architecture.md`: 补充说明
-- `docs/agent-runtime-report.md`: 结构化设计与调用报告，覆盖 Agent/Pi runner/context/VLM/multi-skills/perception
+- `docs/Tracking Agent 接口.pdf`: 当前接口说明
