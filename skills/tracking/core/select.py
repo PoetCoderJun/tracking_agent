@@ -86,10 +86,9 @@ def normalized_frame(frame: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-def load_tracking_context(session_file: Path, memory_file: Path) -> Dict[str, Any]:
+def load_tracking_context(session_file: Path) -> Dict[str, Any]:
     raw_session = load_json(session_file)
-    memory_payload = load_json(memory_file) if memory_file.exists() else {}
-    tracking_state = dict(((memory_payload.get("skill_cache") or {}).get("tracking") or {}))
+    tracking_state = dict(((raw_session.get("skill_cache") or {}).get("tracking") or {}))
 
     frames = [
         normalized
@@ -482,7 +481,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", choices=("init", "track"), required=True)
     parser.add_argument("--tracking-context-file", default="")
     parser.add_argument("--session-file", default="")
-    parser.add_argument("--memory-file", default="")
     parser.add_argument("--target-description", default="")
     parser.add_argument("--user-text", default="")
     parser.add_argument("--env-file", default=".ENV")
@@ -515,7 +513,6 @@ def _select_with_model(
 def execute_select_tool(
     *,
     session_file: Path | None = None,
-    memory_file: Path | None = None,
     tracking_context_file: Path | None = None,
     tracking_context: Dict[str, Any] | None = None,
     behavior: str,
@@ -532,9 +529,9 @@ def execute_select_tool(
     elif tracking_context_file is not None:
         context = load_tracking_context_file(tracking_context_file)
     else:
-        if session_file is None or memory_file is None:
-            raise ValueError("select_target requires tracking_context, tracking_context_file, or both session_file and memory_file")
-        context = load_tracking_context(session_file, memory_file)
+        if session_file is None:
+            raise ValueError("select_target requires tracking_context, tracking_context_file, or session_file")
+        context = load_tracking_context(session_file)
 
     if behavior == "track" and not session_has_active_target(context):
         raise ValueError("track tool requires an active target")
@@ -713,7 +710,6 @@ def main() -> int:
     tracking_context_file = optional_text(args.tracking_context_file)
     payload = execute_select_tool(
         session_file=None if tracking_context_file else Path(args.session_file),
-        memory_file=None if tracking_context_file else Path(args.memory_file),
         tracking_context_file=None if not tracking_context_file else Path(tracking_context_file),
         behavior=args.mode,
         arguments={

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from backend.agent.runtime import LocalAgentRuntime
+from backend.agent.session_store import AgentSessionStore
 from backend.config import Settings
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 
@@ -15,7 +15,7 @@ from backend.perception import LocalPerceptionService, RobotDetection, RobotFram
 ROOT = Path(__file__).resolve().parents[2]
 TRACKING_SCRIPT_ROOT = ROOT / "skills" / "tracking" / "scripts"
 TRACKING_CORE_ROOT = ROOT / "skills" / "tracking" / "core"
-TRACKING_WORKER_PATH = ROOT / "backend" / "agent" / "tracking_rewrite_worker.py"
+TRACKING_WORKER_PATH = ROOT / "skills" / "tracking" / "scripts" / "rewrite_worker.py"
 
 
 def _load_module(name: str, path: Path):
@@ -110,6 +110,12 @@ def _memory_payload(latest_memory: object = "", latest_target_id: int | None = N
     }
 
 
+def _session_state(frame_path: Path, latest_memory: object = "", latest_target_id: int | None = None) -> dict:
+    payload = _session_payload(frame_path)
+    payload.update(_memory_payload(latest_memory=latest_memory, latest_target_id=latest_target_id))
+    return payload
+
+
 def test_tracking_scripts_use_reference_config() -> None:
     select = _load_select()
     rewrite = _load_rewrite()
@@ -122,13 +128,10 @@ def test_select_target_returns_direct_match_for_explicit_init_id(tmp_path: Path)
     select = _load_select()
     frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
     session_file = tmp_path / "session.json"
-    memory_file = tmp_path / "agent_memory.json"
-    session_file.write_text(json.dumps(_session_payload(frame_path)), encoding="utf-8")
-    memory_file.write_text(json.dumps(_memory_payload()), encoding="utf-8")
+    session_file.write_text(json.dumps(_session_state(frame_path)), encoding="utf-8")
 
     payload = select.execute_select_tool(
         session_file=session_file,
-        memory_file=memory_file,
         behavior="init",
         arguments={"target_description": "跟踪 ID 为 15 的人"},
         env_file=tmp_path / ".ENV",
@@ -146,8 +149,7 @@ def test_select_target_init_uses_seeded_first_frame_snapshot(tmp_path: Path) -> 
     first_frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
     latest_frame_path = _frame_image(tmp_path / "frames" / "frame_000002.jpg")
     session_file = tmp_path / "session.json"
-    memory_file = tmp_path / "agent_memory.json"
-    session = _session_payload(latest_frame_path)
+    session = _session_state(latest_frame_path)
     session["recent_frames"] = [
         {
             "frame_id": "frame_000002",
@@ -158,8 +160,7 @@ def test_select_target_init_uses_seeded_first_frame_snapshot(tmp_path: Path) -> 
             ],
         }
     ]
-    memory = _memory_payload()
-    memory["skill_cache"]["tracking"]["init_frame_snapshot"] = {
+    session["skill_cache"]["tracking"]["init_frame_snapshot"] = {
         "frame_id": "frame_000001",
         "timestamp_ms": 1710000000000,
         "image_path": str(first_frame_path),
@@ -168,11 +169,9 @@ def test_select_target_init_uses_seeded_first_frame_snapshot(tmp_path: Path) -> 
         ],
     }
     session_file.write_text(json.dumps(session), encoding="utf-8")
-    memory_file.write_text(json.dumps(memory), encoding="utf-8")
 
     payload = select.execute_select_tool(
         session_file=session_file,
-        memory_file=memory_file,
         behavior="init",
         arguments={"target_description": "跟踪 ID 为 15 的人"},
         env_file=tmp_path / ".ENV",
@@ -186,13 +185,11 @@ def test_select_target_init_uses_sub_model(tmp_path: Path, monkeypatch) -> None:
     select = _load_select()
     frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
     session_file = tmp_path / "session.json"
-    memory_file = tmp_path / "agent_memory.json"
-    session = _session_payload(frame_path)
+    session = _session_state(frame_path)
     session["recent_frames"][0]["detections"] = [
         {"track_id": 15, "bbox": [10, 12, 36, 44], "score": 0.95},
     ]
     session_file.write_text(json.dumps(session), encoding="utf-8")
-    memory_file.write_text(json.dumps(_memory_payload()), encoding="utf-8")
 
     def fake_settings(_: Path) -> Settings:
         return Settings(
@@ -232,7 +229,6 @@ def test_select_target_init_uses_sub_model(tmp_path: Path, monkeypatch) -> None:
 
     payload = select.execute_select_tool(
         session_file=session_file,
-        memory_file=memory_file,
         behavior="init",
         arguments={"target_description": "穿黑衣服的人"},
         env_file=tmp_path / ".ENV",
@@ -250,13 +246,10 @@ def test_select_target_requests_clarification_for_missing_explicit_id(tmp_path: 
     select = _load_select()
     frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
     session_file = tmp_path / "session.json"
-    memory_file = tmp_path / "agent_memory.json"
-    session_file.write_text(json.dumps(_session_payload(frame_path)), encoding="utf-8")
-    memory_file.write_text(json.dumps(_memory_payload(latest_target_id=15)), encoding="utf-8")
+    session_file.write_text(json.dumps(_session_state(frame_path, latest_target_id=15)), encoding="utf-8")
 
     payload = select.execute_select_tool(
         session_file=session_file,
-        memory_file=memory_file,
         behavior="track",
         arguments={"user_text": "改成跟踪 ID 为 99 的人"},
         env_file=tmp_path / ".ENV",
@@ -279,28 +272,25 @@ def test_select_target_track_uses_model_with_memory_guidance(tmp_path: Path, mon
     draw.rectangle((48, 8, 78, 56), fill=(220, 40, 40))
     image.save(frame_path, format="JPEG")
     reference_path = _frame_image(tmp_path / "reference.jpg")
-    session = _session_payload(frame_path)
+    session = _session_state(frame_path, latest_memory="黑衣服，短发。", latest_target_id=15)
     session["recent_frames"][0]["detections"] = [
         {"track_id": 42, "bbox": [8, 8, 36, 56], "score": 0.95},
         {"track_id": 16, "bbox": [48, 8, 78, 56], "score": 0.82},
     ]
-    memory = _memory_payload(latest_memory="黑衣服，短发。", latest_target_id=15)
-    memory["skill_cache"]["tracking"]["latest_confirmed_frame_path"] = str(reference_path)
-    memory["skill_cache"]["tracking"]["latest_confirmed_bbox"] = [8, 8, 36, 56]
+    session["skill_cache"]["tracking"]["latest_confirmed_frame_path"] = str(reference_path)
+    session["skill_cache"]["tracking"]["latest_confirmed_bbox"] = [8, 8, 36, 56]
     latest_target_crop = tmp_path / "latest_target_crop.jpg"
     Image.new("RGB", (28, 48), color=(20, 20, 20)).save(latest_target_crop, format="JPEG")
     latest_front_target_crop = tmp_path / "latest_front_target_crop.jpg"
     Image.new("RGB", (28, 48), color=(20, 20, 20)).save(latest_front_target_crop, format="JPEG")
     latest_back_target_crop = tmp_path / "latest_back_target_crop.jpg"
     Image.new("RGB", (28, 48), color=(30, 30, 30)).save(latest_back_target_crop, format="JPEG")
-    memory["skill_cache"]["tracking"]["latest_target_crop"] = str(latest_target_crop)
-    memory["skill_cache"]["tracking"]["identity_target_crop"] = str(latest_target_crop)
-    memory["skill_cache"]["tracking"]["latest_front_target_crop"] = str(latest_front_target_crop)
-    memory["skill_cache"]["tracking"]["latest_back_target_crop"] = str(latest_back_target_crop)
+    session["skill_cache"]["tracking"]["latest_target_crop"] = str(latest_target_crop)
+    session["skill_cache"]["tracking"]["identity_target_crop"] = str(latest_target_crop)
+    session["skill_cache"]["tracking"]["latest_front_target_crop"] = str(latest_front_target_crop)
+    session["skill_cache"]["tracking"]["latest_back_target_crop"] = str(latest_back_target_crop)
     session_file = tmp_path / "session.json"
-    memory_file = tmp_path / "agent_memory.json"
     session_file.write_text(json.dumps(session), encoding="utf-8")
-    memory_file.write_text(json.dumps(memory), encoding="utf-8")
 
     def fake_settings(_: Path) -> Settings:
         return Settings(
@@ -344,7 +334,6 @@ def test_select_target_track_uses_model_with_memory_guidance(tmp_path: Path, mon
 
     payload = select.execute_select_tool(
         session_file=session_file,
-        memory_file=memory_file,
         behavior="track",
         arguments={"user_text": "继续跟踪"},
         env_file=tmp_path / ".ENV",
@@ -379,15 +368,12 @@ def test_select_target_track_survives_source_frame_cleanup(tmp_path: Path, monke
     draw = ImageDraw.Draw(image)
     draw.rectangle((8, 8, 36, 56), fill=(20, 20, 20))
     image.save(frame_path, format="JPEG")
-    session = _session_payload(frame_path)
+    session = _session_state(frame_path, latest_memory="黑衣服，短发。", latest_target_id=15)
     session["recent_frames"][0]["detections"] = [{"track_id": 42, "bbox": [8, 8, 36, 56], "score": 0.95}]
-    memory = _memory_payload(latest_memory="黑衣服，短发。", latest_target_id=15)
     reference_path = _frame_image(tmp_path / "reference.jpg")
-    memory["skill_cache"]["tracking"]["latest_confirmed_frame_path"] = str(reference_path)
+    session["skill_cache"]["tracking"]["latest_confirmed_frame_path"] = str(reference_path)
     session_file = tmp_path / "session.json"
-    memory_file = tmp_path / "agent_memory.json"
     session_file.write_text(json.dumps(session), encoding="utf-8")
-    memory_file.write_text(json.dumps(memory), encoding="utf-8")
 
     def fake_settings(_: Path) -> Settings:
         return Settings(
@@ -425,7 +411,6 @@ def test_select_target_track_survives_source_frame_cleanup(tmp_path: Path, monke
 
     payload = select.execute_select_tool(
         session_file=session_file,
-        memory_file=memory_file,
         behavior="track",
         arguments={"user_text": "继续跟踪"},
         env_file=tmp_path / ".ENV",
@@ -554,14 +539,12 @@ def test_load_tracking_context_preserves_structured_memory_object(tmp_path: Path
     select = _load_select()
     frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
     session_file = tmp_path / "session.json"
-    memory_file = tmp_path / "agent_memory.json"
-    session_file.write_text(json.dumps(_session_payload(frame_path)), encoding="utf-8")
-    memory_file.write_text(
-        json.dumps(_memory_payload(latest_memory=_structured_memory("黑色连帽外套、彩色鞋"))),
+    session_file.write_text(
+        json.dumps(_session_state(frame_path, latest_memory=_structured_memory("黑色连帽外套、彩色鞋"))),
         encoding="utf-8",
     )
 
-    loaded = select.load_tracking_context(session_file, memory_file)
+    loaded = select.load_tracking_context(session_file)
 
     assert isinstance(loaded["memory"], dict)
     assert loaded["memory"]["core"] == "黑色连帽外套、彩色鞋"
@@ -674,9 +657,9 @@ def test_rewrite_memory_uses_sub_model_and_normalizes_memory(tmp_path: Path, mon
     rewrite = _load_rewrite()
     crop_path = _frame_image(tmp_path / "crops" / "target.jpg")
     frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
-    memory_file = tmp_path / "agent_memory.json"
-    memory_file.write_text(
-        json.dumps(_memory_payload(latest_memory=_structured_memory("旧记忆。"))),
+    session_file = tmp_path / "session.json"
+    session_file.write_text(
+        json.dumps(_session_state(frame_path, latest_memory=_structured_memory("旧记忆。"))),
         encoding="utf-8",
     )
 
@@ -716,7 +699,7 @@ def test_rewrite_memory_uses_sub_model_and_normalizes_memory(tmp_path: Path, mon
     monkeypatch.setattr(rewrite, "call_model", fake_call_model)
 
     payload = rewrite.execute_rewrite_memory_tool(
-        memory_file=memory_file,
+        session_file=session_file,
         arguments={
             "task": "update",
             "crop_path": str(crop_path),
@@ -831,7 +814,7 @@ def test_turn_payload_builds_wait_response_without_pending_question() -> None:
 
 def test_turn_payload_resets_view_specific_reference_crops_for_new_target(tmp_path: Path) -> None:
     payload_module = _load_turn_payload()
-    runtime = LocalAgentRuntime(tmp_path / "state")
+    runtime = AgentSessionStore(tmp_path / "state")
     runtime.update_skill_cache(
         "sess_reset",
         skill_name="tracking",
@@ -924,8 +907,6 @@ def test_run_tracking_track_script_returns_final_payload(tmp_path: Path, monkeyp
             "run_tracking_track.py",
             "--session-file",
             str(tmp_path / "session.json"),
-            "--memory-file",
-            str(tmp_path / "agent_memory.json"),
             "--user-text",
             "继续跟踪",
         ],
@@ -947,7 +928,7 @@ def test_run_tracking_track_script_returns_final_payload(tmp_path: Path, monkeyp
 def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypatch) -> None:
     worker = _load_run_worker()
     state_root = tmp_path / "state"
-    runtime = LocalAgentRuntime(state_root=state_root)
+    runtime = AgentSessionStore(state_root=state_root)
     perception = LocalPerceptionService(state_root=state_root)
     frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
     crop_path = _frame_image(tmp_path / "crops" / "target.jpg")
@@ -998,12 +979,12 @@ def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypat
         sys,
         "argv",
         [
-            "run_tracking_rewrite_worker.py",
+            "rewrite_worker.py",
             "--state-root",
             str(state_root),
             "--session-id",
             "sess_worker",
-            "--memory-file",
+            "--session-file",
             str(memory_file),
             "--task",
             "update",
@@ -1029,7 +1010,7 @@ def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypat
 def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> None:
     worker = _load_run_worker()
     state_root = tmp_path / "state"
-    runtime = LocalAgentRuntime(state_root=state_root)
+    runtime = AgentSessionStore(state_root=state_root)
     perception = LocalPerceptionService(state_root=state_root)
     frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
     crop_path = _frame_image(tmp_path / "crops" / "target.jpg")
@@ -1073,12 +1054,12 @@ def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> Non
         sys,
         "argv",
         [
-            "run_tracking_rewrite_worker.py",
+            "rewrite_worker.py",
             "--state-root",
             str(state_root),
             "--session-id",
             "sess_worker_skip",
-            "--memory-file",
+            "--session-file",
             str(memory_file),
             "--task",
             "update",

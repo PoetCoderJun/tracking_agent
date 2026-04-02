@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from backend.agent import LocalAgentRuntime
+from backend.agent import AgentSessionStore
 from backend.perception import (
     LocalPerceptionService,
     RobotDetection,
@@ -21,7 +21,7 @@ def _frame_image(path: Path) -> Path:
 
 
 def test_local_agent_runtime_context_contains_generic_state(tmp_path: Path) -> None:
-    runtime = LocalAgentRuntime(tmp_path / "state")
+    runtime = AgentSessionStore(tmp_path / "state")
     perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
 
@@ -53,7 +53,7 @@ def test_local_agent_runtime_context_contains_generic_state(tmp_path: Path) -> N
 
 
 def test_build_perception_bundle_surfaces_memory_language_and_map(tmp_path: Path) -> None:
-    runtime = LocalAgentRuntime(tmp_path / "state")
+    runtime = AgentSessionStore(tmp_path / "state")
     perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
     runtime.update_user_preferences("sess_001", {"language": "zh"})
@@ -84,7 +84,7 @@ def test_build_perception_bundle_surfaces_memory_language_and_map(tmp_path: Path
 
 
 def test_observation_ingest_updates_state_without_polluting_chat_history(tmp_path: Path) -> None:
-    runtime = LocalAgentRuntime(tmp_path / "state")
+    runtime = AgentSessionStore(tmp_path / "state")
     perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
 
@@ -111,7 +111,7 @@ def test_observation_ingest_updates_state_without_polluting_chat_history(tmp_pat
 
 
 def test_apply_skill_result_stores_runtime_summary_not_full_result_copy(tmp_path: Path) -> None:
-    runtime = LocalAgentRuntime(tmp_path / "state")
+    runtime = AgentSessionStore(tmp_path / "state")
     perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
 

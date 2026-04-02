@@ -11,7 +11,7 @@ from backend.agent.runner import (
     available_project_skill_names,
     normalize_enabled_skill_names,
 )
-from backend.agent.runtime import LocalAgentRuntime
+from backend.agent.session_store import AgentSessionStore
 from backend.perception.stream import generate_request_id, generate_session_id
 from backend.persistence import ActiveSessionStore, resolve_session_id
 from backend.project_paths import resolve_project_path
@@ -91,8 +91,8 @@ def _resolved_session_id(args: argparse.Namespace) -> str:
     return session_id
 
 
-def _runtime_from_args(args: argparse.Namespace) -> LocalAgentRuntime:
-    return LocalAgentRuntime(
+def _session_store_from_args(args: argparse.Namespace) -> AgentSessionStore:
+    return AgentSessionStore(
         state_root=resolve_project_path(args.state_root),
         frame_buffer_size=args.frame_buffer_size,
     )
@@ -116,14 +116,14 @@ def main() -> int:
     args = parse_args()
     if args.command == "start":
         state_root = resolve_project_path(args.state_root)
-        runtime = _runtime_from_args(args)
+        sessions = _session_store_from_args(args)
         session_id = resolve_session_id(
             state_root=state_root,
             session_id=args.session_id,
         ) or generate_session_id(prefix="agent")
-        context = runtime.context(session_id, device_id=args.device_id)
+        session = sessions.load(session_id, device_id=args.device_id)
         existing_skills = normalize_enabled_skill_names(
-            dict((context.environment_map.get(AGENT_RUNTIME_NAMESPACE) or {})).get(ENABLED_SKILLS_FIELD)
+            dict((session.environment_map.get(AGENT_RUNTIME_NAMESPACE) or {})).get(ENABLED_SKILLS_FIELD)
         )
         enabled_skills = (
             _validated_enabled_skills(args.skills)
@@ -132,7 +132,7 @@ def main() -> int:
         )
         available_skills = available_project_skill_names()
         enabled_skills = _validated_enabled_skills(enabled_skills) or enabled_skills
-        runtime.update_environment_map(
+        sessions.patch_environment(
             session_id,
             {
                 AGENT_RUNTIME_NAMESPACE: {
@@ -144,7 +144,7 @@ def main() -> int:
         payload = {
             "status": "started",
             "session_id": session_id,
-            "device_id": context.raw_session.get("device_id") or args.device_id,
+            "device_id": session.raw_session.get("device_id") or args.device_id,
             "enabled_skills": enabled_skills,
             "available_skills": available_skills,
         }

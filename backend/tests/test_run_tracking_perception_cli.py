@@ -194,11 +194,11 @@ def test_preferred_camera_index_falls_back_to_zero_when_no_devices(monkeypatch) 
 
 
 def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_path) -> None:
-    from backend.agent.runtime import LocalAgentRuntime
+    from backend.agent.session_store import AgentSessionStore
     from backend.perception import LocalPerceptionService
 
     state_root = tmp_path / "state"
-    runtime = LocalAgentRuntime(state_root=state_root)
+    runtime = AgentSessionStore(state_root=state_root)
     perception = LocalPerceptionService(state_root=state_root)
     runtime.start_fresh_session("sess_001", device_id="robot_01")
     runtime.update_skill_cache("sess_001", skill_name="tracking", payload={"latest_target_id": 7})
@@ -215,11 +215,11 @@ def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_pa
 
 
 def test_prepare_perception_session_resets_existing_session_when_requested(tmp_path) -> None:
-    from backend.agent.runtime import LocalAgentRuntime
+    from backend.agent.session_store import AgentSessionStore
     from backend.perception import LocalPerceptionService
 
     state_root = tmp_path / "state"
-    runtime = LocalAgentRuntime(state_root=state_root)
+    runtime = AgentSessionStore(state_root=state_root)
     perception = LocalPerceptionService(state_root=state_root)
     runtime.start_fresh_session("sess_001", device_id="robot_01")
     runtime.update_skill_cache("sess_001", skill_name="tracking", payload={"latest_target_id": 7})

@@ -6,10 +6,10 @@ from pathlib import Path
 
 from PIL import Image
 
-from backend.agent.memory import AgentMemoryStore
+from backend.agent import AgentSessionStore
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 from backend.persistence import ActiveSessionStore, LiveSessionStore
-from backend.tracking_viewer_stream import build_tracking_viewer_payload
+from backend.agent_viewer_stream import build_agent_viewer_payload
 
 
 def _memory_payload() -> dict:
@@ -73,33 +73,34 @@ def test_build_tracking_viewer_payload_includes_current_frame_memory_and_history
             "memory": _memory_payload(),
         },
     )
-    AgentMemoryStore(state_root, "sess_001").update_skill_cache(
-        "tracking",
-        {
+    AgentSessionStore(state_root).update_skill_cache(
+        "sess_001",
+        skill_name="tracking",
+        payload={
             "latest_target_id": 3,
             "latest_memory": _memory_payload(),
             "pending_question": "",
         },
     )
 
-    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_001")
+    payload = build_agent_viewer_payload(state_root=state_root, session_id="sess_001")
 
     assert payload["available"] is True
     assert payload["summary"]["target_id"] == 3
-    assert "核心特征：短发、黑色上衣。" in payload["current_memory"]
-    assert "摘要：" not in payload["current_memory"]
-    assert payload["display_frame"]["frame_id"] == "frame_000001"
-    assert payload["display_frame"]["target_id"] == 3
-    assert payload["display_frame"]["image_data_url"].startswith("data:image/jpeg;base64,")
-    assert payload["conversation_history"][-1]["text"] == "目标在左侧。"
-    assert payload["conversation_history"][-1]["debug"]["behavior"] == "reply"
-    assert payload["memory_history"] == []
+    assert "核心特征：短发、黑色上衣。" in payload["modules"]["tracking"]["current_memory"]
+    assert "摘要：" not in payload["modules"]["tracking"]["current_memory"]
+    assert payload["modules"]["tracking"]["display_frame"]["frame_id"] == "frame_000001"
+    assert payload["modules"]["tracking"]["display_frame"]["target_id"] == 3
+    assert payload["modules"]["tracking"]["display_frame"]["image_data_url"].startswith("data:image/jpeg;base64,")
+    assert payload["agent"]["conversation_history"][-1]["text"] == "目标在左侧。"
+    assert payload["agent"]["conversation_history"][-1]["debug"]["behavior"] == "reply"
+    assert payload["modules"]["tracking"]["memory_history"] == []
     assert payload["summary"]["status_kind"] == "tracking"
     assert payload["summary"]["status_label"] == "跟踪中"
 
 
 def test_build_tracking_viewer_payload_handles_missing_session(tmp_path: Path) -> None:
-    payload = build_tracking_viewer_payload(
+    payload = build_agent_viewer_payload(
         state_root=tmp_path / "state",
         session_id="missing_session",
     )
@@ -126,11 +127,11 @@ def test_build_tracking_viewer_payload_uses_active_session_when_session_id_is_om
     )
     ActiveSessionStore(state_root).write("sess_active")
 
-    payload = build_tracking_viewer_payload(state_root=state_root)
+    payload = build_agent_viewer_payload(state_root=state_root)
 
     assert payload["available"] is True
     assert payload["session_id"] == "sess_active"
-    assert payload["display_frame"] is None
+    assert payload["observation"]["latest_frame"] is None
 
 
 def test_build_tracking_viewer_payload_hides_raw_perception_frames_before_target_confirmation(
@@ -152,11 +153,11 @@ def test_build_tracking_viewer_payload_hides_raw_perception_frames_before_target
         request_function="chat",
     )
 
-    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_waiting")
+    payload = build_agent_viewer_payload(state_root=state_root, session_id="sess_waiting")
 
     assert payload["available"] is True
-    assert payload["latest_result"] is None
-    assert payload["display_frame"] is None
+    assert payload["agent"]["latest_result"] is None
+    assert payload["modules"]["tracking"]["display_frame"] is None
     assert payload["summary"]["frame_id"] is None
     assert payload["summary"]["detection_count"] == 0
 
@@ -215,19 +216,20 @@ def test_build_tracking_viewer_payload_follows_latest_perception_frame_after_con
         ),
         request_function="observation",
     )
-    AgentMemoryStore(state_root, "sess_live").update_skill_cache(
-        "tracking",
-        {
+    AgentSessionStore(state_root).update_skill_cache(
+        "sess_live",
+        skill_name="tracking",
+        payload={
             "latest_target_id": 3,
             "latest_memory": _memory_payload(),
             "pending_question": "",
         },
     )
 
-    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_live")
+    payload = build_agent_viewer_payload(state_root=state_root, session_id="sess_live")
 
-    assert payload["display_frame"]["frame_id"] == "frame_000002"
-    assert payload["display_frame"]["bbox"] == [12, 24, 34, 46]
+    assert payload["modules"]["tracking"]["display_frame"]["frame_id"] == "frame_000002"
+    assert payload["modules"]["tracking"]["display_frame"]["bbox"] == [12, 24, 34, 46]
     assert payload["summary"]["frame_id"] == "frame_000002"
 
 
@@ -269,16 +271,17 @@ def test_build_tracking_viewer_payload_marks_completed_stream(tmp_path: Path) ->
             "text": "当前画面中未发现与历史目标特征一致的人，暂时无法继续绑定。",
         },
     )
-    AgentMemoryStore(state_root, "sess_done").update_skill_cache(
-        "tracking",
-        {
+    AgentSessionStore(state_root).update_skill_cache(
+        "sess_done",
+        skill_name="tracking",
+        payload={
             "latest_target_id": 3,
             "latest_memory": _memory_payload(),
             "pending_question": "",
         },
     )
 
-    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_done")
+    payload = build_agent_viewer_payload(state_root=state_root, session_id="sess_done")
 
     assert payload["summary"]["status_kind"] == "completed"
     assert payload["summary"]["status_label"] == "视频结束"
@@ -323,25 +326,26 @@ def test_build_tracking_viewer_payload_keeps_display_frame_during_wait(tmp_path:
             "text": "当前画面中未发现与历史目标特征一致的人，暂时无法继续绑定。",
         },
     )
-    AgentMemoryStore(state_root, "sess_wait_live").update_skill_cache(
-        "tracking",
-        {
+    AgentSessionStore(state_root).update_skill_cache(
+        "sess_wait_live",
+        skill_name="tracking",
+        payload={
             "latest_target_id": 8,
             "latest_memory": _memory_payload(),
             "pending_question": "",
         },
     )
 
-    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_wait_live")
+    payload = build_agent_viewer_payload(state_root=state_root, session_id="sess_wait_live")
 
     assert payload["summary"]["status_kind"] == "seeking"
-    assert payload["display_frame"]["frame_id"] == "frame_000010"
-    assert payload["display_frame"]["target_id"] == 8
-    assert payload["display_frame"]["bbox"] == [11, 21, 31, 41]
+    assert payload["modules"]["tracking"]["display_frame"]["frame_id"] == "frame_000010"
+    assert payload["modules"]["tracking"]["display_frame"]["target_id"] == 8
+    assert payload["modules"]["tracking"]["display_frame"]["bbox"] == [11, 21, 31, 41]
 
 
 def test_build_tracking_viewer_payload_handles_missing_active_session(tmp_path: Path) -> None:
-    payload = build_tracking_viewer_payload(
+    payload = build_agent_viewer_payload(
         state_root=tmp_path / "state",
     )
 
@@ -372,16 +376,17 @@ def test_build_tracking_viewer_payload_marks_wait_result_as_seeking(tmp_path: Pa
             "text": "当前证据不足。",
         },
     )
-    AgentMemoryStore(state_root, "sess_wait").update_skill_cache(
-        "tracking",
-        {
+    AgentSessionStore(state_root).update_skill_cache(
+        "sess_wait",
+        skill_name="tracking",
+        payload={
             "latest_target_id": 5,
             "latest_memory": _memory_payload(),
             "pending_question": "",
         },
     )
 
-    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_wait")
+    payload = build_agent_viewer_payload(state_root=state_root, session_id="sess_wait")
 
     assert payload["summary"]["status_kind"] == "seeking"
     assert payload["summary"]["status_label"] == "寻找中"
@@ -421,9 +426,9 @@ def test_build_tracking_viewer_payload_exposes_recent_conversation_window(tmp_pa
             },
         )
 
-    payload = build_tracking_viewer_payload(state_root=state_root, session_id="sess_history")
+    payload = build_agent_viewer_payload(state_root=state_root, session_id="sess_history")
 
-    assert len(payload["conversation_history"]) == 8
-    assert payload["conversation_history"][0]["text"] == "user turn 8"
-    assert payload["conversation_history"][-1]["text"] == "assistant turn 11"
-    assert payload["conversation_history"][-1]["debug"]["request_id"] == "req_011"
+    assert len(payload["agent"]["conversation_history"]) == 8
+    assert payload["agent"]["conversation_history"][0]["text"] == "user turn 8"
+    assert payload["agent"]["conversation_history"][-1]["text"] == "assistant turn 11"
+    assert payload["agent"]["conversation_history"][-1]["debug"]["request_id"] == "req_011"

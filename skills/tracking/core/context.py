@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from backend.agent.context import AgentContext
+from backend.agent.session import AgentSession
 from backend.session_frames import tracking_recent_frames
 from skills.tracking.core.memory import normalize_tracking_memory, tracking_memory_display_text, tracking_memory_summary
 
@@ -37,14 +37,14 @@ def _latest_user_text(raw_session: Dict[str, Any]) -> str:
 
 
 def _tracking_frames(
-    context: AgentContext,
+    session: AgentSession,
     *,
     excluded_track_ids: Optional[List[int]] = None,
 ) -> List[Dict[str, Any]]:
     return tracking_recent_frames(
-        state_root=Path(context.state_paths["state_root"]),
-        session_id=context.session_id,
-        raw_session=context.raw_session,
+        state_root=Path(session.state_paths["state_root"]),
+        session_id=session.session_id,
+        raw_session=session.raw_session,
         excluded_track_ids=excluded_track_ids,
     )
 
@@ -86,18 +86,18 @@ def tracking_state_snapshot(raw_tracking_state: Any) -> Dict[str, Any]:
 
 
 def build_route_context(
-    context: AgentContext,
+    session: AgentSession,
     *,
     request_id: str,
     enabled_skill_names: List[str],
 ) -> Dict[str, Any]:
-    raw_session = context.raw_session
-    frames = _tracking_frames(context)
+    raw_session = session.raw_session
+    frames = _tracking_frames(session)
     latest_frame = None if not frames else frames[-1]
     latest_result = dict(raw_session.get("latest_result") or {})
-    tracking_state = tracking_state_snapshot((context.skill_cache.get("tracking") or {}))
+    tracking_state = tracking_state_snapshot((session.skill_cache.get("tracking") or {}))
     return {
-        "session_id": context.session_id,
+        "session_id": session.session_id,
         "request_id": request_id,
         "enabled_skills": list(enabled_skill_names),
         "latest_user_text": _latest_user_text(raw_session),
@@ -138,16 +138,16 @@ def build_route_context(
 
 
 def build_tracking_context(
-    context: AgentContext,
+    session: AgentSession,
     *,
     request_id: str,
     excluded_track_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
-    raw_session = context.raw_session
-    tracking_state = tracking_state_snapshot((context.skill_cache.get("tracking") or {}))
+    raw_session = session.raw_session
+    tracking_state = tracking_state_snapshot((session.skill_cache.get("tracking") or {}))
     normalized_excluded_track_ids = sorted(_normalized_track_id_set(excluded_track_ids))
     return {
-        "session_id": context.session_id,
+        "session_id": session.session_id,
         "request_id": request_id,
         "target_description": tracking_state.get("target_description", ""),
         "memory": tracking_state.get("latest_memory", ""),
@@ -165,7 +165,7 @@ def build_tracking_context(
         ),
         "excluded_track_ids": normalized_excluded_track_ids,
         "frames": _tracking_frames(
-            context,
+            session,
             excluded_track_ids=normalized_excluded_track_ids,
         ),
     }

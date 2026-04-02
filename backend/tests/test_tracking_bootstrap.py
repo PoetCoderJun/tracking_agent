@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import backend.agent.tracking_bootstrap as bootstrap
+import skills.tracking.bootstrap as bootstrap
 
 
 def test_float_env_value_uses_default_for_blank_and_invalid_values() -> None:

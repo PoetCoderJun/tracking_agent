@@ -10,9 +10,9 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-from backend.agent.context import AgentContext
-import backend.agent.tracking_orchestration as tracking_orchestration
-from backend.agent.runtime import LocalAgentRuntime
+from backend.agent.session import AgentSession
+from backend.agent.session_store import AgentSessionStore
+import skills.tracking.runtime as tracking_orchestration
 from backend.config import parse_dotenv
 from backend.perception.service import LocalPerceptionService
 from skills.tracking.core.context import build_route_context, build_tracking_context
@@ -242,13 +242,13 @@ def available_project_skill_names() -> list[str]:
     return list(_available_skill_map().keys())
 
 
-def _context_enabled_skills(context: AgentContext) -> list[str]:
-    runtime_config = dict((context.environment_map.get(AGENT_RUNTIME_NAMESPACE) or {}))
+def _enabled_skills_in_session(session: AgentSession) -> list[str]:
+    runtime_config = dict((session.environment_map.get(AGENT_RUNTIME_NAMESPACE) or {}))
     return normalize_enabled_skill_names(runtime_config.get(ENABLED_SKILLS_FIELD))
 
 
 def _turn_context_payload(
-    context: AgentContext,
+    session: AgentSession,
     *,
     env_file: Path,
     artifacts_root: Path,
@@ -263,17 +263,17 @@ def _turn_context_payload(
         "backend.perception.cli",
         "read",
         "--state-root",
-        context.state_paths["state_root"],
+        session.state_paths["state_root"],
         "--session-id",
-        context.session_id,
+        session.session_id,
     ]
     payload = {
-        "session_id": context.session_id,
+        "session_id": session.session_id,
         "request_id": request_id,
         "context_paths": {
             "route_context_path": str(route_context_path.resolve()),
         },
-        "state_paths": dict(context.state_paths),
+        "state_paths": dict(session.state_paths),
         "service_commands": {
             "perception_read": shlex.join(perception_query_command),
         },
@@ -287,6 +287,7 @@ def _turn_context_payload(
 
 
 def _write_json(payload: Dict[str, Any], path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=True),
         encoding="utf-8",
@@ -316,7 +317,7 @@ Rules:
 3. Use installed skills and their bundled scripts directly. Do not expect any backend skill adapter or runtime wrapper.
 4. If a skill needs deterministic help, call its scripts through bash.
 5. If the specialized context files are insufficient, prefer `service_commands.perception_read` before falling back to raw state files.
-6. Only read `state_paths.session_path` or `state_paths.agent_memory_path` if the specialized context files and perception CLI output are insufficient and you are blocked.
+6. Only read `state_paths.session_path` if the specialized context files and perception CLI output are insufficient and you are blocked.
 7. Never edit any persisted state file yourself. The runner persists your returned payload.
 8. Never write the final payload into a temp file such as `pi_output.json`. Return the raw JSON object directly in your final assistant message.
 9. Do not output summaries, markdown, or explanatory prose. Return exactly one raw JSON object and nothing else.
@@ -420,7 +421,7 @@ def _pi_command(
 def _run_pi_turn(
     *,
     pi_binary: str,
-    context: AgentContext,
+    session: AgentSession,
     env_file: Path,
     artifacts_root: Path,
     request_id: str,
@@ -430,10 +431,10 @@ def _run_pi_turn(
     if shutil.which(pi_binary) is None:
         raise RuntimeError(f"Pi binary not found in PATH: {pi_binary}")
 
-    request_dir = _request_dir(artifacts_root, context.session_id, request_id)
+    request_dir = _request_dir(artifacts_root, session.session_id, request_id)
     route_context_path = _write_json(
         build_route_context(
-            context,
+            session,
             request_id=request_id,
             enabled_skill_names=enabled_skill_names,
         ),
@@ -442,12 +443,12 @@ def _run_pi_turn(
     tracking_context_path = None
     if TRACKING_SKILL_NAME in enabled_skill_names:
         tracking_context_path = _write_json(
-            build_tracking_context(context, request_id=request_id),
+            build_tracking_context(session, request_id=request_id),
             request_dir / "tracking_context.json",
         )
     turn_context_path = _write_json(
         _turn_context_payload(
-            context,
+            session,
             env_file=env_file,
             artifacts_root=artifacts_root,
             request_id=request_id,
@@ -481,6 +482,7 @@ def _run_pi_turn(
     except subprocess.TimeoutExpired as exc:
         stdout = _decoded_subprocess_output(exc.stdout)
         stderr = _decoded_subprocess_output(exc.stderr) + f"\nTimed out after {DEFAULT_PI_TIMEOUT_SECONDS} seconds."
+        request_dir.mkdir(parents=True, exist_ok=True)
         (request_dir / "pi_stdout.jsonl").write_text(stdout, encoding="utf-8")
         (request_dir / "pi_stderr.txt").write_text(stderr, encoding="utf-8")
         raise RuntimeError(
@@ -489,6 +491,7 @@ def _run_pi_turn(
             f"stderr_path={request_dir / 'pi_stderr.txt'}"
         )
 
+    request_dir.mkdir(parents=True, exist_ok=True)
     (request_dir / "pi_stdout.jsonl").write_text(completed.stdout, encoding="utf-8")
     (request_dir / "pi_stderr.txt").write_text(completed.stderr, encoding="utf-8")
 
@@ -539,7 +542,7 @@ class PiAgentRunner:
         pi_tools: str = DEFAULT_PI_TOOLS,
         enabled_skills: Any = None,
     ):
-        self._runtime = LocalAgentRuntime(
+        self._sessions = AgentSessionStore(
             state_root=state_root,
             frame_buffer_size=frame_buffer_size,
         )
@@ -548,8 +551,8 @@ class PiAgentRunner:
         self._enabled_skills = normalize_enabled_skill_names(enabled_skills)
 
     @property
-    def runtime(self) -> LocalAgentRuntime:
-        return self._runtime
+    def sessions(self) -> AgentSessionStore:
+        return self._sessions
 
     def process_chat_request(
         self,
@@ -561,20 +564,20 @@ class PiAgentRunner:
         env_file: Path,
         artifacts_root: Path,
     ) -> Dict[str, Any]:
-        self._runtime.append_chat_request(
+        self._sessions.append_chat_request(
             session_id=session_id,
             device_id=device_id,
             text=text,
             request_id=request_id,
         )
-        context = self._runtime.context(session_id, device_id=device_id)
+        session = self._sessions.load(session_id, device_id=device_id)
         enabled_skill_names = (
             list(self._enabled_skills)
             if self._enabled_skills
-            else _context_enabled_skills(context) or available_project_skill_names()
+            else _enabled_skills_in_session(session) or available_project_skill_names()
         )
         if enabled_skill_names == [TRACKING_SKILL_NAME]:
-            tracking_state = dict((context.skill_cache.get(TRACKING_SKILL_NAME) or {}))
+            tracking_state = dict((session.skill_cache.get(TRACKING_SKILL_NAME) or {}))
             if tracking_state.get("latest_target_id") in (None, "", []):
                 return self.process_tracking_init_direct(
                     session_id=session_id,
@@ -603,7 +606,7 @@ class PiAgentRunner:
         excluded_track_ids: list[int] | None = None,
     ) -> Dict[str, Any]:
         return tracking_orchestration.process_tracking_request_direct(
-            runtime=self._runtime,
+            sessions=self._sessions,
             session_id=session_id,
             device_id=device_id,
             text=text,
@@ -625,7 +628,7 @@ class PiAgentRunner:
         artifacts_root: Path,
     ) -> Dict[str, Any]:
         return tracking_orchestration.process_tracking_init_direct(
-            runtime=self._runtime,
+            sessions=self._sessions,
             session_id=session_id,
             device_id=device_id,
             text=text,
@@ -643,11 +646,11 @@ class PiAgentRunner:
         env_file: Path,
         artifacts_root: Path,
     ) -> Dict[str, Any]:
-        context = self._runtime.context(session_id)
+        session = self._sessions.load(session_id)
         enabled_skill_names = (
             list(self._enabled_skills)
             if self._enabled_skills
-            else _context_enabled_skills(context) or available_project_skill_names()
+            else _enabled_skills_in_session(session) or available_project_skill_names()
         )
         last_error: Exception | None = None
         pi_payload: Dict[str, Any] | None = None
@@ -655,7 +658,7 @@ class PiAgentRunner:
             try:
                 pi_payload = _run_pi_turn(
                     pi_binary=self._pi_binary,
-                    context=context,
+                    session=session,
                     env_file=env_file,
                     artifacts_root=artifacts_root,
                     request_id=request_id,
@@ -678,18 +681,18 @@ class PiAgentRunner:
 
         status = str(pi_payload.get("status", "")).strip()
         if status == "idle":
-            latest_observation = LocalPerceptionService(self._runtime.state_root).latest_camera_observation(
-                session_id=context.session_id,
+            latest_observation = LocalPerceptionService(self._sessions.state_root).latest_camera_observation(
+                session_id=session.session_id,
             )
             return {
-                "session_id": context.session_id,
+                "session_id": session.session_id,
                 "skill_name": None if pi_payload.get("skill_name") in (None, "") else str(pi_payload.get("skill_name")),
                 "status": "idle",
                 "frame_id": None
                 if latest_observation is None
                 else (latest_observation.get("payload") or {}).get("frame_id"),
                 "reason": str(pi_payload.get("reason", "")).strip() or "No skill accepted the current turn.",
-                "raw_session": context.raw_session,
+                "session": session.raw_session,
             }
         return self._apply_processed_payload(
             session_id=session_id,
@@ -717,13 +720,13 @@ class PiAgentRunner:
         if session_result is None:
             raise ValueError("Processed Pi payload is missing session_result")
 
-        current_context = self._runtime.apply_skill_result(session_id, session_result)
+        current_session = self._sessions.apply_skill_result(session_id, session_result)
         latest_result_patch = _as_optional_dict(
             pi_payload.get("latest_result_patch"),
             "latest_result_patch",
         )
         if latest_result_patch:
-            current_context = self._runtime.patch_latest_result(
+            current_session = self._sessions.patch_latest_result(
                 session_id=session_id,
                 patch=latest_result_patch,
                 expected_request_id=session_result.get("request_id"),
@@ -735,21 +738,21 @@ class PiAgentRunner:
             "user_preferences_patch",
         )
         if user_preferences_patch:
-            current_context = self._runtime.update_user_preferences(session_id, user_preferences_patch)
+            current_session = self._sessions.patch_user_preferences(session_id, user_preferences_patch)
 
         environment_map_patch = _as_optional_dict(
             pi_payload.get("environment_map_patch"),
             "environment_map_patch",
         )
         if environment_map_patch:
-            current_context = self._runtime.update_environment_map(session_id, environment_map_patch)
+            current_session = self._sessions.patch_environment(session_id, environment_map_patch)
 
         perception_cache_patch = _as_optional_dict(
             pi_payload.get("perception_cache_patch"),
             "perception_cache_patch",
         )
         if perception_cache_patch:
-            current_context = self._runtime.update_perception_cache(session_id, perception_cache_patch)
+            current_session = self._sessions.patch_perception(session_id, perception_cache_patch)
 
         skill_state_patch = _as_optional_dict(
             pi_payload.get("skill_state_patch"),
@@ -757,21 +760,21 @@ class PiAgentRunner:
         )
         skill_state_patch = _normalize_skill_state_patch(skill_name, skill_state_patch)
         if skill_state_patch:
-            current_context = self._runtime.update_skill_cache(
+            current_session = self._sessions.patch_skill_state(
                 session_id,
                 skill_name=skill_name,
-                payload=skill_state_patch,
+                patch=skill_state_patch,
             )
 
         if skill_name == TRACKING_SKILL_NAME and rewrite_memory_input:
             tracking_orchestration.schedule_tracking_memory_rewrite(
-                runtime=self._runtime,
+                sessions=self._sessions,
                 session_id=session_id,
                 rewrite_memory_input=rewrite_memory_input,
                 env_file=env_file,
             )
 
-        final_context = self._runtime.context(session_id)
+        final_session = self._sessions.load(session_id)
         return {
             "session_id": session_id,
             "status": "processed",
@@ -787,6 +790,6 @@ class PiAgentRunner:
             "tool_output": tool_output,
             "rewrite_output": rewrite_output,
             "rewrite_memory_input": rewrite_memory_input,
-            "latest_result": final_context.raw_session.get("latest_result"),
-            "raw_session": final_context.raw_session,
+            "latest_result": final_session.raw_session.get("latest_result"),
+            "session": final_session.raw_session,
         }

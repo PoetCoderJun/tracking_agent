@@ -2,19 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.agent import AgentMemoryStore
+from backend.agent import AgentSessionStore
 
 
-def test_agent_memory_store_merges_preferences_and_environment_map(tmp_path: Path) -> None:
-    store = AgentMemoryStore(tmp_path / "state", "sess_001")
+def test_agent_session_store_merges_preferences_and_environment_map(tmp_path: Path) -> None:
+    store = AgentSessionStore(tmp_path / "state")
 
-    store.update_user_preferences(
+    store.patch_user_preferences(
+        "sess_001",
         {
             "language": "zh",
             "tracking": {"confirm_before_switch": True},
         }
     )
-    updated = store.update_environment_map(
+    updated = store.patch_environment(
+        "sess_001",
         {
             "rooms": {"kitchen": {"visited": True}},
             "dock": {"x": 1, "y": 2},
@@ -27,27 +29,28 @@ def test_agent_memory_store_merges_preferences_and_environment_map(tmp_path: Pat
     assert updated.environment_map["dock"] == {"x": 1, "y": 2}
 
 
-def test_agent_memory_store_updates_skill_and_perception_cache(tmp_path: Path) -> None:
-    store = AgentMemoryStore(tmp_path / "state", "sess_001")
+def test_agent_session_store_updates_skill_and_perception_cache(tmp_path: Path) -> None:
+    store = AgentSessionStore(tmp_path / "state")
 
-    store.update_perception_cache({"vision": {"latest_frame_id": "frame_000001"}})
-    updated = store.update_skill_cache(
-        "tracking",
-        {"last_tool": "track"},
+    store.patch_perception("sess_001", {"vision": {"latest_frame_id": "frame_000001"}})
+    updated = store.patch_skill_state(
+        "sess_001",
+        skill_name="tracking",
+        patch={"last_tool": "track"},
     )
 
     assert updated.perception_cache["vision"]["latest_frame_id"] == "frame_000001"
     assert updated.skill_cache["tracking"]["last_tool"] == "track"
 
 
-def test_agent_memory_store_reset_clears_all_sections(tmp_path: Path) -> None:
-    store = AgentMemoryStore(tmp_path / "state", "sess_001")
-    store.update_user_preferences({"language": "zh"})
-    store.update_environment_map({"dock": {"x": 1}})
-    store.update_perception_cache({"vision": {"latest_frame_id": "frame_000001"}})
-    store.update_skill_cache("tracking", {"latest_target_id": 7})
+def test_agent_session_store_reset_clears_all_sections(tmp_path: Path) -> None:
+    store = AgentSessionStore(tmp_path / "state")
+    store.patch_user_preferences("sess_001", {"language": "zh"})
+    store.patch_environment("sess_001", {"dock": {"x": 1}})
+    store.patch_perception("sess_001", {"vision": {"latest_frame_id": "frame_000001"}})
+    store.patch_skill_state("sess_001", skill_name="tracking", patch={"latest_target_id": 7})
 
-    reset = store.reset()
+    reset = store.start_fresh_session("sess_001")
 
     assert reset.session_id == "sess_001"
     assert reset.user_preferences == {}

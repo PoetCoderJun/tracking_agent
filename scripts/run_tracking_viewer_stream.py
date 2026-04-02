@@ -11,12 +11,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.project_paths import resolve_project_path
-from backend.tracking_viewer_stream import TrackingViewerStreamServer
+from backend.agent_viewer_stream import AgentViewerStreamServer
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Start the tracking viewer websocket stream for one session or the active session."
+        description="Start the agent viewer websocket stream for one session or the active session."
     )
     parser.add_argument(
         "--session-id",
@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    server = TrackingViewerStreamServer(
+    server = AgentViewerStreamServer(
         state_root=resolve_project_path(args.state_root),
         session_id=args.session_id,
         host=args.host,

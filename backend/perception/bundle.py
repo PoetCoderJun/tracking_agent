@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
 
-from backend.agent.context import AgentContext
+from backend.agent.session import AgentSession
 from backend.session_frames import observation_recent_frames
 
 
@@ -31,11 +31,11 @@ class PerceptionBundle:
 RobotPerceptionBundle = PerceptionBundle
 
 
-def build_perception_bundle(context: AgentContext) -> PerceptionBundle:
-    raw_session = context.raw_session
+def build_perception_bundle(session: AgentSession) -> PerceptionBundle:
+    raw_session = session.raw_session
     recent_frames = observation_recent_frames(
-        state_root=Path(context.state_paths["state_root"]),
-        session_id=context.session_id,
+        state_root=Path(session.state_paths["state_root"]),
+        session_id=session.session_id,
     )
     latest_frame = None if not recent_frames else recent_frames[-1]
     return PerceptionBundle(
@@ -59,8 +59,8 @@ def build_perception_bundle(context: AgentContext) -> PerceptionBundle:
         },
         memory={
             "latest_result": dict(raw_session.get("latest_result") or {}) or None,
-            "runtime_summary": dict((context.perception_cache.get("runtime") or {})),
+            "runtime_summary": dict((session.perception_cache.get("runtime") or {})),
         },
-        user_preferences=dict(context.user_preferences),
-        environment_map=dict(context.environment_map),
+        user_preferences=dict(session.user_preferences),
+        environment_map=dict(session.environment_map),
     )

@@ -6,7 +6,7 @@ import json
 from PIL import Image
 
 import backend.agent.runner as runner_module
-import backend.agent.tracking_orchestration as tracking_orchestration_module
+import skills.tracking.runtime as tracking_orchestration_module
 from backend.agent import PiAgentRunner
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 
@@ -36,7 +36,7 @@ def _write_observation(
     request_function: str = "observation",
     detections: list[RobotDetection] | None = None,
 ) -> None:
-    LocalPerceptionService(runner.runtime.state_root).write_observation(
+    LocalPerceptionService(runner.sessions.state_root).write_observation(
         RobotIngestEvent(
             session_id=session_id,
             device_id="robot_01",
@@ -126,22 +126,22 @@ def test_pi_agent_runner_processes_event_and_updates_memory(monkeypatch, tmp_pat
     assert result["skill_name"] == "tracking"
     assert result["tool"] == "track"
     assert "memory" not in result["latest_result"]
-    context = runner.runtime.context("sess_001")
+    context = runner.sessions.context("sess_001")
     assert context.skill_cache["tracking"]["last_tool"] == "track"
     assert context.skill_cache["tracking"]["pi_orchestrated"] is True
 
 
 def test_start_fresh_session_resets_tracking_memory(tmp_path: Path) -> None:
     runner = PiAgentRunner(state_root=tmp_path / "state")
-    runner.runtime.update_skill_cache(
+    runner.sessions.update_skill_cache(
         "sess_reset",
         skill_name="tracking",
         payload={"latest_memory": _structured_memory("旧 memory"), "latest_target_id": 9},
     )
 
-    runner.runtime.start_fresh_session("sess_reset", device_id="robot_01")
+    runner.sessions.start_fresh_session("sess_reset", device_id="robot_01")
 
-    context = runner.runtime.context("sess_reset")
+    context = runner.sessions.context("sess_reset")
     assert context.user_preferences == {}
     assert context.environment_map == {}
     assert context.perception_cache == {}
@@ -288,7 +288,7 @@ def test_runner_schedules_init_memory_rewrite_asynchronously(monkeypatch, tmp_pa
     assert scheduled[0]["rewrite_memory_input"]["task"] == "init"
     assert result["rewrite_output"] is None
     assert "memory" not in result["latest_result"]
-    context = runner.runtime.context("sess_init")
+    context = runner.sessions.context("sess_init")
     assert "latest_memory" not in context.skill_cache["tracking"]
 
 
@@ -334,7 +334,7 @@ def test_runner_processes_direct_tracking_request(monkeypatch, tmp_path: Path) -
     assert result["tool"] == "track"
     assert result["session_result"]["target_id"] == 12
     assert result["robot_response"]["action"] == "track"
-    context = runner.runtime.context("sess_direct")
+    context = runner.sessions.context("sess_direct")
     assert context.skill_cache["tracking"]["latest_target_id"] == 12
 
 
@@ -445,7 +445,7 @@ def test_schedule_tracking_memory_rewrite_spawns_subprocess_worker(monkeypatch, 
         request_id="req_obs_worker",
         detections=[RobotDetection(track_id=12, bbox=[10, 20, 30, 40], score=0.95)],
     )
-    runner.runtime.update_skill_cache(
+    runner.sessions.update_skill_cache(
         "sess_worker",
         skill_name="tracking",
         payload={
@@ -467,7 +467,7 @@ def test_schedule_tracking_memory_rewrite_spawns_subprocess_worker(monkeypatch, 
     monkeypatch.setattr(tracking_orchestration_module.subprocess, "Popen", fake_popen)
 
     tracking_orchestration_module.schedule_tracking_memory_rewrite(
-        runtime=runner.runtime,
+        sessions=runner.sessions,
         session_id="sess_worker",
         rewrite_memory_input={
             "task": "update",
@@ -481,7 +481,7 @@ def test_schedule_tracking_memory_rewrite_spawns_subprocess_worker(monkeypatch, 
 
     assert len(spawned) == 1
     command = spawned[0]["command"]
-    assert "backend/agent/tracking_rewrite_worker.py" in command
+    assert "skills/tracking/scripts/rewrite_worker.py" in command
     assert "--session-id" in command
     assert "sess_worker" in command
     assert "--frame-path" in command
@@ -560,14 +560,14 @@ def test_runner_recovers_turn_payload_from_later_assistant_text_part() -> None:
 
 def test_runner_prompt_points_pi_to_context_views(tmp_path: Path) -> None:
     runner = PiAgentRunner(state_root=tmp_path / "state")
-    runner.runtime.append_chat_request(
+    runner.sessions.append_chat_request(
         session_id="sess_prompt",
         device_id="robot_01",
         text="跟踪画面里的人",
         request_id="req_prompt",
     )
 
-    context = runner.runtime.context("sess_prompt")
+    context = runner.sessions.context("sess_prompt")
     request_dir = tmp_path / "artifacts" / "requests" / "sess_prompt" / "req_prompt"
     request_dir.mkdir(parents=True, exist_ok=True)
     turn_context_path = runner_module._write_json(
@@ -589,7 +589,7 @@ def test_runner_prompt_points_pi_to_context_views(tmp_path: Path) -> None:
     assert "context_paths.tracking_context_path" in prompt
     assert "`enabled_skills`" in prompt
     assert "Available project skills are already loaded natively into Pi" in prompt
-    assert "Only read `state_paths.session_path` or `state_paths.agent_memory_path`" in prompt
+    assert "Only read `state_paths.session_path`" in prompt
     assert "Never write the final payload into a temp file such as `pi_output.json`" in prompt
     assert "`idle` is only for turns where no installed skill applies" in prompt
     assert "copy those canonical fields directly into `session_result`" in prompt
@@ -692,13 +692,13 @@ def test_project_skill_paths_reject_unknown_skill_names() -> None:
 
 def test_runner_uses_session_enabled_skills_when_present(monkeypatch, tmp_path: Path) -> None:
     runner = PiAgentRunner(state_root=tmp_path / "state")
-    runner.runtime.append_chat_request(
+    runner.sessions.append_chat_request(
         session_id="sess_enabled_skills",
         device_id="robot_01",
         text="hello",
         request_id="req_enabled_skills",
     )
-    runner.runtime.update_environment_map(
+    runner.sessions.update_environment_map(
         "sess_enabled_skills",
         {"agent_runtime": {"enabled_skills": ["speech"]}},
     )
@@ -772,7 +772,7 @@ def test_runner_flattens_redundant_skill_state_wrapper(monkeypatch, tmp_path: Pa
         artifacts_root=tmp_path / "artifacts",
     )
 
-    context = runner.runtime.context("sess_nested")
+    context = runner.sessions.context("sess_nested")
     assert context.skill_cache["tracking"]["latest_target_id"] == 1
     assert "tracking" not in context.skill_cache["tracking"]
 
@@ -837,7 +837,7 @@ def test_runner_does_not_backfill_tracking_fields_from_tool_outputs(monkeypatch,
         "behavior": "reply",
         "text": "还不能确认。",
     }
-    context = runner.runtime.context("sess_backfill")
+    context = runner.sessions.context("sess_backfill")
     assert context.skill_cache == {}
 
 

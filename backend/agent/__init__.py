@@ -1,14 +1,11 @@
-"""Agent-owned context, memory, runtime, and Pi integration."""
+"""Chat-first agent session store and runner."""
 
-from backend.agent.context import AgentContext
-from backend.agent.memory import AgentMemoryRecord, AgentMemoryStore
+from backend.agent.session import AgentSession
+from backend.agent.session_store import AgentSessionStore
 from backend.agent.runner import PiAgentRunner
-from backend.agent.runtime import LocalAgentRuntime
 
 __all__ = [
-    "AgentContext",
-    "AgentMemoryRecord",
-    "AgentMemoryStore",
-    "LocalAgentRuntime",
+    "AgentSession",
+    "AgentSessionStore",
     "PiAgentRunner",
 ]

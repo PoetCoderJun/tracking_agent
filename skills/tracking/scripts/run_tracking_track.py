@@ -18,7 +18,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one deterministic continue-tracking turn.")
     parser.add_argument("--tracking-context-file", default="")
     parser.add_argument("--session-file", default="")
-    parser.add_argument("--memory-file", default="")
     parser.add_argument("--user-text", default="继续跟踪")
     parser.add_argument("--env-file", default=".ENV")
     parser.add_argument("--artifacts-root", default="./.runtime/pi-agent")
@@ -30,7 +29,6 @@ def main() -> int:
     tracking_context_file = str(args.tracking_context_file or "").strip()
     select_output = execute_select_tool(
         session_file=None if tracking_context_file else Path(args.session_file),
-        memory_file=None if tracking_context_file else Path(args.memory_file),
         tracking_context_file=None if not tracking_context_file else Path(tracking_context_file),
         behavior="track",
         arguments={"user_text": str(args.user_text)},

@@ -4,6 +4,7 @@ import base64
 import json
 import shutil
 import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -128,7 +129,19 @@ class BackendStore:
 
     def load_session(self, session_id: str) -> BackendSession:
         with self._lock:
-            payload = json.loads(self.session_path(session_id).read_text(encoding="utf-8"))
+            session_path = self.session_path(session_id)
+            last_error: FileNotFoundError | None = None
+            payload = None
+            for _ in range(5):
+                try:
+                    payload = json.loads(session_path.read_text(encoding="utf-8"))
+                    break
+                except FileNotFoundError as exc:
+                    last_error = exc
+                    time.sleep(0.02)
+            if payload is None:
+                assert last_error is not None
+                raise last_error
             recent_frames = [
                 BackendFrame(
                     frame_id=str(frame["frame_id"]),

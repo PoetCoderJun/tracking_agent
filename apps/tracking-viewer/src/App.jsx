@@ -20,6 +20,7 @@ function formatBoundingBoxIdValue(rawId) {
 }
 
 function deriveViewerStatus(viewerState, connectionState) {
+  const trackingModule = viewerState?.modules?.tracking || {};
   const summaryStatusLabel = viewerState?.summary?.status_label;
   const summaryStatusKind = viewerState?.summary?.status_kind;
   if (connectionState === "disconnected") {
@@ -66,10 +67,10 @@ function deriveViewerStatus(viewerState, connectionState) {
     };
   }
 
-  const latestResult = viewerState?.latest_result || {};
+  const latestResult = viewerState?.agent?.latest_result || {};
   const action =
     latestResult?.robot_response?.action || latestResult?.decision || latestResult?.behavior || "";
-  const hasPendingQuestion = Boolean(viewerState?.summary?.pending_question);
+  const hasPendingQuestion = Boolean(trackingModule?.pending_question || viewerState?.summary?.pending_question);
 
   if (hasPendingQuestion) {
     return {
@@ -258,7 +259,7 @@ function mergeConversationHistory(existing, incoming) {
 }
 
 function appendMemorySnapshot(existing, viewerState) {
-  const memory = String(viewerState?.current_memory || "").trim();
+  const memory = String(viewerState?.modules?.tracking?.current_memory || "").trim();
   if (!memory) {
     return existing;
   }
@@ -266,7 +267,7 @@ function appendMemorySnapshot(existing, viewerState) {
     updated_at: viewerState?.updated_at || "",
     frame_id: viewerState?.summary?.frame_id || "",
     target_id: viewerState?.summary?.target_id ?? null,
-    behavior: viewerState?.latest_result?.behavior || "memory",
+    behavior: viewerState?.agent?.latest_result?.behavior || "memory",
     memory,
   };
   const key = `${nextEntry.updated_at}|${nextEntry.frame_id}|${nextEntry.memory}`;
@@ -322,7 +323,7 @@ export default function App() {
       return;
     }
     setConversationLog((current) =>
-      mergeConversationHistory(current, viewerState?.conversation_history || []),
+      mergeConversationHistory(current, viewerState?.agent?.conversation_history || []),
     );
     setMemoryLog((current) => appendMemorySnapshot(current, viewerState));
   }, [sessionId, viewerState]);
@@ -420,10 +421,11 @@ export default function App() {
     return () => {
       image.removeEventListener("load", updateSize);
     };
-  }, [viewerState?.display_frame?.frame_id, viewerState?.display_frame?.image_data_url]);
+  }, [viewerState?.modules?.tracking?.display_frame?.frame_id, viewerState?.modules?.tracking?.display_frame?.image_data_url, viewerState?.observation?.latest_frame?.frame_id, viewerState?.observation?.latest_frame?.image_data_url]);
 
   useEffect(() => {
-    const nextDisplayFrame = viewerState?.display_frame || null;
+    const nextDisplayFrame =
+      viewerState?.modules?.tracking?.display_frame || viewerState?.observation?.latest_frame || null;
     if (!nextDisplayFrame?.image_data_url) {
       return;
     }
@@ -436,7 +438,7 @@ export default function App() {
       }
       return nextDisplayFrame;
     });
-  }, [viewerState?.display_frame]);
+  }, [viewerState?.modules?.tracking?.display_frame, viewerState?.observation?.latest_frame]);
 
   useEffect(() => {
     const host = stageHostRef.current;
@@ -457,7 +459,7 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
 
-  const liveDisplayFrame = viewerState?.display_frame || null;
+  const liveDisplayFrame = viewerState?.modules?.tracking?.display_frame || viewerState?.observation?.latest_frame || null;
   const displayFrame = liveDisplayFrame?.image_data_url ? liveDisplayFrame : lastGoodDisplayFrame;
   const showingFallbackFrame =
     !liveDisplayFrame?.image_data_url && Boolean(lastGoodDisplayFrame?.image_data_url);
@@ -562,7 +564,9 @@ export default function App() {
           <div className="memory-scroll">
             <div className="current-memory-card">
               <div className="card-label">当前记忆</div>
-              <pre className="memory-block">{viewerState?.current_memory || "当前还没有 tracking memory。"}</pre>
+              <pre className="memory-block">
+                {viewerState?.modules?.tracking?.current_memory || "当前还没有 tracking memory。"}
+              </pre>
             </div>
 
             {viewerState?.summary?.pending_question ? (

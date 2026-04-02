@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.agent.tracking_bootstrap import (
+from skills.tracking.bootstrap import (
     build_tracking_chat_command,
     float_env_value,
     load_tracking_env_values,

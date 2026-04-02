@@ -35,7 +35,7 @@ REFERENCE_VIEW_ALIASES = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Rewrite tracking memory from one successful tracking result.")
-    parser.add_argument("--memory-file", required=True)
+    parser.add_argument("--session-file", required=True)
     parser.add_argument("--task", choices=("init", "update"), required=True)
     parser.add_argument("--crop-path", required=True)
     parser.add_argument("--frame-path", action="append", dest="frame_paths", default=[])
@@ -51,10 +51,10 @@ def load_agent_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]
     return json.loads(config_path.read_text(encoding="utf-8"))
 
 
-def _load_previous_memory(memory_file: Path) -> Any:
-    if not memory_file.exists():
+def _load_previous_memory(session_file: Path) -> Any:
+    if not session_file.exists():
         return {}
-    payload = json.loads(memory_file.read_text(encoding="utf-8"))
+    payload = json.loads(session_file.read_text(encoding="utf-8"))
     tracking_state = dict(((payload.get("skill_cache") or {}).get("tracking") or {}))
     return tracking_state.get("latest_memory", {})
 
@@ -117,7 +117,7 @@ def _candidate_checks_prompt_text(candidate_checks: list[Dict[str, Any]]) -> str
 
 def execute_rewrite_memory_tool(
     *,
-    memory_file: Path,
+    session_file: Path,
     arguments: Dict[str, Any],
     env_file: Path,
     config_path: Path = DEFAULT_CONFIG_PATH,
@@ -136,7 +136,7 @@ def execute_rewrite_memory_tool(
 
     settings = load_settings(env_file)
     config = load_agent_config(config_path)
-    previous_memory = _load_previous_memory(memory_file)
+    previous_memory = _load_previous_memory(session_file)
     prompt_key = "memory_init_prompt" if task == "init" else "memory_optimize_prompt"
     confirmation_reason = _optional_text(arguments.get("confirmation_reason"))
     candidate_checks = _normalize_candidate_checks(arguments.get("candidate_checks"))
@@ -172,7 +172,7 @@ def execute_rewrite_memory_tool(
 def main() -> int:
     args = parse_args()
     payload = execute_rewrite_memory_tool(
-        memory_file=Path(args.memory_file),
+        session_file=Path(args.session_file),
         arguments={
             "task": args.task,
             "crop_path": args.crop_path,

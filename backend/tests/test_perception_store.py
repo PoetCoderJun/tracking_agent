@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from backend.agent import LocalAgentRuntime
+from backend.agent import AgentSessionStore
 from skills.tracking.core.context import build_route_context, build_tracking_context
 from backend.perception import (
     CAMERA_SENSOR_NAME,
@@ -169,7 +169,7 @@ def test_local_perception_service_describes_saved_state(tmp_path: Path) -> None:
 
 def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
-    runtime = LocalAgentRuntime(state_root)
+    runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
     runtime.update_skill_cache(
@@ -208,7 +208,7 @@ def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -
 
 def test_tracking_context_helpers_prefer_perception_store_over_raw_session_frames(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
-    runtime = LocalAgentRuntime(state_root)
+    runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
 
@@ -243,7 +243,7 @@ def test_tracking_context_helpers_prefer_perception_store_over_raw_session_frame
 
 def test_tracking_context_filters_excluded_track_ids(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
-    runtime = LocalAgentRuntime(state_root)
+    runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
 

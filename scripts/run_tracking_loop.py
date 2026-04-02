@@ -12,11 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.agent.tracking_bootstrap import float_env_value, load_tracking_env_values
+from skills.tracking.bootstrap import float_env_value, load_tracking_env_values
 from backend.agent.runner import (
     PiAgentRunner,
 )
-from backend.agent.tracking_orchestration import (
+from skills.tracking.runtime import (
     schedule_bound_tracking_memory_rewrite as _schedule_bound_tracking_memory_rewrite,
 )
 from backend.perception.service import LocalPerceptionService
@@ -234,7 +234,7 @@ def _schedule_bound_memory_rewrite(
     artifacts_root: Path,
 ) -> bool:
     return _schedule_bound_tracking_memory_rewrite(
-        runtime=runner.runtime,
+        sessions=runner.sessions,
         session_id=session_id,
         tracking_state=tracking_state,
         frame=frame,
@@ -293,7 +293,7 @@ def main() -> int:
             time.sleep(args.idle_sleep_seconds)
             continue
 
-        context = runner.runtime.context(session_id, device_id=args.device_id)
+        context = runner.sessions.load(session_id, device_id=args.device_id)
         tracking_state = _tracking_state(context)
         stream_status = _perception_stream_status(context)
         if not _has_active_target(tracking_state):
