@@ -7,14 +7,14 @@
   "poll_ms": 250,
   "pid_file": "/Users/cmhk/Desktop/tracking_agent/.omx/state/notify-fallback.pid",
   "max_lifetime_ms": 21600000,
-  "tracked_files": 3,
+  "tracked_files": 7,
   "seen_turns": 0,
   "dispatch_drain": {
     "enabled": true,
     "max_per_tick": 5,
-    "run_count": 332,
+    "run_count": 13072,
     "leader_only": true,
-    "last_tick_at": "2026-04-01T06:50:57.823Z",
+    "last_tick_at": "2026-04-01T07:57:58.107Z",
     "last_result": {
       "processed": 0,
       "skipped": 0,
@@ -27,16 +27,16 @@
     "leader_only": true,
     "stale_threshold_ms": 180000,
     "precomputed_leader_stale": false,
-    "last_tick_at": "2026-04-01T06:50:57.823Z",
+    "last_tick_at": "2026-04-01T07:57:58.108Z",
     "last_error": null,
-    "run_count": 332
+    "run_count": 13072
   },
   "ralph_continue_steer": {
     "enabled": true,
     "cadence_ms": 60000,
     "message": "Ralph loop active continue",
     "active": false,
-    "last_state_check_at": "2026-04-01T06:50:57.875Z",
+    "last_state_check_at": "2026-04-01T07:57:58.178Z",
     "last_sent_at": "",
     "cooldown_anchor_at": "",
     "last_reason": "blocked_by_current_session",
@@ -52,13 +52,16 @@
   "fallback_auto_nudge": {
     "enabled": true,
     "stall_ms": 5000,
-    "last_tick_at": "2026-04-01T06:50:57.874Z",
-    "last_turn_at": "2026-04-01T06:50:27.272Z",
-    "last_turn_count": 1,
-    "last_message": "`clarification_question` 是 tracking 模式里给用户的“追问问题”。\n\n它只应该在系统判断为 `ask` 时出现，意思是：\n- 当前还不能确认该跟谁\n- 但系统希望反问",
+    "last_tick_at": "2026-04-01T07:57:58.177Z",
+    "last_turn_at": "2026-04-01T07:55:48.027Z",
+    "last_turn_count": 16,
+    "last_message": "我再 review 一次后的结论是：\n\n## 结论\n**现在的架构方向是对的，但还不算足够干净。**  \n我会评为：\n\n**`acceptable with cleanup debt`**\n\n也就是：",
     "last_reason": "eligible_but_not_sent",
     "last_error": null,
     "last_nudged_signature": "",
     "last_nudged_at": ""
-  }
+  },
+  "stop_reason": "signal",
+  "stop_signal": "SIGTERM",
+  "stopping": true
 }
