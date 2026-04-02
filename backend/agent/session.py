@@ -18,6 +18,10 @@ class AgentSession:
         return self.payload
 
     @property
+    def session(self) -> Dict[str, Any]:
+        return self.payload
+
+    @property
     def user_preferences(self) -> Dict[str, Any]:
         return dict(self.payload.get("user_preferences", {}))
 
@@ -26,12 +30,24 @@ class AgentSession:
         return dict(self.payload.get("environment_map", {}))
 
     @property
+    def environment(self) -> Dict[str, Any]:
+        return self.environment_map
+
+    @property
     def perception_cache(self) -> Dict[str, Any]:
         return dict(self.payload.get("perception_cache", {}))
 
     @property
+    def perception(self) -> Dict[str, Any]:
+        return self.perception_cache
+
+    @property
     def skill_cache(self) -> Dict[str, Any]:
         return dict(self.payload.get("skill_cache", {}))
+
+    @property
+    def skills(self) -> Dict[str, Any]:
+        return self.skill_cache
 
     @property
     def latest_result(self) -> Dict[str, Any] | None:

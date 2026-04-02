@@ -26,8 +26,8 @@ def _normalized_dialogue(history: Any, *, limit: int) -> List[Dict[str, str]]:
     return normalized
 
 
-def _latest_user_text(raw_session: Dict[str, Any]) -> str:
-    for entry in reversed(list(raw_session.get("conversation_history") or [])):
+def _latest_user_text(session_payload: Dict[str, Any]) -> str:
+    for entry in reversed(list(session_payload.get("conversation_history") or [])):
         if str(entry.get("role", "")).strip() != "user":
             continue
         text = str(entry.get("text", "")).strip()
@@ -44,7 +44,7 @@ def _tracking_frames(
     return tracking_recent_frames(
         state_root=Path(session.state_paths["state_root"]),
         session_id=session.session_id,
-        raw_session=session.raw_session,
+        raw_session=session.session,
         excluded_track_ids=excluded_track_ids,
     )
 
@@ -91,18 +91,17 @@ def build_route_context(
     request_id: str,
     enabled_skill_names: List[str],
 ) -> Dict[str, Any]:
-    raw_session = session.raw_session
     frames = _tracking_frames(session)
     latest_frame = None if not frames else frames[-1]
-    latest_result = dict(raw_session.get("latest_result") or {})
-    tracking_state = tracking_state_snapshot((session.skill_cache.get("tracking") or {}))
+    latest_result = dict(session.session.get("latest_result") or {})
+    tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
     return {
         "session_id": session.session_id,
         "request_id": request_id,
         "enabled_skills": list(enabled_skill_names),
-        "latest_user_text": _latest_user_text(raw_session),
+        "latest_user_text": _latest_user_text(session.session),
         "recent_dialogue": _normalized_dialogue(
-            raw_session.get("conversation_history"),
+            session.session.get("conversation_history"),
             limit=ROUTE_DIALOGUE_LIMIT,
         ),
         "latest_frame": None
@@ -143,8 +142,7 @@ def build_tracking_context(
     request_id: str,
     excluded_track_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
-    raw_session = session.raw_session
-    tracking_state = tracking_state_snapshot((session.skill_cache.get("tracking") or {}))
+    tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
     normalized_excluded_track_ids = sorted(_normalized_track_id_set(excluded_track_ids))
     return {
         "session_id": session.session_id,
@@ -160,7 +158,7 @@ def build_tracking_context(
         "latest_confirmed_bbox": tracking_state.get("latest_confirmed_bbox"),
         "init_frame_snapshot": tracking_state.get("init_frame_snapshot"),
         "chat_history": _normalized_dialogue(
-            raw_session.get("conversation_history"),
+            session.session.get("conversation_history"),
             limit=TRACKING_DIALOGUE_LIMIT,
         ),
         "excluded_track_ids": normalized_excluded_track_ids,

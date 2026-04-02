@@ -114,14 +114,14 @@ class AgentSessionStore:
         self._store.apply_agent_result(
             session_id,
             result,
-            session_payload=None if base_session is None else base_session.raw_session,
+            session_payload=None if base_session is None else base_session.session,
         )
         session = self.load(session_id)
         self.patch_perception(
             session_id,
             {
-                "runtime": _runtime_result_snapshot(session.raw_session),
-                "language": _latest_language_snapshot(session.raw_session),
+                "runtime": _runtime_result_snapshot(session.session),
+                "language": _latest_language_snapshot(session.session),
             },
         )
         return self.load(session_id)
@@ -142,7 +142,7 @@ class AgentSessionStore:
         )
         self.patch_perception(
             session_id,
-            {"runtime": _runtime_result_snapshot(self.load(session_id).raw_session)},
+            {"runtime": _runtime_result_snapshot(self.load(session_id).session)},
         )
         return self.load(session_id)
 
@@ -150,7 +150,7 @@ class AgentSessionStore:
         self._store.reset_session_context(session_id)
         self.patch_perception(
             session_id,
-            {"runtime": _runtime_result_snapshot(self.load(session_id).raw_session)},
+            {"runtime": _runtime_result_snapshot(self.load(session_id).session)},
         )
         return self.load(session_id)
 

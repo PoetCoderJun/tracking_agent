@@ -1,0 +1,991 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tracking Agent Embodied Architecture Report</title>
+    <style>
+      @page {
+        size: A4;
+        margin: 12mm;
+      }
+
+      :root {
+        --bg: #f4efe7;
+        --paper: #fffaf3;
+        --panel: rgba(255, 252, 246, 0.9);
+        --panel-strong: #fffdf9;
+        --ink: #1c1b18;
+        --muted: #5f5a52;
+        --line: rgba(65, 54, 40, 0.14);
+        --teal: #0d6b63;
+        --teal-soft: rgba(13, 107, 99, 0.12);
+        --orange: #b85b2f;
+        --orange-soft: rgba(184, 91, 47, 0.12);
+        --navy: #1d3557;
+        --navy-soft: rgba(29, 53, 87, 0.1);
+        --shadow: 0 16px 40px rgba(51, 40, 26, 0.08);
+        --radius: 18px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        color: var(--ink);
+        font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(13, 107, 99, 0.08), transparent 28%),
+          radial-gradient(circle at 88% 12%, rgba(184, 91, 47, 0.1), transparent 22%),
+          linear-gradient(180deg, #faf6ef 0%, var(--bg) 100%);
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      body {
+        line-height: 1.55;
+      }
+
+      .report {
+        width: 100%;
+      }
+
+      .page {
+        width: 100%;
+        min-height: calc(297mm - 24mm);
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        page-break-after: always;
+      }
+
+      .page:last-child {
+        page-break-after: auto;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.45fr 0.95fr;
+        gap: 14px;
+      }
+
+      .panel,
+      .hero-card,
+      .metric,
+      .flow-step,
+      .artifact,
+      .layer,
+      .tradeoff,
+      .future-item {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+
+      .hero-copy {
+        padding: 22px 24px 20px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .hero-copy::after {
+        content: "";
+        position: absolute;
+        right: -56px;
+        bottom: -56px;
+        width: 220px;
+        height: 220px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(13, 107, 99, 0.18), transparent 70%);
+      }
+
+      .eyebrow,
+      .tiny-label,
+      .metric-label,
+      .kicker {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--teal);
+      }
+
+      h1 {
+        margin: 8px 0 12px;
+        font-size: 30px;
+        line-height: 1.04;
+        letter-spacing: -0.03em;
+      }
+
+      h2 {
+        margin: 0 0 10px;
+        font-size: 20px;
+        line-height: 1.08;
+        letter-spacing: -0.02em;
+      }
+
+      h3 {
+        margin: 0 0 6px;
+        font-size: 14px;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+
+      .subtitle {
+        font-size: 14px;
+        line-height: 1.7;
+        max-width: 52em;
+      }
+
+      .hero-side {
+        display: grid;
+        gap: 10px;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+
+      .metric {
+        padding: 16px;
+        background: var(--panel-strong);
+      }
+
+      .metric strong {
+        display: block;
+        font-size: 20px;
+        margin-bottom: 6px;
+      }
+
+      .hero-note {
+        padding: 16px;
+        background: linear-gradient(135deg, var(--teal-soft), rgba(255, 255, 255, 0.72));
+      }
+
+      .section-grid {
+        display: grid;
+        grid-template-columns: 1.08fr 0.92fr;
+        gap: 14px;
+      }
+
+      .panel {
+        padding: 18px;
+      }
+
+      .panel-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .bullet {
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.68);
+      }
+
+      .bullet strong {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 12.5px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 10px;
+      }
+
+      .stack-item {
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.62);
+      }
+
+      .mono {
+        font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+      }
+
+      .diagram {
+        padding: 16px;
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(250, 247, 241, 0.88));
+      }
+
+      .diagram p {
+        color: var(--ink);
+      }
+
+      .layer-stack {
+        display: grid;
+        gap: 8px;
+      }
+
+      .layer {
+        padding: 12px 14px;
+        background: var(--panel-strong);
+      }
+
+      .layer-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+
+      .layer-head strong {
+        font-size: 13px;
+      }
+
+      .chip {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: var(--navy-soft);
+        color: var(--navy);
+        font-size: 10px;
+        font-weight: 700;
+      }
+
+      .flow-grid {
+        display: grid;
+        gap: 9px;
+      }
+
+      .flow-step {
+        padding: 12px 14px;
+        display: grid;
+        grid-template-columns: 28px 1fr;
+        gap: 10px;
+        align-items: start;
+      }
+
+      .flow-step .index {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--teal);
+        background: var(--teal-soft);
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11.5px;
+      }
+
+      .table th,
+      .table td {
+        padding: 10px 8px;
+        text-align: left;
+        vertical-align: top;
+        border-top: 1px solid var(--line);
+      }
+
+      .table th {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--muted);
+      }
+
+      .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .pill {
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.68);
+        font-size: 10.5px;
+      }
+
+      .artifact-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+
+      .artifact {
+        padding: 12px 14px;
+        background: var(--panel-strong);
+      }
+
+      .artifact strong {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 12.5px;
+      }
+
+      .tradeoff-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+
+      .tradeoff {
+        padding: 14px;
+      }
+
+      .tradeoff .kicker {
+        color: var(--orange);
+      }
+
+      .process-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+      }
+
+      .process-card {
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(250, 246, 239, 0.92));
+      }
+
+      .future-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+
+      .future-item {
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .closing {
+        padding: 18px;
+        background: linear-gradient(135deg, rgba(29, 53, 87, 0.1), rgba(13, 107, 99, 0.12));
+      }
+
+      .footer-note {
+        margin-top: auto;
+        padding-top: 4px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+
+      code {
+        font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+        font-size: 0.92em;
+        background: rgba(29, 53, 87, 0.06);
+        padding: 1px 4px;
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="report">
+      <section class="page">
+        <div class="hero">
+          <div class="hero-card hero-copy">
+            <div class="eyebrow">Embodied Agent Architecture</div>
+            <h1>Tracking Agent 技术架构报告</h1>
+            <p class="subtitle">
+              一个运行在 robot / Pi 侧的 <strong>chat-first embodied agent kernel</strong>。
+              项目当前的重点不是继续堆 tracking 特例，而是把持续感知、单轮决策、状态单源和 skill 插拔化收敛为清晰、可演进的系统骨架。
+            </p>
+            <div class="pill-row" style="margin-top: 14px">
+              <span class="pill">Chat-first</span>
+              <span class="pill">Perception 常驻</span>
+              <span class="pill">Single Runner Path</span>
+              <span class="pill">Single Session Truth</span>
+              <span class="pill">Skill-Pluggable</span>
+            </div>
+          </div>
+          <div class="hero-side">
+            <div class="metric-grid">
+              <div class="metric">
+                <strong>3+1</strong>
+                <span class="metric-label">推荐运行形态</span>
+              </div>
+              <div class="metric">
+                <strong>1</strong>
+                <span class="metric-label">Session Truth</span>
+              </div>
+              <div class="metric">
+                <strong>Pi + Direct</strong>
+                <span class="metric-label">决策路径</span>
+              </div>
+              <div class="metric">
+                <strong>Tracking / Speech / Web</strong>
+                <span class="metric-label">已验证 Skills</span>
+              </div>
+            </div>
+            <div class="hero-note">
+              <div class="tiny-label">Inspection Scope</div>
+              <p>
+                本报告基于仓库实态检查整理，聚焦系统设计、边界划分、组件职责、状态与数据流、部署方式以及扩展路径，不下钻到函数级实现。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-grid">
+          <article class="panel">
+            <h2>项目目标与问题 framing</h2>
+            <div class="panel-list">
+              <div class="bullet">
+                <strong>目标不是单点 tracking demo</strong>
+                <p>仓库正在从 tracking-specific runtime 收敛为通用 embodied agent kernel，tracking 和 speech 是当前最明确的能力样板。</p>
+              </div>
+              <div class="bullet">
+                <strong>要解决的是系统问题</strong>
+                <p>持续感知、会话状态、多轮对话、技能编排、结果展示需要稳定协作，但不能演化成一个过度工程化的 runtime 框架。</p>
+              </div>
+              <div class="bullet">
+                <strong>关键约束</strong>
+                <p>perception 只负责写世界状态；runner 只负责单轮处理；viewer 只负责可视化；skill 以 capability module 的方式挂接。</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <h2>架构原则</h2>
+            <div class="stack">
+              <div class="stack-item"><strong>Chat-first, not perception-first</strong><p>turn 由聊天、脚本或 loop 事件触发，perception 只提供 grounded context。</p></div>
+              <div class="stack-item"><strong>Perception is the only always-on subsystem</strong><p>只有 perception 常驻运行并维护 observation window。</p></div>
+              <div class="stack-item"><strong>Single runner path</strong><p>所有 turn 最终归并到 <code>PiAgentRunner</code> 的同一条主链。</p></div>
+              <div class="stack-item"><strong>Single persisted state truth</strong><p><code>session.json</code> 是 agent-owned state 的主真相源。</p></div>
+              <div class="stack-item"><strong>Skills are ordinary modules</strong><p>新增能力应扩展 skill，而不是改造 backend 主干。</p></div>
+            </div>
+          </article>
+        </div>
+
+        <div class="footer-note">Report baseline: repository inspected on 2026-04-02</div>
+      </section>
+
+      <section class="page">
+        <div class="section-grid">
+          <article class="panel">
+            <h2>系统全景</h2>
+            <p style="margin-bottom: 12px">
+              这个项目最适合被理解为三条运行平面：持续感知平面、事件驱动的 turn orchestration 平面，以及只读展示平面。
+            </p>
+            <div class="diagram">
+              <div class="layer-stack">
+                <div class="layer">
+                  <div class="layer-head">
+                    <strong>Continuous Perception Plane</strong>
+                    <span class="chip">Always-on</span>
+                  </div>
+                  <p><code>scripts/run_tracking_perception.py</code> -> <code>backend/perception/service.py</code> -> persisted snapshot / keyframes</p>
+                </div>
+                <div class="layer">
+                  <div class="layer-head">
+                    <strong>Turn Orchestration Plane</strong>
+                    <span class="chip">Event-driven</span>
+                  </div>
+                  <p><code>backend/cli.py</code> -> <code>PiAgentRunner</code> -> route context / skill context -> Pi or deterministic skill entry</p>
+                </div>
+                <div class="layer">
+                  <div class="layer-head">
+                    <strong>Presentation Plane</strong>
+                    <span class="chip">Read-only</span>
+                  </div>
+                  <p><code>agent_viewer_stream</code> 聚合 session + observation + viewer modules，经 websocket 提供给 React viewer。</p>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <h2>高层数据流</h2>
+            <div class="diagram mono">
+              <p>Camera / Video</p>
+              <p>  -> Perception Process</p>
+              <p>  -> perception snapshot.json + keyframes</p>
+              <p>&nbsp;</p>
+              <p>User / Script / Tracking Loop</p>
+              <p>  -> backend/cli.py</p>
+              <p>  -> PiAgentRunner</p>
+              <p>  -> Pi or direct skill path</p>
+              <p>  -> session.json + skill_cache</p>
+              <p>&nbsp;</p>
+              <p>session.json + snapshot.json</p>
+              <p>  -> viewer stream websocket</p>
+              <p>  -> tracking-viewer app</p>
+            </div>
+          </article>
+        </div>
+
+        <article class="panel">
+          <h2>总体架构分层</h2>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th>代表模块</th>
+                <th>职责</th>
+                <th>为什么存在</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Trigger Layer</td>
+                <td><code>robot-agent chat</code>、tracking loop、脚本入口</td>
+                <td>产生 turn</td>
+                <td>把“何时需要 agent 响应”从内核里剥离出来</td>
+              </tr>
+              <tr>
+                <td>Turn Orchestration Layer</td>
+                <td><code>backend/cli.py</code>、<code>backend/agent/runner.py</code>、<code>pi_protocol.py</code></td>
+                <td>统一处理一次事件</td>
+                <td>避免多条并行决策主链</td>
+              </tr>
+              <tr>
+                <td>State Layer</td>
+                <td><code>active_session.json</code>、<code>session.json</code>、perception snapshot</td>
+                <td>落盘与共享状态</td>
+                <td>保证单一真相源与可调试性</td>
+              </tr>
+              <tr>
+                <td>Capability Layer</td>
+                <td><code>skills/tracking</code>、<code>skills/speech</code>、<code>skills/web_search</code></td>
+                <td>实现具体能力</td>
+                <td>让 backend 保持通用</td>
+              </tr>
+              <tr>
+                <td>Presentation Layer</td>
+                <td><code>agent_viewer_stream.py</code>、<code>apps/tracking-viewer</code></td>
+                <td>聚合并展示状态</td>
+                <td>提供演示与观测，而不侵入执行链</td>
+              </tr>
+              <tr>
+                <td>Continuous Perception Layer</td>
+                <td><code>run_tracking_perception.py</code>、<code>LocalPerceptionService</code></td>
+                <td>持续写 observation</td>
+                <td>为 turn 提供 grounded world context</td>
+              </tr>
+            </tbody>
+          </table>
+        </article>
+
+        <div class="footer-note">核心不是“模块很多”，而是每个模块的责任边界足够窄且互相可解释。</div>
+      </section>
+
+      <section class="page">
+        <article class="panel">
+          <h2>主要组件与职责</h2>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>组件</th>
+                <th>代表路径</th>
+                <th>主要职责</th>
+                <th>架构意义</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Perception Service</td>
+                <td><code>backend/perception/</code></td>
+                <td>维护 observation window、保存 keyframe、生成 persisted snapshot、提供 CLI 读取</td>
+                <td>只做感知，不做高层决策</td>
+              </tr>
+              <tr>
+                <td>Agent Runner</td>
+                <td><code>backend/agent/runner.py</code></td>
+                <td>接收 turn、生成上下文、调用 Pi 或 direct path、应用返回 payload</td>
+                <td>唯一主处理链</td>
+              </tr>
+              <tr>
+                <td>Pi Protocol</td>
+                <td><code>backend/agent/pi_protocol.py</code></td>
+                <td>定义 reasoning plane 的输入输出边界</td>
+                <td>把 LLM 决策面与本地状态更新解耦</td>
+              </tr>
+              <tr>
+                <td>Session Persistence</td>
+                <td><code>backend/persistence/</code></td>
+                <td>维护 <code>session.json</code> 与 active session</td>
+                <td>单一状态真相源</td>
+              </tr>
+              <tr>
+                <td>Skill Surface</td>
+                <td><code>backend/skills.py</code></td>
+                <td>discovery、route summary、turn context、direct path、viewer module 聚合</td>
+                <td>让 capability 扩展不污染内核主干</td>
+              </tr>
+              <tr>
+                <td>Tracking Skill</td>
+                <td><code>skills/tracking/</code></td>
+                <td>target init、continue tracking、memory rewrite、viewer module</td>
+                <td>当前最成熟的 embodied capability</td>
+              </tr>
+              <tr>
+                <td>Speech / Web Search</td>
+                <td><code>skills/speech/</code>、<code>skills/web_search/</code></td>
+                <td>TTS 与外部信息能力样例</td>
+                <td>证明 skill 机制不是 tracking 专用</td>
+              </tr>
+              <tr>
+                <td>Viewer Stream + App</td>
+                <td><code>backend/agent_viewer_stream.py</code>、<code>apps/tracking-viewer/</code></td>
+                <td>将 session、observation、module payload 聚合后可视化</td>
+                <td>形成 read-only projection layer</td>
+              </tr>
+            </tbody>
+          </table>
+        </article>
+
+        <div class="section-grid">
+          <article class="panel">
+            <h2>Skill 接口为什么关键</h2>
+            <div class="stack">
+              <div class="stack-item"><strong><code>build_route_summary</code></strong><p>让每个 skill 提供“我现在大概处于什么状态”的摘要，帮助 turn routing。</p></div>
+              <div class="stack-item"><strong><code>build_turn_context</code></strong><p>让每个 skill 只暴露自己真正需要的 specialized context，而不是让 Pi 阅读整份 session 文件。</p></div>
+              <div class="stack-item"><strong><code>process_direct_init</code> / <code>process_direct_turn</code></strong><p>为脆弱、确定性强的路径保留 LLM 外的稳态入口。</p></div>
+              <div class="stack-item"><strong><code>schedule_rewrite</code> / <code>build_viewer_module</code></strong><p>把慢操作和展示扩展都下沉给 skill 自己。</p></div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <h2>Tracking Skill 的位置</h2>
+            <div class="panel-list">
+              <div class="bullet">
+                <strong>它是单轮 skill，不拥有 perception loop</strong>
+                <p><code>skills/tracking/SKILL.md</code> 明确说明 tracking 是 single-turn skill，perception loop 和 tracking runtime loop 不属于 skill 本体。</p>
+              </div>
+              <div class="bullet">
+                <strong>deterministic 入口比自由推理更重要</strong>
+                <p><code>init</code> / <code>track</code> 走固定入口脚本，降低 fragile workflow 被 LLM 发散的概率。</p>
+              </div>
+              <div class="bullet">
+                <strong>memory rewrite 脱离关键路径</strong>
+                <p>确认目标后先返回 turn 结果，再异步启动 rewrite worker，优先保证交互响应性。</p>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="footer-note">Tracking 是样板能力，不再是定义整个 backend 形状的“框架中心”。</div>
+      </section>
+
+      <section class="page">
+        <div class="section-grid">
+          <article class="panel">
+            <h2>Embodied Agent Loop</h2>
+            <div class="flow-grid">
+              <div class="flow-step">
+                <div class="index">1</div>
+                <div><h3>Perception 持续写世界状态</h3><p>camera / video 输入被采样并形成 observation、detections、keyframes 和 persisted snapshot。</p></div>
+              </div>
+              <div class="flow-step">
+                <div class="index">2</div>
+                <div><h3>外部事件触发一次 turn</h3><p>来源可以是用户 chat、tracking continuation loop、或脚本入口。</p></div>
+              </div>
+              <div class="flow-step">
+                <div class="index">3</div>
+                <div><h3>Runner 聚合上下文</h3><p>读取 <code>session.json</code> 与最新 perception snapshot，生成 route context 和 skill context。</p></div>
+              </div>
+              <div class="flow-step">
+                <div class="index">4</div>
+                <div><h3>Planning / Routing</h3><p>deterministic path 直接进入 skill；否则由 Pi 在当前 enabled skills 中完成单轮路由与推理。</p></div>
+              </div>
+              <div class="flow-step">
+                <div class="index">5</div>
+                <div><h3>Action / Result</h3><p>skill 返回统一 JSON payload，包含 session_result、skill_state_patch、robot_response 等结构化结果。</p></div>
+              </div>
+              <div class="flow-step">
+                <div class="index">6</div>
+                <div><h3>Persistence + Projection</h3><p>runner 应用状态更新；viewer stream 从持久化状态生成可视化投影；必要时异步进行 rewrite。</p></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <h2>Perception / Planning / Action 的实际含义</h2>
+            <div class="panel-list">
+              <div class="bullet">
+                <strong>Perception</strong>
+                <p>以 <code>LocalPerceptionService</code> 为中心，关注 frame、detections、window、snapshot、keyframe 保存。</p>
+              </div>
+              <div class="bullet">
+                <strong>Planning</strong>
+                <p>以 <code>PiAgentRunner</code> + Pi routing 为中心，决定该轮应该走哪个 skill、采用 direct path 还是 Pi path。</p>
+              </div>
+              <div class="bullet">
+                <strong>Action</strong>
+                <p>当前更偏 capability result，例如 tracking 的 <code>track / wait / ask</code>，以及 speech 的 TTS 输出，而不是完整机器人控制栈。</p>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <article class="panel">
+          <h2>为什么这不是“一个大 while 循环”</h2>
+          <p style="margin-bottom: 12px">
+            仓库把持续感知和事件驱动 turn 明确拆开。这样做的结果是，系统既保留了 embodied 状态感知能力，又避免把所有职责糅成一个难以替换、难以验证的大 runtime。
+          </p>
+          <div class="pill-row">
+            <span class="pill">Perception 常驻</span>
+            <span class="pill">Turn 单次处理</span>
+            <span class="pill">Viewer 只读</span>
+            <span class="pill">Rewrite 异步</span>
+            <span class="pill">Loop 只是触发器</span>
+          </div>
+        </article>
+
+        <div class="footer-note">这个 loop 的关键不是“自动化很多”，而是每次 turn 的上下文与状态边界都足够明确。</div>
+      </section>
+
+      <section class="page">
+        <article class="panel">
+          <h2>Runtime / Backend / App / Skill / Data Flow 关系</h2>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>视角</th>
+                <th>代表对象</th>
+                <th>关系描述</th>
+                <th>架构含义</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Runtime</td>
+                <td>perception、tracking loop、viewer stream、frontend</td>
+                <td>一组共享同一 <code>state-root</code> / <code>session_id</code> 的长期进程</td>
+                <td>职责清晰，可独立重启与组合</td>
+              </tr>
+              <tr>
+                <td>Backend</td>
+                <td><code>backend/</code></td>
+                <td>perception、runner、persistence、viewer aggregation 所在的内核层</td>
+                <td>把系统主线维持在一个最小可解释闭环里</td>
+              </tr>
+              <tr>
+                <td>Skills</td>
+                <td><code>skills/&lt;name&gt;/</code></td>
+                <td>实现具体能力与专属 helper，不改变 backend 的核心形状</td>
+                <td>支持“继续长能力，而不是继续长框架”</td>
+              </tr>
+              <tr>
+                <td>App</td>
+                <td><code>apps/tracking-viewer</code></td>
+                <td>通过 websocket 消费聚合状态，不直接控制业务主链</td>
+                <td>UI 与内核解耦</td>
+              </tr>
+              <tr>
+                <td>Data Flow</td>
+                <td><code>session.json</code>、perception snapshot、artifacts</td>
+                <td>共享文件状态连接多个进程与视图</td>
+                <td>减少依赖，增强可调试性</td>
+              </tr>
+            </tbody>
+          </table>
+        </article>
+
+        <div class="artifact-grid">
+          <div class="artifact">
+            <strong>Active Session</strong>
+            <p><code>active_session.json</code> 指向当前活跃会话，是 perception、viewer、CLI 的共同入口索引。</p>
+          </div>
+          <div class="artifact">
+            <strong>Session Truth</strong>
+            <p><code>sessions/&lt;id&gt;/session.json</code> 保存 latest_result、history、recent_frames、skill_cache 等 agent-owned state。</p>
+          </div>
+          <div class="artifact">
+            <strong>Perception Snapshot</strong>
+            <p><code>perception/sessions/&lt;id&gt;/snapshot.json</code> 保存最新 observation、window、stream status 与 saved keyframes。</p>
+          </div>
+          <div class="artifact">
+            <strong>Turn Artifacts</strong>
+            <p><code>.runtime/pi-agent/requests/...</code> 保存 route context、skill context、prompt 等调试友好的 turn 证据。</p>
+          </div>
+        </div>
+
+        <article class="panel">
+          <h2>Viewer 为什么重要但不是主角</h2>
+          <p style="margin-bottom: 12px">
+            <code>backend/agent_viewer_stream.py</code> 做的是状态聚合，而不是业务驱动。它把 session、latest frame、stream status、以及每个 skill 的 viewer module 合并为统一 payload，再交给 React app 展示目标框、memory 和 conversation history。
+          </p>
+          <p>
+            这意味着前端是一个 <strong>read-only projection layer</strong>：对展示非常重要，但不会反向塑造内核执行方式。
+          </p>
+        </article>
+
+        <div class="footer-note">当前系统通过本地共享文件和轮询完成协作，简单直接，但并未追求分布式吞吐或强一致消息语义。</div>
+      </section>
+
+      <section class="page">
+        <article class="panel">
+          <h2>当前推荐部署视图</h2>
+          <div class="process-row">
+            <div class="process-card">
+              <div class="tiny-label">Process 1</div>
+              <h3>Perception</h3>
+              <p>持续读取 camera / video，运行 detection / tracking，向共享状态写 observation。</p>
+            </div>
+            <div class="process-card">
+              <div class="tiny-label">Process 2</div>
+              <h3>Tracking Loop</h3>
+              <p>轮询 session 与 perception，在目标已绑定时触发 continuation turn。</p>
+            </div>
+            <div class="process-card">
+              <div class="tiny-label">Process 3</div>
+              <h3>Viewer Stream</h3>
+              <p>把聚合后的 agent/perception/module 状态通过 websocket 推给前端。</p>
+            </div>
+            <div class="process-card">
+              <div class="tiny-label">Optional</div>
+              <h3>Frontend</h3>
+              <p>React + Vite 演示界面，负责目标框、状态、记忆和会话记录的可视化。</p>
+            </div>
+          </div>
+        </article>
+
+        <div class="section-grid">
+          <article class="panel">
+            <h2>为什么这种部署合理</h2>
+            <div class="stack">
+              <div class="stack-item"><strong>职责分离</strong><p>perception、loop、viewer 可分别重启和定位问题，不会形成单点“超级进程”。</p></div>
+              <div class="stack-item"><strong>Viewer 可选</strong><p>前端不再是主流程依赖，适合 headless 运行和演示运行两种模式。</p></div>
+              <div class="stack-item"><strong>状态共享简单</strong><p>所有进程共享同一个 <code>state-root</code> 和 session 路径，降低部署门槛。</p></div>
+              <div class="stack-item"><strong>适合 robot / Pi 侧</strong><p>不需要额外消息基础设施即可运行，贴合当前仓库的轻量化目标。</p></div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <h2>扩展性判断</h2>
+            <div class="panel-list">
+              <div class="bullet">
+                <strong>已经具备的能力</strong>
+                <p>新增 skill 可以放在 <code>skills/&lt;name&gt;/</code>，由 backend 自动发现，并在 route context、viewer module、direct path 等协作点自然接入。</p>
+              </div>
+              <div class="bullet">
+                <strong>当前刻意不做的事</strong>
+                <p>不引入复杂 plugin lifecycle、不上消息总线、不把 loop 升级为总控中心，以避免再次回到过度工程化路径。</p>
+              </div>
+              <div class="bullet">
+                <strong>最重要的结论</strong>
+                <p>仓库已经具备“继续长能力而不是继续长框架”的结构条件。</p>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="tradeoff-grid">
+          <div class="tradeoff">
+            <div class="kicker">Tradeoff 01</div>
+            <h3>Chat-first vs perception-first</h3>
+            <p>当前偏 agent 对话与事件驱动，适合 grounded interaction；如果未来走高频闭环控制，还需单独设计更硬实时的 control plane。</p>
+          </div>
+          <div class="tradeoff">
+            <div class="kicker">Tradeoff 02</div>
+            <h3>Single session truth vs 多份 memory</h3>
+            <p>调试与可解释性更强，但当前更偏单机和单活跃 session 形态，不是天然的分布式共享状态模型。</p>
+          </div>
+          <div class="tradeoff">
+            <div class="kicker">Tradeoff 03</div>
+            <h3>Direct path vs full LLM mediation</h3>
+            <p>tracking 的 fragile workflow 更稳，但 skill 需要自己维护更明确的 deterministic 入口与 payload contract。</p>
+          </div>
+          <div class="tradeoff">
+            <div class="kicker">Tradeoff 04</div>
+            <h3>Async rewrite vs inline completion</h3>
+            <p>主 turn 响应更快，但 memory 更新成为 eventual consistency，而不是同步闭环。</p>
+          </div>
+        </div>
+
+        <div class="footer-note">部署与扩展策略都服务于一个共同目标：保持内核小而硬，把复杂度推回到 skill 或可选外层进程。</div>
+      </section>
+
+      <section class="page">
+        <div class="section-grid">
+          <article class="panel">
+            <h2>风险、边界与当前成熟度</h2>
+            <div class="panel-list">
+              <div class="bullet">
+                <strong>最成熟的 embodied capability 仍然是 tracking</strong>
+                <p>speech 和 web_search 已经验证 skill plugability，但 embodied 主场景仍围绕 tracking。</p>
+              </div>
+              <div class="bullet">
+                <strong>状态共享主要是本地文件级协作</strong>
+                <p>这非常适合单机部署和调试，但不等于已经具备多机分布式架构。</p>
+              </div>
+              <div class="bullet">
+                <strong>Action plane 仍偏结果型输出</strong>
+                <p>当前重点是 grounded 决策与能力执行，不是完整的机器人运动控制系统。</p>
+              </div>
+              <div class="bullet">
+                <strong>Perception 聚焦 tracking 场景</strong>
+                <p>它已经是独立感知层，但目前仍是视觉 tracking 导向，而非通用多传感器融合平台。</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <h2>Future Work</h2>
+            <div class="future-grid">
+              <div class="future-item">
+                <div class="tiny-label">01</div>
+                <h3>更强的部署韧性</h3>
+                <p>为 perception、loop、viewer 增加更明确的健康检查、超时与恢复策略。</p>
+              </div>
+              <div class="future-item">
+                <div class="tiny-label">02</div>
+                <h3>更通用的 capability surface</h3>
+                <p>在保持 skill surface 克制的前提下，接入更多 embodied 能力，而不让 backend 再次业务化。</p>
+              </div>
+              <div class="future-item">
+                <div class="tiny-label">03</div>
+                <h3>更强的 observability</h3>
+                <p>增加 turn latency、skill routing、rewrite worker、session lifecycle 等指标与运维视角。</p>
+              </div>
+              <div class="future-item">
+                <div class="tiny-label">04</div>
+                <h3>多设备 / 远程部署能力</h3>
+                <p>如果跨机部署成为刚需，再从本地文件共享迁移到更明确的 service / bus 架构。</p>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <article class="panel closing">
+          <h2>汇报结论</h2>
+          <p style="margin-bottom: 10px">
+            <strong>tracking_agent</strong> 当前最值得强调的成果，不是某一个 tracking 算法细节，而是它已经把 embodied agent 方案压缩成一个可解释、可部署、可扩展的技术骨架：
+          </p>
+          <div class="pill-row" style="margin-bottom: 10px">
+            <span class="pill">持续感知只做感知</span>
+            <span class="pill">单轮 runner 只做编排</span>
+            <span class="pill">状态只有一个真相源</span>
+            <span class="pill">skills 通过统一 surface 接入</span>
+            <span class="pill">viewer 只是展示层</span>
+          </div>
+          <p>
+            这让项目从“为 tracking 服务的一组脚本”演进为“以 tracking 为样板能力的 embodied agent kernel”。对外汇报时，应把这个系统级收敛能力作为主叙事，而不是把注意力放在低层实现细节上。
+          </p>
+        </article>
+
+        <div class="footer-note">Prepared for architecture presentation and project evaluation.</div>
+      </section>
+    </main>
+  </body>
+</html>

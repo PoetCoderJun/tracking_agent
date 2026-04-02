@@ -5,7 +5,7 @@ from pathlib import Path
 from backend.agent import AgentSessionStore
 
 
-def test_agent_session_store_merges_preferences_and_environment_map(tmp_path: Path) -> None:
+def test_agent_session_store_merges_preferences_and_environment(tmp_path: Path) -> None:
     store = AgentSessionStore(tmp_path / "state")
 
     store.patch_user_preferences(
@@ -29,7 +29,7 @@ def test_agent_session_store_merges_preferences_and_environment_map(tmp_path: Pa
     assert updated.environment_map["dock"] == {"x": 1, "y": 2}
 
 
-def test_agent_session_store_updates_skill_and_perception_cache(tmp_path: Path) -> None:
+def test_agent_session_store_updates_skill_and_perception_state(tmp_path: Path) -> None:
     store = AgentSessionStore(tmp_path / "state")
 
     store.patch_perception("sess_001", {"vision": {"latest_frame_id": "frame_000001"}})

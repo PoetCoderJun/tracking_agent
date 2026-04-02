@@ -338,7 +338,7 @@ def test_runner_processes_direct_tracking_request(monkeypatch, tmp_path: Path) -
     assert context.skill_cache["tracking"]["latest_target_id"] == 12
 
 
-def test_runner_process_chat_request_bypasses_pi_for_tracking_init(monkeypatch, tmp_path: Path) -> None:
+def test_runner_process_chat_request_uses_pi_for_tracking_init(monkeypatch, tmp_path: Path) -> None:
     runner = PiAgentRunner(state_root=tmp_path / "state", enabled_skills=["tracking"])
     frame_path = _frame_image(tmp_path / "frame.jpg")
 
@@ -350,27 +350,48 @@ def test_runner_process_chat_request_bypasses_pi_for_tracking_init(monkeypatch, 
         detections=[RobotDetection(track_id=12, bbox=[10, 20, 30, 40], score=0.95)],
     )
 
-    monkeypatch.setattr(
-        tracking_orchestration_module,
-        "execute_select_tool",
-        lambda **_: {
-            "behavior": "init",
-            "frame_id": "frame_000001",
-            "target_id": 12,
-            "bounding_box_id": 12,
-            "found": True,
-            "decision": "track",
-            "text": "已确认目标。",
-            "reason": "direct init",
-            "confirmed_frame_path": str(frame_path),
-            "confirmed_bbox": [10, 20, 30, 40],
-        },
-    )
-    monkeypatch.setattr(
-        PiAgentRunner,
-        "process_session",
-        lambda self, **kwargs: (_ for _ in ()).throw(AssertionError("Pi should not be used for tracking init")),
-    )
+    def _fake_run_pi_turn(**kwargs: object) -> dict:
+        assert kwargs["enabled_skill_names"] == ["tracking"]
+        return {
+            "status": "processed",
+            "skill_name": "tracking",
+            "session_result": {
+                "behavior": "init",
+                "text": "已确认目标。",
+                "frame_id": "frame_000001",
+                "target_id": 12,
+                "found": True,
+            },
+            "latest_result_patch": None,
+            "skill_state_patch": {
+                "latest_target_id": 12,
+                "target_description": "穿黑衣服的人",
+                "latest_confirmed_frame_path": str(frame_path),
+            },
+            "user_preferences_patch": None,
+            "environment_map_patch": None,
+            "perception_cache_patch": None,
+            "robot_response": {"action": "track", "text": "已确认目标。", "target_id": 12},
+            "tool": "init",
+            "tool_output": {
+                "behavior": "init",
+                "frame_id": "frame_000001",
+                "target_id": 12,
+                "bounding_box_id": 12,
+                "found": True,
+                "decision": "track",
+                "text": "已确认目标。",
+                "reason": "direct init",
+                "confirmed_frame_path": str(frame_path),
+                "confirmed_bbox": [10, 20, 30, 40],
+                "target_description": "穿黑衣服的人",
+            },
+            "rewrite_output": None,
+            "rewrite_memory_input": None,
+            "reason": None,
+        }
+
+    monkeypatch.setattr("backend.agent.runner._run_pi_turn", _fake_run_pi_turn)
 
     result = runner.process_chat_request(
         session_id="sess_chat_init",
@@ -558,7 +579,7 @@ def test_runner_recovers_turn_payload_from_later_assistant_text_part() -> None:
     assert payload["tool"] == "reply"
 
 
-def test_runner_prompt_points_pi_to_context_views(tmp_path: Path) -> None:
+def test_runner_prompt_points_pi_to_generic_turn_context(tmp_path: Path) -> None:
     runner = PiAgentRunner(state_root=tmp_path / "state")
     runner.sessions.append_chat_request(
         session_id="sess_prompt",
@@ -578,7 +599,6 @@ def test_runner_prompt_points_pi_to_context_views(tmp_path: Path) -> None:
             request_id="req_prompt",
             enabled_skill_names=["tracking"],
             route_context_path=request_dir / "route_context.json",
-            tracking_context_path=request_dir / "tracking_context.json",
         ),
         request_dir / "turn_context.json",
     )
@@ -586,13 +606,15 @@ def test_runner_prompt_points_pi_to_context_views(tmp_path: Path) -> None:
     prompt = runner_module._build_pi_prompt(turn_context_path=turn_context_path)
 
     assert "context_paths.route_context_path" in prompt
-    assert "context_paths.tracking_context_path" in prompt
     assert "`enabled_skills`" in prompt
     assert "Available project skills are already loaded natively into Pi" in prompt
+    assert "state_paths.session_path" in prompt
+    assert "service_commands.perception_read" in prompt
     assert "Only read `state_paths.session_path`" in prompt
     assert "Never write the final payload into a temp file such as `pi_output.json`" in prompt
     assert "`idle` is only for turns where no installed skill applies" in prompt
     assert "copy those canonical fields directly into `session_result`" in prompt
+    assert "context_paths.skill_context_paths" not in prompt
     assert "skip_rewrite_memory" not in prompt
 
 
@@ -839,6 +861,101 @@ def test_runner_does_not_backfill_tracking_fields_from_tool_outputs(monkeypatch,
     }
     context = runner.sessions.load("sess_backfill")
     assert context.skill_cache == {}
+
+
+def test_runner_processes_speech_skill_without_backend_special_case(monkeypatch, tmp_path: Path) -> None:
+    runner = PiAgentRunner(state_root=tmp_path / "state", enabled_skills=["speech"])
+
+    monkeypatch.setattr(
+        "backend.agent.runner._run_pi_turn",
+        lambda **_: {
+            "status": "processed",
+            "skill_name": "speech",
+            "session_result": {
+                "behavior": "reply",
+                "text": "已生成语音。",
+                "audio_path": "output/speech/demo.mp3",
+            },
+            "latest_result_patch": None,
+            "skill_state_patch": {"last_audio_path": "output/speech/demo.mp3"},
+            "user_preferences_patch": None,
+            "environment_map_patch": None,
+            "perception_cache_patch": None,
+            "robot_response": {"action": "reply", "text": "已生成语音。"},
+            "tool": "speak",
+            "tool_output": {"audio_path": "output/speech/demo.mp3"},
+            "rewrite_output": None,
+            "reason": None,
+        },
+    )
+
+    result = runner.process_chat_request(
+        session_id="sess_speech",
+        device_id="robot_01",
+        text="请读一段欢迎词",
+        request_id="req_speech",
+        env_file=tmp_path / ".ENV",
+        artifacts_root=tmp_path / "artifacts",
+    )
+
+    assert result["skill_name"] == "speech"
+    assert result["tool"] == "speak"
+    assert result["latest_result"]["text"] == "已生成语音。"
+    session = runner.sessions.load("sess_speech")
+    assert session.skills["speech"]["last_audio_path"] == "output/speech/demo.mp3"
+
+
+def test_runner_processes_web_search_skill_without_backend_special_case(monkeypatch, tmp_path: Path) -> None:
+    runner = PiAgentRunner(state_root=tmp_path / "state", enabled_skills=["web_search"])
+
+    monkeypatch.setattr(
+        "backend.agent.runner._run_pi_turn",
+        lambda **_: {
+            "status": "processed",
+            "skill_name": "web_search",
+            "session_result": {
+                "behavior": "reply",
+                "text": "我查到了 OpenAI 的官网和 ChatGPT。",
+            },
+            "latest_result_patch": None,
+            "skill_state_patch": {
+                "last_query": "OpenAI",
+                "last_results": [
+                    {"title": "OpenAI", "url": "https://openai.com/"},
+                    {"title": "ChatGPT", "url": "https://chatgpt.com/"},
+                ],
+            },
+            "user_preferences_patch": None,
+            "environment_map_patch": None,
+            "perception_cache_patch": None,
+            "robot_response": {"action": "reply", "text": "我查到了 OpenAI 的官网和 ChatGPT。"},
+            "tool": "search",
+            "tool_output": {
+                "query": "OpenAI",
+                "results": [
+                    {"title": "OpenAI", "url": "https://openai.com/"},
+                    {"title": "ChatGPT", "url": "https://chatgpt.com/"},
+                ],
+            },
+            "rewrite_output": None,
+            "reason": None,
+        },
+    )
+
+    result = runner.process_chat_request(
+        session_id="sess_search",
+        device_id="robot_01",
+        text="帮我查一下 OpenAI",
+        request_id="req_search",
+        env_file=tmp_path / ".ENV",
+        artifacts_root=tmp_path / "artifacts",
+    )
+
+    assert result["skill_name"] == "web_search"
+    assert result["tool"] == "search"
+    assert result["latest_result"]["text"] == "我查到了 OpenAI 的官网和 ChatGPT。"
+    session = runner.sessions.load("sess_search")
+    assert session.skills["web_search"]["last_query"] == "OpenAI"
 
 
 def test_runner_retries_once_when_pi_returns_no_final_payload(monkeypatch, tmp_path: Path) -> None:

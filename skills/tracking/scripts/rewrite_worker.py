@@ -39,7 +39,7 @@ def _rewrite_still_relevant(
     confirmed_frame_path: str,
 ) -> bool:
     session = sessions.load(session_id)
-    tracking_state = dict(session.skill_cache.get("tracking") or {})
+    tracking_state = dict(session.skills.get("tracking") or {})
     current_target_id = tracking_state.get("latest_target_id")
     if current_target_id in (None, ""):
         return False

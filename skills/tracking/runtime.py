@@ -24,14 +24,6 @@ ROOT = Path(__file__).resolve().parents[2]
 TRACKING_SKILL_NAME = "tracking"
 
 
-def _as_optional_dict(value: Any, field_name: str) -> Optional[Dict[str, Any]]:
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ValueError(f"{field_name} must be an object or null")
-    return dict(value)
-
-
 def _rewrite_memory_paths(request: Dict[str, Any]) -> tuple[Optional[str], list[str]]:
     crop_path = None if request.get("crop_path") in (None, "") else str(request["crop_path"]).strip()
     frame_paths = [
@@ -192,7 +184,7 @@ def build_tracking_wait_payload(
     session = sessions.load(session_id, device_id=device_id)
     latest_observation = LocalPerceptionService(sessions.state_root).latest_camera_observation(session_id=session_id)
     latest_frame_id = None if latest_observation is None else (latest_observation.get("payload") or {}).get("frame_id")
-    tracking_state = dict((session.skill_cache.get(TRACKING_SKILL_NAME) or {}))
+    tracking_state = dict((session.skills.get(TRACKING_SKILL_NAME) or {}))
     target_id = tracking_state.get("latest_target_id")
     text = "当前不确定，保持等待。"
     return {
@@ -269,34 +261,4 @@ def process_tracking_request_direct(
             ),
             env_file=env_file,
         )
-    return apply_processed_payload(session_id=session_id, pi_payload=payload, env_file=env_file)
-
-
-def process_tracking_init_direct(
-    *,
-    sessions: AgentSessionStore,
-    session_id: str,
-    device_id: str,
-    text: str,
-    request_id: str,
-    env_file: Path,
-    artifacts_root: Path,
-    apply_processed_payload: Callable[..., Dict[str, Any]],
-) -> Dict[str, Any]:
-    session = sessions.load(session_id, device_id=device_id)
-    tracking_context = build_tracking_context(
-        session,
-        request_id=request_id,
-    )
-    payload = ensure_rewrite_paths_exist(
-        build_tracking_turn_payload(
-            execute_select_tool(
-                tracking_context=tracking_context,
-                behavior="init",
-                arguments={"target_description": str(text)},
-                env_file=env_file,
-                artifacts_root=artifacts_root,
-            )
-        )
-    )
     return apply_processed_payload(session_id=session_id, pi_payload=payload, env_file=env_file)

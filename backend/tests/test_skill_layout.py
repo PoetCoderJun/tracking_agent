@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SKILL_ROOT = ROOT / "skills" / "tracking"
 TRACKING_CORE_ROOT = SKILL_ROOT / "core"
 SPEECH_SKILL_ROOT = ROOT / "skills" / "speech"
+WEB_SEARCH_SKILL_ROOT = ROOT / "skills" / "web_search"
 CLI_PATH = ROOT / "backend" / "cli.py"
 TRACKING_SCRIPT_ROOT = SKILL_ROOT / "scripts"
 REPO_SCRIPT_ROOT = ROOT / "scripts"
@@ -54,6 +55,15 @@ def test_speech_skill_is_installed_from_hub() -> None:
     ]
     for path in expected_paths:
         assert path.exists(), f"Missing expected speech artifact: {path}"
+
+
+def test_web_search_skill_is_installed_as_generic_plugin() -> None:
+    expected_paths = [
+        WEB_SEARCH_SKILL_ROOT / "SKILL.md",
+        WEB_SEARCH_SKILL_ROOT / "scripts" / "search_web.py",
+    ]
+    for path in expected_paths:
+        assert path.exists(), f"Missing expected web search artifact: {path}"
 
 
 def test_backend_contains_single_local_cli_entrypoint() -> None:
@@ -136,6 +146,15 @@ def test_tracking_skill_does_not_embed_backend_runtime_contracts() -> None:
     assert "python skills/tracking/scripts/run_tracking_track.py" in skill
     assert "skill_state_patch" not in skill
     assert '"status": "idle" | "processed"' not in skill
+
+
+def test_tracking_skill_uses_generic_turn_context_over_backend_generated_tracking_context() -> None:
+    skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "state_paths.session_path" in skill
+    assert "--session-file <session.json>" in skill
+    assert "context_paths.skill_context_paths" not in skill
+    assert "--tracking-context-file <tracking_context.json>" not in skill
 
 
 def test_tracking_skill_requires_helper_for_explicit_candidate_id_turns() -> None:

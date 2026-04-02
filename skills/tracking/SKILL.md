@@ -15,7 +15,7 @@ Semantic rule: `reply`, `init`, and `track` are turn types. The deterministic sc
 
 ## When to Use
 
-- The current turn already has a persisted route context and, when tracking is enabled, a persisted tracking context.
+- The current turn already has a persisted route context and access to the persisted robot session/perception state.
 - The user is selecting a person to track, continuing an active track, switching to a candidate ID, or asking a grounded question about the tracked person.
 - The turn depends on `recent_frames`, candidate detections, tracking memory, or the active target ID.
 
@@ -39,17 +39,18 @@ Do not use this skill for:
 
 1. Read `turn_context.json` first.
 2. Read `context_paths.route_context_path`.
-3. If you route into tracking, read `context_paths.tracking_context_path`.
+3. If you route into tracking and need grounded state, read `state_paths.session_path`.
 4. Decide only which turn type applies: `reply`, `init`, or `track`.
 5. If the turn type is `init` or `track`, call the deterministic entry script and return its stdout unchanged.
-6. If the specialized context files are insufficient, prefer `service_commands.perception_read`.
-7. Only if both specialized context files and the perception CLI output are insufficient may you fall back to raw persisted state.
+6. If the route context is insufficient, prefer `service_commands.perception_read`.
+7. Only if the route context and perception CLI output are insufficient may you fall back to raw persisted state.
 
 ## What To Read
 
 - `turn_context.json`
 - `context_paths.route_context_path`
-- `context_paths.tracking_context_path` when the tracking skill is enabled
+- `state_paths.session_path` when the tracking skill is enabled and you need grounded state
+- `service_commands.perception_read` when you need the latest persisted perception snapshot
 
 Do not read extra references or raw persisted state unless you are blocked.
 
@@ -78,8 +79,8 @@ Do not read extra references or raw persisted state unless you are blocked.
 
 Use these deterministic entry scripts for the fragile workflows:
 
-- `python skills/tracking/scripts/run_tracking_init.py --tracking-context-file <tracking_context.json> --target-description ... --env-file <env> --artifacts-root <artifacts>`
-- `python skills/tracking/scripts/run_tracking_track.py --tracking-context-file <tracking_context.json> --user-text ... --env-file <env> --artifacts-root <artifacts>`
+- `python skills/tracking/scripts/run_tracking_init.py --session-file <session.json> --target-description ... --env-file <env> --artifacts-root <artifacts>`
+- `python skills/tracking/scripts/run_tracking_track.py --session-file <session.json> --user-text ... --env-file <env> --artifacts-root <artifacts>`
 
 Important:
 

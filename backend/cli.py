@@ -123,7 +123,7 @@ def main() -> int:
         ) or generate_session_id(prefix="agent")
         session = sessions.load(session_id, device_id=args.device_id)
         existing_skills = normalize_enabled_skill_names(
-            dict((session.environment_map.get(AGENT_RUNTIME_NAMESPACE) or {})).get(ENABLED_SKILLS_FIELD)
+            dict((session.environment.get(AGENT_RUNTIME_NAMESPACE) or {})).get(ENABLED_SKILLS_FIELD)
         )
         enabled_skills = (
             _validated_enabled_skills(args.skills)
@@ -144,7 +144,7 @@ def main() -> int:
         payload = {
             "status": "started",
             "session_id": session_id,
-            "device_id": session.raw_session.get("device_id") or args.device_id,
+            "device_id": session.session.get("device_id") or args.device_id,
             "enabled_skills": enabled_skills,
             "available_skills": available_skills,
         }

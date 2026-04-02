@@ -206,7 +206,7 @@ def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -
     assert tracking_context["frames"][0]["detections"][0]["track_id"] == 7
 
 
-def test_tracking_context_helpers_prefer_perception_store_over_raw_session_frames(tmp_path: Path) -> None:
+def test_tracking_context_helpers_prefer_perception_store_over_session_frames(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
@@ -224,7 +224,7 @@ def test_tracking_context_helpers_prefer_perception_store_over_raw_session_frame
         request_function="chat",
     )
     context = runtime.load("sess_001")
-    context.raw_session["recent_frames"] = []
+    context.session["recent_frames"] = []
 
     route_context = build_route_context(
         context,

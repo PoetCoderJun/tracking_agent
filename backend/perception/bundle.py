@@ -8,8 +8,8 @@ from backend.agent.session import AgentSession
 from backend.session_frames import observation_recent_frames
 
 
-def _latest_user_text(raw_session: Dict[str, Any]) -> str:
-    history = raw_session.get("conversation_history") or []
+def _latest_user_text(session_payload: Dict[str, Any]) -> str:
+    history = session_payload.get("conversation_history") or []
     for entry in reversed(history):
         if str(entry.get("role", "")).strip() != "user":
             continue
@@ -32,7 +32,6 @@ RobotPerceptionBundle = PerceptionBundle
 
 
 def build_perception_bundle(session: AgentSession) -> PerceptionBundle:
-    raw_session = session.raw_session
     recent_frames = observation_recent_frames(
         state_root=Path(session.state_paths["state_root"]),
         session_id=session.session_id,
@@ -44,23 +43,23 @@ def build_perception_bundle(session: AgentSession) -> PerceptionBundle:
             "recent_frames": recent_frames,
         },
         language={
-            "latest_request_function": raw_session.get("latest_request_function"),
-            "latest_request_id": raw_session.get("latest_request_id"),
-            "latest_user_text": _latest_user_text(raw_session),
+            "latest_request_function": session.session.get("latest_request_function"),
+            "latest_request_id": session.session.get("latest_request_id"),
+            "latest_user_text": _latest_user_text(session.session),
             "recent_dialogue": [
                 {
                     "role": str(entry.get("role", "")).strip(),
                     "text": str(entry.get("text", "")).strip(),
                     "timestamp": str(entry.get("timestamp", "")).strip(),
                 }
-                for entry in list(raw_session.get("conversation_history") or [])[-6:]
+                for entry in list(session.session.get("conversation_history") or [])[-6:]
                 if isinstance(entry, dict)
             ],
         },
         memory={
-            "latest_result": dict(raw_session.get("latest_result") or {}) or None,
-            "runtime_summary": dict((session.perception_cache.get("runtime") or {})),
+            "latest_result": dict(session.session.get("latest_result") or {}) or None,
+            "runtime_summary": dict((session.perception.get("runtime") or {})),
         },
         user_preferences=dict(session.user_preferences),
-        environment_map=dict(session.environment_map),
+        environment_map=dict(session.environment),
     )

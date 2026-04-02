@@ -45,9 +45,9 @@ def test_agent_session_store_load_contains_generic_state(tmp_path: Path) -> None
     context = runtime.load("sess_001", device_id="robot_01")
 
     assert context.user_preferences["language"] == "zh"
-    assert context.environment_map["rooms"]["lab"]["visible"] is True
-    assert context.raw_session["recent_frames"] == []
-    assert context.raw_session["conversation_history"] == []
+    assert context.environment["rooms"]["lab"]["visible"] is True
+    assert context.session["recent_frames"] == []
+    assert context.session["conversation_history"] == []
     assert context.state_paths["session_path"].endswith("/sessions/sess_001/session.json")
     assert context.state_paths["session_path"].endswith("/sessions/sess_001/session.json")
 
@@ -105,9 +105,9 @@ def test_agent_session_store_observation_ingest_does_not_pollute_chat_history(tm
     )
     context = runtime.load("sess_obs", device_id="robot_01")
 
-    assert context.raw_session["latest_request_function"] is None
-    assert context.raw_session["conversation_history"] == []
-    assert context.raw_session["recent_frames"] == []
+    assert context.session["latest_request_function"] is None
+    assert context.session["conversation_history"] == []
+    assert context.session["recent_frames"] == []
 
 
 def test_agent_session_store_apply_skill_result_keeps_runtime_summary_small(tmp_path: Path) -> None:
@@ -144,7 +144,7 @@ def test_agent_session_store_apply_skill_result_keeps_runtime_summary_small(tmp_
         },
     )
 
-    runtime_state = context.perception_cache["runtime"]
+    runtime_state = context.perception["runtime"]
     assert runtime_state["has_latest_result"] is True
     assert runtime_state["latest_behavior"] == "track"
     assert runtime_state["latest_frame_id"] == "frame_000001"

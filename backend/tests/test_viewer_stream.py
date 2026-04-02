@@ -33,7 +33,7 @@ def _frame_image(path: Path) -> Path:
     return path
 
 
-def test_build_tracking_viewer_payload_includes_current_frame_memory_and_history(
+def test_build_agent_viewer_payload_includes_current_frame_memory_and_history(
     tmp_path: Path,
 ) -> None:
     state_root = tmp_path / "state"
@@ -99,7 +99,7 @@ def test_build_tracking_viewer_payload_includes_current_frame_memory_and_history
     assert payload["summary"]["status_label"] == "跟踪中"
 
 
-def test_build_tracking_viewer_payload_handles_missing_session(tmp_path: Path) -> None:
+def test_build_agent_viewer_payload_handles_missing_session(tmp_path: Path) -> None:
     payload = build_agent_viewer_payload(
         state_root=tmp_path / "state",
         session_id="missing_session",
@@ -109,7 +109,7 @@ def test_build_tracking_viewer_payload_handles_missing_session(tmp_path: Path) -
     assert payload["session_id"] == "missing_session"
 
 
-def test_build_tracking_viewer_payload_uses_active_session_when_session_id_is_omitted(
+def test_build_agent_viewer_payload_uses_active_session_when_session_id_is_omitted(
     tmp_path: Path,
 ) -> None:
     state_root = tmp_path / "state"
@@ -134,7 +134,7 @@ def test_build_tracking_viewer_payload_uses_active_session_when_session_id_is_om
     assert payload["observation"]["latest_frame"] is None
 
 
-def test_build_tracking_viewer_payload_hides_raw_perception_frames_before_target_confirmation(
+def test_build_agent_viewer_payload_hides_raw_perception_frames_before_target_confirmation(
     tmp_path: Path,
 ) -> None:
     state_root = tmp_path / "state"
@@ -162,7 +162,7 @@ def test_build_tracking_viewer_payload_hides_raw_perception_frames_before_target
     assert payload["summary"]["detection_count"] == 0
 
 
-def test_build_tracking_viewer_payload_follows_latest_perception_frame_after_confirmation(
+def test_build_agent_viewer_payload_follows_latest_perception_frame_after_confirmation(
     tmp_path: Path,
 ) -> None:
     state_root = tmp_path / "state"
@@ -233,7 +233,7 @@ def test_build_tracking_viewer_payload_follows_latest_perception_frame_after_con
     assert payload["summary"]["frame_id"] == "frame_000002"
 
 
-def test_build_tracking_viewer_payload_marks_completed_stream(tmp_path: Path) -> None:
+def test_build_agent_viewer_payload_marks_completed_stream(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     store = LiveSessionStore(state_root, frame_buffer_size=3)
     perception = LocalPerceptionService(state_root)
@@ -288,7 +288,7 @@ def test_build_tracking_viewer_payload_marks_completed_stream(tmp_path: Path) ->
     assert payload["summary"]["stream_status"] == "completed"
 
 
-def test_build_tracking_viewer_payload_keeps_display_frame_during_wait(tmp_path: Path) -> None:
+def test_build_agent_viewer_payload_keeps_display_frame_during_wait(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     store = LiveSessionStore(state_root, frame_buffer_size=3)
     perception = LocalPerceptionService(state_root)
@@ -344,7 +344,7 @@ def test_build_tracking_viewer_payload_keeps_display_frame_during_wait(tmp_path:
     assert payload["modules"]["tracking"]["display_frame"]["bbox"] == [11, 21, 31, 41]
 
 
-def test_build_tracking_viewer_payload_handles_missing_active_session(tmp_path: Path) -> None:
+def test_build_agent_viewer_payload_handles_missing_active_session(tmp_path: Path) -> None:
     payload = build_agent_viewer_payload(
         state_root=tmp_path / "state",
     )
@@ -353,7 +353,7 @@ def test_build_tracking_viewer_payload_handles_missing_active_session(tmp_path: 
     assert payload["session_id"] is None
 
 
-def test_build_tracking_viewer_payload_marks_wait_result_as_seeking(tmp_path: Path) -> None:
+def test_build_agent_viewer_payload_marks_wait_result_as_seeking(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     store = LiveSessionStore(state_root, frame_buffer_size=3)
     store.ingest_robot_event(
@@ -392,7 +392,7 @@ def test_build_tracking_viewer_payload_marks_wait_result_as_seeking(tmp_path: Pa
     assert payload["summary"]["status_label"] == "寻找中"
 
 
-def test_build_tracking_viewer_payload_exposes_recent_conversation_window(tmp_path: Path) -> None:
+def test_build_agent_viewer_payload_exposes_recent_conversation_window(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     store = LiveSessionStore(state_root, frame_buffer_size=3)
     store.ingest_robot_event(
