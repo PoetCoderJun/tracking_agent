@@ -1,337 +1,541 @@
-# Tracking Agent Embodied Architecture Report
+# Tracking Agent：从“看见人”到“会跟着人走”的 Embodied Agent 方案
 
-副标题：面向项目汇报的 embodied agent 技术方案架构说明  
-版本：基于仓库实态检查整理  
-检查日期：2026-04-02
+副标题：一份真正给人讲的项目说明，而不是给代码审计看的流水账  
+版本：storytelling / human-readable edition  
+日期：2026-04-02
 
-## 1. 项目目标与问题定义
+---
 
-`tracking_agent` 的核心目标不是单纯做一个 tracking demo，而是把“持续感知 + 对话驱动决策 + 可插拔能力”收敛成一个可运行在 robot / Pi 侧的 embodied agent kernel。
+## 0. 先讲一句人话：这个项目到底在做什么？
 
-这个项目要解决的不是单点算法问题，而是一个系统问题：
+如果只用一句话介绍 `tracking_agent`，我会这样讲：
 
-- 机器人需要持续看到世界，但不能让 perception loop 反客为主，吞掉整个 runtime。
-- agent 需要保持多轮对话上下文和当前世界状态的一致性，不能在多个 memory/store 之间来回漂移。
-- tracking、speech、以及后续能力都应该是 capability module，而不是每加一个 skill 就改造一遍 backend 主干。
-- 展示层需要能实时看到 agent 当前状态，但又不能把 viewer 前端强耦合进主执行链路。
+> 它不是一个“会框人”的 tracking demo，
+> 而是一套让机器人 **持续看世界、按对话理解任务、在状态里记住对象、再把结果稳定执行出来** 的 embodied agent 技术骨架。
 
-因此，仓库当前的真实架构重点是：**chat-first、perception 常驻、单 runner 主链、单一 session truth、skill 插拔化**。
+也就是说，它想解决的不是“目标检测准不准”这一个点，而是下面这个完整链条：
 
-## 2. 架构原则
+- 机器人能不能一直看着现实世界？
+- 用户能不能用自然语言告诉它“去跟着那个人”？
+- 系统能不能把“那个人是谁”记住，而不是每一轮都重新猜？
+- 当目标短暂丢失、重新出现、或者用户要求切换时，系统能不能继续工作？
+- 前端能不能把这一切清楚地展示出来，而不是黑盒运行？
 
-仓库文档与代码实现体现出一组非常明确的设计原则：
+这就是 embodied agent 真正难的地方：
+**不是某个模块强，而是整条链必须连起来。**
 
-- **Chat-first, not perception-first**：agent turn 由聊天、脚本或 loop 事件触发；perception 负责提供当前世界上下文，但不主导高层决策。
-- **Perception is the only always-on subsystem**：只有 perception 服务持续运行并写入 observation。
-- **Single runner path**：所有 turn 最终都归并到 `PiAgentRunner` 这一条主处理路径。
-- **Single persisted session-state truth**：agent 自有状态以 `session.json` 为主真相源，避免并行 memory mirror。
-- **Skills are ordinary capability modules**：`tracking`、`speech`、`web_search` 都通过统一 skill surface 接入。
-- **Viewer is read-only presentation**：viewer 只消费状态，不参与执行闭环。
+---
 
-这些原则的意义在于：它们把系统从“tracking 专用 runtime”拉回到“通用 embodied agent kernel”。
+## 1. 为什么普通 tracking demo 不够？
 
-## 3. 系统全景
+很多 tracking demo 的问题，不在于它不能跑，而在于它只能在“算法演示”那一刻跑得漂亮。
 
-从系统视角看，这个项目可以理解为三条相互配合但边界清晰的运行平面：
+常见 demo 的典型形态是：
 
-1. **Continuous Perception Plane**
-   `scripts/run_tracking_perception.py` 持续读取摄像头或视频，做 person detection / tracking，并通过 `LocalPerceptionService` 把 observation 写入共享状态。
+1. 摄像头进来
+2. 模型框人
+3. 输出一个 track id
+4. 在屏幕上画框
 
-2. **Turn Orchestration Plane**
-   用户输入、tracking continuation、或脚本事件进入 `backend/cli.py` / `PiAgentRunner`，由 runner 构造 turn context、选择 skill 路径，并落盘结果。
+这当然有用，但它离“机器人助手”还差很远。
 
-3. **Presentation Plane**
-   `backend/agent_viewer_stream.py` 把 session + perception + skill viewer module 聚合成 websocket payload，`apps/tracking-viewer` 负责可视化展示。
+因为一个真正可用的 embodied agent，面对的不是单帧画面，而是一个连续的、会变化的现实场景。它必须回答这些问题：
 
-高层结构可以抽象成：
+- 用户说的“那个穿黑衣服的人”，到底对应哪一个目标？
+- 下一秒画面变了，它怎么知道还是同一个人？
+- 如果画面里一下出现三个人，它是继续跟原来的，还是要问一句？
+- 如果 tracking 暂时不稳，它是应该继续尝试、等待、还是向用户澄清？
+- 如果前端想显示当前状态，应该从哪里读“系统当前到底认为自己在做什么”？
 
-```text
-Camera / Video
-    -> Perception Process
-    -> perception snapshot.json + keyframes
+所以，这个项目的核心设计不是“把 tracking 接到 chat 上”，而是：
 
-User / Script / Tracking Loop
-    -> backend/cli.py
-    -> PiAgentRunner
-    -> route_context + skill_context
-    -> Pi or deterministic skill entry
-    -> session.json / skill_cache / latest_result
+> **把 perception、对话理解、状态持久化、技能调用和展示层，收敛成同一个 agent runtime。**
 
-session.json + perception snapshot.json
-    -> viewer stream websocket
-    -> tracking-viewer React app
-```
+这也是这个仓库最值得讲的地方。
 
-## 4. 总体架构与层次关系
+---
 
-### 4.1 Context / Runtime View
+## 2. 这套方案的核心思想：不要让任何一个模块变成“整个系统”
 
-```text
-+---------------------------------------------------------------+
-|                        Embodied Agent Kernel                  |
-+---------------------------------------------------------------+
-|  Trigger Layer                                                |
-|  - robot-agent chat                                           |
-|  - tracking loop                                              |
-|  - manual scripts                                             |
-+---------------------------------------------------------------+
-|  Turn Orchestration Layer                                     |
-|  - backend/cli.py                                             |
-|  - backend/agent/runner.py                                    |
-|  - backend/agent/pi_protocol.py                               |
-|  - backend/agent/route_context.py                             |
-+---------------------------------------------------------------+
-|  State Layer                                                  |
-|  - active_session.json                                        |
-|  - sessions/<id>/session.json                                 |
-|  - perception/sessions/<id>/snapshot.json                     |
-+---------------------------------------------------------------+
-|  Capability Layer                                             |
-|  - skills/tracking                                            |
-|  - skills/speech                                              |
-|  - skills/web_search                                          |
-+---------------------------------------------------------------+
-|  Presentation Layer                                           |
-|  - backend/agent_viewer_stream.py                             |
-|  - apps/tracking-viewer                                       |
-+---------------------------------------------------------------+
-|  Continuous Perception Layer                                  |
-|  - scripts/run_tracking_perception.py                         |
-|  - backend/perception/service.py                              |
-+---------------------------------------------------------------+
-```
+这个仓库的设计很克制，它没有试图造一个无所不能的大框架，而是坚持了几个非常重要的边界。
 
-### 4.2 Why this matters
+### 2.1 perception 只负责“看见”
 
-这套分层最重要的价值，不是“看起来整齐”，而是明确了谁负责持续运行、谁负责单轮决策、谁负责状态、谁只是显示。
+感知层长期运行，持续把最新观察写出来。
 
-## 5. 主要组件与职责
+它负责的事情包括：
+- 读 camera / video
+- 产出 detections / tracking 结果
+- 形成 observation window
+- 保存 keyframes / snapshot
 
-| 组件 | 代表路径 | 主要职责 | 在整体中的作用 |
-| --- | --- | --- | --- |
-| Perception Service | `backend/perception/` | 维护 observation window、保存 keyframe、生成 persisted snapshot、提供 CLI 读取接口 | 提供持续世界感知，但不做高层 orchestration |
-| Agent Runner | `backend/agent/runner.py` | 接收 turn、构造 route context、调用 Pi 或 direct skill path、应用 payload 到 session | 系统唯一主处理链 |
-| Pi Protocol | `backend/agent/pi_protocol.py` | 把 turn context、enabled skills、service commands 交给 Pi，并解析结构化输出 | 管理 reasoning plane 与本地 runtime 的边界 |
-| Session Store / Persistence | `backend/persistence/` | 读写 `session.json`、维护 active session、合并 latest result / skill cache / perception cache | 保证单一状态真相源 |
-| Skill Surface | `backend/skills.py` | discovery、route summary、turn context、direct init/turn、rewrite、viewer module 聚合 | 把能力扩展收敛到统一契约 |
-| Tracking Skill | `skills/tracking/` | target init、continue tracking、memory rewrite、viewer module | 当前主力 embodied capability |
-| Speech Skill | `skills/speech/` | TTS 生成能力示例 | 证明非 tracking 能力也可通过同一框架接入 |
-| Web Search Skill | `skills/web_search/` | 外部信息检索示例 | 证明 skill 插拔边界不依赖 embodied-only 能力 |
-| Viewer Stream | `backend/agent_viewer_stream.py` | 聚合 agent / observation / modules，输出 websocket 状态 | 将执行态变成可观察态 |
-| Frontend App | `apps/tracking-viewer/` | React + Vite viewer，展示目标框、记忆、会话历史、状态标签 | 项目演示和操作反馈界面 |
-| Runtime Scripts | `scripts/` | 启 perception、tracking loop、viewer stream、frontend、stack | 负责部署与进程编排，而不是内核逻辑 |
+但它**不负责高层决策**。
 
-## 6. Embodied Agent Loop：Perception -> Planning -> Action
+换句话说，perception 负责告诉系统：
+> “世界现在长什么样。”
 
-这个仓库里的 embodied loop 不是经典机器人里那种“一个无限 while 循环包办所有事情”，而是分成持续感知和事件驱动 turn 两条链。
+而不是替系统决定：
+> “下一步该怎么做。”
 
-### 6.1 持续感知链
+### 2.2 runner 只负责“处理这一轮”
 
-- `run_tracking_perception.py` 从 camera 或视频源采样。
-- 使用 Ultralytics tracking 推出当前 frame 与 candidate detections。
-- `LocalPerceptionService` 维护最近 observation window，并把结果写到 `perception/.../snapshot.json`。
-- 同时保存关键帧路径，供后续 tracking memory / viewer 使用。
+整个系统有一个非常清晰的单轮主链：
 
-### 6.2 单轮决策链
+- 收到一次用户输入，或 loop 触发一次 continuation
+- 读取当前 session 状态
+- 读取 perception snapshot
+- 构造 route context
+- 判断该走哪个 skill / 哪条路径
+- 返回结构化结果并落盘
 
-一次 turn 的标准处理路径是：
+也就是说，runner 的职责不是“永远运行”，而是：
 
-1. 文本输入进入 `backend/cli.py`。
-2. `PiAgentRunner` 从 `session.json` 读取会话状态，并拿到当前 perception snapshot。
-3. runner 生成：
-   - `route_context.json`
-   - 每个 skill 的 `skill_context.json`
-   - `turn_context.json`
-4. 如果是显式的 deterministic direct path，直接走 skill 的本地入口。
-5. 否则 runner 调用 Pi，让它只在当前已启用的 skills 中做路由和推理。
-6. skill 返回统一 JSON payload。
-7. runner 把 `session_result`、`skill_state_patch`、`perception_cache_patch` 等应用到持久化 session。
-8. 如有需要，再异步触发 rewrite worker 等慢操作。
+> **每来一个 turn，就认真处理完这一个 turn。**
 
-### 6.3 Action 的含义
+这让系统的状态边界变得很清楚，不会糊成一个巨大 while loop。
 
-在当前仓库里，`action` 不是大而全的机器人运动控制栈，而是 capability 结果：
+### 2.3 session state 只有一个主真相源
 
-- 对 tracking：`track` / `wait` / `ask` / grounded reply
-- 对 speech：生成语音文件或 TTS 输出
-- 对 viewer：更新展示态
+这套设计里，一个非常关键的决定是：
 
-也就是说，这个仓库当前更像 **embodied decision kernel**，而不是一个完整 motion stack。
+> `session.json` 是 agent-owned state 的主真相源。
 
-## 7. Runtime / Backend / App / Skill / Data Flow 关系
+这意味着：
+- 当前对话到哪一步了
+- 当前正在跟谁
+- 上一轮结果是什么
+- skill cache 里记住了什么
 
-### 7.1 Runtime 关系
+这些都统一落在一个 session 状态里，而不是分散在多个 memory 文件、多个缓存、多个前端状态里互相猜。
 
-README 推荐的 tracking 运行形态是 3 个长期进程 + 1 个可选前端：
+这是系统可解释性的基础。
 
-```text
-Perception Process
-    continuous sensing and snapshot writing
+### 2.4 skill 是能力模块，不是系统分叉
 
-Tracking Loop
-    polls session + perception and triggers continuation turns
+tracking、speech、web_search 都以 skill 的方式接入。
 
-Viewer Stream
-    publishes fused agent/perception/module state over websocket
+它们的意义不是“多几个功能”，而是证明这套 runtime 的主干已经抽象到位：
 
-Frontend (optional)
-    renders tracking-viewer UI
-```
+- 新能力可以接进来
+- 但 backend 主干不用因为新 skill 而变形
+- viewer 也可以按模块追加展示
 
-这里的关键点是：**tracking loop 是 skill-oriented runtime helper，不是系统总控中心**。系统真正的核心仍然是统一 runner 和统一 session state。
+这背后的设计哲学其实很重要：
 
-### 7.2 Data Flow 关系
+> **继续长能力，不要继续长框架。**
 
-| 数据对象 | 典型位置 | 作用 | 谁写入 | 谁消费 |
-| --- | --- | --- | --- | --- |
-| Active Session | `active_session.json` | 标记当前活跃会话 | perception / start 命令 | runner、viewer、CLI |
-| Session Truth | `sessions/<id>/session.json` | agent 会话主状态，包括 latest_result、history、skill_cache | runner / store | viewer、loop、CLI |
-| Perception Snapshot | `perception/sessions/<id>/snapshot.json` | 最新 observation、recent window、stream status | perception service | runner、viewer、tracking skill |
-| Keyframes / Crops | `perception/keyframes/`、artifacts 目录 | 目标确认、memory rewrite、viewer 图像展示 | perception / tracking skill | tracking skill、viewer |
-| Turn Artifacts | `.runtime/pi-agent/requests/...` | route context、skill context、prompt、调试输出 | runner | Pi / 调试者 |
+### 2.5 viewer 只负责“把系统想法显示出来”
 
-### 7.3 App 与 Backend 的关系
+viewer 在这个项目里很重要，但它不是控制中心。
 
-前端 `tracking-viewer` 并不直接驱动业务逻辑。它订阅 viewer websocket，展示：
+它做的是：
+- 把 perception snapshot 读出来
+- 把 session 状态读出来
+- 把 skill viewer module 聚合起来
+- 用 websocket 推给前端
 
-- 当前 session 是否可用
-- 最新 frame 与 detection overlay
+所以 viewer 是一个 **read-only projection layer**。
+
+它让人看懂系统，而不是替系统做决定。
+
+---
+
+## 3. 用一个故事讲完整套架构
+
+假设现在有一个真实场景：
+
+> 用户看着监控画面，对机器人说：
+> **“开始跟踪最开始出现的穿黑衣服的人。”**
+
+系统内部到底发生了什么？
+
+### 第一步：系统先“看到世界”
+
+perception 进程一直在跑。
+
+它不断从视频流里读取画面，做 detection / tracking，然后把结果写成最新 snapshot。
+
+这一层不需要等用户开口。它像机器人的“眼睛”，一直开着。
+
+---
+
+### 第二步：用户发出一个自然语言任务
+
+用户并没有说“跟踪 ID 7”。
+用户说的是：
+
+> “最开始出现的穿黑衣服的人。”
+
+这是一种带语义、带上下文、带歧义空间的指令。
+
+这时系统不会直接冲去执行低层 tracking，而是先进入单轮 runner。
+
+runner 会拿三类东西拼成这次 turn 的上下文：
+
+- **对话上下文**：最近说了什么
+- **世界上下文**：当前 perception 看到了什么
+- **会话状态**：之前已经绑定了谁、上一轮发生了什么
+
+这一步的意义很大：
+
+> 系统不是在“听一句命令”，
+> 而是在“结合当前世界和历史状态，理解这句话是什么意思”。
+
+---
+
+### 第三步：系统决定该走哪条处理路径
+
+如果这是一个 tracking 的初始化请求，系统会进入 tracking skill。
+
+但这里有个很聪明的设计：
+
+对于像 `init`、`track` 这种脆弱、容易跑偏的流程，它不会完全交给开放式 LLM 推理，而是优先走 **deterministic entry script**。
+
+为什么？
+
+因为“跟踪谁”这种事，一旦走散了，用户体验会很差。
+
+所以仓库做了一个很工程上成熟的选择：
+
+- **开放式推理** 负责判断“这轮意图属于什么 skill / 什么 turn type”
+- **确定性脚本** 负责执行 fragile workflow
+
+这其实就是在说：
+
+> 该让模型自由发挥的地方，让它发挥；
+> 该收紧的地方，就别装浪漫。
+
+---
+
+### 第四步：系统把“那个人”正式绑定到 session 里
+
+一旦目标确认成功，结果不会只存在某个函数返回值里。
+
+它会被写进 session state：
+- 当前 target_id 是谁
+- 最近一次确认帧是什么
+- latest_result 是什么
+- tracking skill cache 记住了什么
+
+这一步的重要性在于：
+
+> 系统从“我这轮猜到是谁了”，
+> 升级成“我现在正式知道自己正在跟谁”。
+
+这就是 embodied agent 和一次性算法调用的区别。
+
+它不是每一轮重新开始，而是进入一个持续状态。
+
+---
+
+### 第五步：tracking loop 接管“继续跟踪”
+
+目标一旦被绑定，后面的任务就不再是“理解用户指令”，而是“在不断变化的世界里保持追踪”。
+
+于是 tracking loop 开始周期性工作：
+
+- 看看当前 target 还在不在
+- 如果还在，就继续保持状态
+- 如果不在，决定是等待、恢复、还是触发一次 continuation turn
+- 必要时再把最新信息送回 runner
+
+这里最妙的一点是：
+
+> tracking loop 不是系统总控中心，它只是一个 **skill-oriented trigger**。
+
+它的存在不是为了替代 runner，
+而是为了在 tracking 这个具体能力上提供“持续推进”的动力。
+
+这让系统避免了一个常见坏味道：
+把所有长期逻辑、感知逻辑、决策逻辑、展示逻辑都塞进同一个大 loop 里。
+
+---
+
+### 第六步：viewer 把系统“脑子里的想法”展示出来
+
+这时候 viewer 才出场。
+
+viewer 读取：
+- 当前 session 状态
+- perception snapshot
+- skill 提供的 viewer module
+
+然后把这些聚合成一个前端能直接展示的状态流。
+
+于是用户能看到：
+- 最新画面
+- 当前检测框
 - 当前绑定的 target
 - tracking memory
-- conversation history / latest result
+- 最近对话 / 当前状态
 
-这意味着前端只是一个 read-only projection layer，降低了 UI 对内核的侵入性。
+所以 viewer 的价值并不是“让 demo 更炫”，而是：
 
-## 8. Skill 插拔模型
+> 让这个 embodied agent 变得可观察、可解释、可调试。
 
-这个仓库最值得汇报的一点，是它已经把 skill 接入边界收敛到了统一 surface。
+---
 
-当前 backend 聚合的典型 hook 包括：
+## 4. 如果把整套系统压缩成一张图，它长这样
 
-- `build_route_summary`
-- `build_turn_context`
-- `should_direct_init`
-- `process_direct_init`
-- `process_direct_turn`
-- `schedule_rewrite`
-- `build_viewer_module`
+```text
+现实世界（camera / video）
+        ↓
+[ Perception Service ]
+持续读取画面，产出 detection / tracking / snapshot
+        ↓
+[ Persisted World State ]
+perception snapshot、keyframes、recent frames
+        ↓
+用户 / loop / script 触发一次 turn
+        ↓
+[ PiAgentRunner ]
+读取 session + perception，构造 route context
+        ↓
+判断该走哪个 skill / direct path / Pi path
+        ↓
+[ Skill Execution ]
+tracking / speech / web_search ...
+        ↓
+[ Session Truth ]
+session.json 写入 latest_result / skill_cache / conversation history
+        ↓
+[ Viewer Stream ]
+把 agent state + world state 投影给前端
+        ↓
+[ Human-readable UI ]
+让人看懂机器人现在“看到什么、记得什么、正在做什么”
+```
 
-其含义不是“所有 skill 都必须很复杂”，而是 backend 只认统一协作点：
+这张图背后的重点不是“模块很多”，而是：
 
-- skill 可以提供自己的 route summary
-- skill 可以提供自己的 specialized context
-- skill 可以声明某些 turn 走 deterministic 直通路径
-- skill 可以提供 viewer 模块
-- skill 可以把慢操作放到 rewrite / worker 上，而不是阻塞主 turn
+- 世界状态和会话状态被分清了
+- 一次 turn 的处理链被分清了
+- 能力扩展和内核主干被分清了
+- 展示层和执行层被分清了
 
-`tracking` skill 是最完整的样例；`speech` 与 `web_search` 则证明 backend 主干不需要为新增 skill 写专属逻辑。
+这就是它比 demo 更像系统的原因。
 
-## 9. 关键设计理由与 Tradeoffs
+---
 
-### 9.1 Chat-first vs Perception-first
+## 5. 这套架构最聪明的地方，不在“复杂”，而在“克制”
 
-**选择**：turn 由聊天或事件触发，perception 只提供上下文。  
-**好处**：系统更像 agent，而不是 tracker 外挂对话框。  
-**代价**：如果未来要做高频闭环控制，需要额外设计更严格的实时控制平面。
+很多项目做到后面都会有一个诱惑：
+既然我已经有 perception、loop、viewer、skill，那不如再搞一个更大的 orchestration framework，把所有东西都统一掉。
 
-### 9.2 Single Session Truth vs 多份 memory
+这个仓库目前反而做了更好的选择：
 
-**选择**：`session.json` 是 agent-owned state 主真相源。  
-**好处**：调试、回放、viewer 聚合和 skill patching 都有统一落点。  
-**代价**：当前更适合单机会话与文件级共享，不是天然的分布式架构。
+### 5.1 不把 perception 变成大脑
 
-### 9.3 File-backed Shared State vs Event Bus
+perception 负责看，不负责想。
 
-**选择**：perception、runner、viewer、loop 都通过本地共享状态文件协作。  
-**好处**：依赖极少、易部署、问题定位直观。  
-**代价**：跨机器扩展、并发协调、强一致性与高吞吐不是现阶段重点。
+好处是：
+- 感知可以长期跑
+- 决策可以独立演进
+- 后续替换感知源时不会重写整个 runtime
 
-### 9.4 Direct Skill Path vs Fully LLM-mediated Routing
+### 5.2 不把 tracking loop 变成总控中心
 
-**选择**：tracking 的 `init` / `track` 支持 deterministic direct path。  
-**好处**：脆弱流程不完全依赖 LLM，关键动作更稳。  
-**代价**：需要 skill 自己维护更强的入口脚本和结果契约。
+tracking loop 只是 tracking 能力的推进器。
 
-### 9.5 Async Rewrite vs Inline Completion
+好处是：
+- loop 不会绑架整个系统形状
+- 未来别的 skill 也可以有自己的 runtime helper
+- 系统主逻辑仍然收敛在 runner
 
-**选择**：tracking memory rewrite 脱离主 turn，在后台 worker 处理。  
-**好处**：降低主交互延迟，保持用户反馈及时。  
-**代价**：最终 memory 更新是 eventual consistency，而不是同步完成。
+### 5.3 不把 viewer 变成业务逻辑入口
 
-### 9.6 Generic Viewer Shell vs Tracking-only UI
+viewer 只做投影，不做决策。
 
-**选择**：backend 提供统一 viewer shell，skill 注入 module payload。  
-**好处**：viewer 可以继续扩展到其他 skill。  
-**代价**：viewer 的公共 schema 需要持续保持克制，避免重新长成大框架。
+好处是：
+- 前端可以改
+- 展示可以变
+- UI 不会反向塑造 runtime
 
-## 10. 部署视图
+### 5.4 不让 LLM 包办脆弱流程
 
-### 10.1 当前推荐部署模式
+tracking 的 `init` / `track` 明确使用 deterministic entry script。
 
-对 tracking 演示来说，推荐部署形态是：
+好处是：
+- 降低关键流程跑偏风险
+- 更容易测试
+- 更容易解释错误原因
 
-- 一个 perception 进程，持续写 observation
-- 一个 tracking loop，按状态推进 continuation turn
-- 一个 viewer stream 进程，对外发布 websocket
-- 一个可选 React frontend，做现场展示
+这就是一种成熟的 embodied agent 工程思路：
 
-这几个进程共享：
+> **把模型放在最有价值的位置，而不是把模型塞到所有位置。**
 
-- 同一个 `state-root`
-- 同一个 `session_id`
-- 同一套 artifacts 目录
+---
 
-### 10.2 为什么这种部署是合理的
+## 6. 主要组件，换一种“角色表”的讲法
 
-- 进程职责清晰，便于单独重启与定位问题
-- viewer 可选，不会卡住主流程
-- perception 与 agent 决策解耦，便于后续替换感知源
-- 仍然保持单机可运行，不引入额外服务依赖
+如果把这个项目当成一部戏来看，各个模块其实像一组分工很清楚的角色。
 
-## 11. 可扩展性判断
+| 角色 | 代表路径 | 它在故事里扮演什么角色 |
+| --- | --- | --- |
+| 眼睛 | `backend/perception/` | 一直看世界，把最新观察写下来 |
+| 大脑的单轮工作台 | `backend/agent/runner.py` | 每来一个事件，就处理完这一轮 |
+| 决策边界 | `backend/agent/pi_protocol.py` | 规定 Pi 能看到什么、该返回什么 |
+| 记忆本 | `backend/persistence/` + `session.json` | 把“我现在在做什么”稳定记住 |
+| 技能面板 | `backend/skills.py` | 让 tracking / speech / web_search 能接进同一系统 |
+| 主力能力 | `skills/tracking/` | 负责目标初始化、继续跟踪、记忆更新 |
+| 展示层 | `backend/agent_viewer_stream.py` + `apps/tracking-viewer/` | 把系统状态翻译成人能看懂的 UI |
+| 舞台监督 | `scripts/` | 把 perception、loop、viewer、frontend 各自启动起来 |
 
-从当前仓库实态看，这个项目已经具备“继续长能力而不是继续长框架”的基础。
+这种设计的价值在于：
 
-### 已经具备的扩展点
+> 你能一眼看出谁在负责什么。
 
-- 新增 skill 可以直接放在 `skills/<name>/`
-- runner 会基于已启用 skill 自动构建 route summary 与 turn context
-- viewer 可通过 `build_viewer_module` 扩展
-- 脚本层可以按 capability 增加 loop / helper，而不改变内核主链
+而一套系统一旦做到“谁负责什么”很清楚，它就更容易维护，也更容易扩展。
 
-### 当前不应过早抽象的部分
+---
 
-- 不必急着引入通用消息总线
-- 不必急着引入复杂 plugin lifecycle framework
-- 不必为了多 skill 再拆一层更泛化的 runtime wrapper
+## 7. 部署形态也很像人能理解的系统，而不是魔法
 
-项目的方向很明确：先把内核保持小而硬，再按能力增长。
+当前推荐运行方式是：
 
-## 12. 风险、边界与未来工作
+- **1 个 perception 进程**：持续看世界
+- **1 个 tracking loop 进程**：在 tracking 场景下推进持续行为
+- **1 个 viewer stream 进程**：把状态流推给前端
+- **1 个可选 frontend**：让人看见系统在想什么
 
-### 当前边界
+这个部署方式好在哪里？
 
-- 当前最成熟的 embodied capability 仍然是 tracking。
-- 系统主要围绕单机、本地共享状态、单活跃 session 模式组织。
-- perception 当前聚焦视觉 tracking 场景，不是通用多传感器融合平台。
-- action 面仍以 capability 结果和轻量执行接口为主，还不是完整机器人控制栈。
+### 好处 1：出了问题容易定位
 
-### Future Work
+如果是 perception 崩了，你知道是“眼睛坏了”；
+如果是 viewer 出问题，你知道是“展示层坏了”；
+如果是 runner 出问题，你知道是“单轮决策主链坏了”。
 
-- **更强的部署韧性**：为 perception、loop、viewer 增加更清晰的健康检查与恢复策略。
-- **更通用的 capability 接口**：在保持 skill surface 克制的前提下，接入更多 embodied 能力。
-- **更强的 observability**：补齐 turn latency、skill routing、rewrite worker 等指标。
-- **多设备 / 远程部署能力**：如果未来跨机器部署成为刚需，再考虑从文件共享迁移到更明确的 service / bus 架构。
-- **更完整的 action plane**：把当前“结果型 action”逐步扩展到更真实的机器人执行闭环。
+这比把一切塞进一个大进程要健康太多。
 
-## 13. 汇报结论
+### 好处 2：前端不是强依赖
 
-`tracking_agent` 当前最值得强调的，不是某一个 tracking 算法细节，而是它已经把 embodied agent 方案收敛成一个清晰、可解释、可扩展的技术骨架：
+你可以 headless 跑，也可以带前端演示跑。
 
-- 持续感知只做感知
-- 单轮 runner 只做决策编排
-- session state 只有一个真相源
-- skill 通过统一 surface 接入
-- viewer 只是展示层
+这意味着系统既能做研究开发，也能做项目展示。
 
-这使得项目从“为 tracking 服务的一组脚本”进化为“以 tracking 为样板能力的 embodied agent kernel”，也为后续接入更多能力留下了足够清晰的演进路径。
+### 好处 3：状态共享方式简单直接
+
+现在主要通过共享状态文件协作。
+
+这不一定是未来分布式系统的终点，但对当前阶段非常合理：
+- 简单
+- 透明
+- 好调试
+- 不会过早工程化
+
+---
+
+## 8. 这套方案的 tradeoff 也要诚实地讲
+
+真正像人的汇报，不是只说优点，也要说明它的边界。
+
+### tradeoff 1：它更像 embodied decision kernel，还不是完整机器人控制栈
+
+现在它已经能做：
+- 看
+- 记
+- 理解用户意图
+- 执行 grounded capability
+
+但它还不是完整 motion stack。也就是说，
+它更强在“决策与状态组织”，
+而不是底层机器人运动控制闭环。
+
+### tradeoff 2：它非常适合单机 / 单 session 形态，但还不是分布式多机架构
+
+当前基于本地状态文件的协作方式，
+对 robot / Pi 侧部署非常实用，
+但如果未来上升到多设备、多节点协同，就需要更明确的 service / bus 设计。
+
+### tradeoff 3：tracking 是当前最成熟的 embodied capability
+
+这套系统已经证明可以接 skill，
+但真正围绕 embodied 主场景打磨成熟的，仍然是 tracking。
+
+这不是缺点，反而是好事：
+说明它先把一个核心能力做扎实，而不是空泛地说“未来什么都能接”。
+
+---
+
+## 9. future work：下一步最值得做什么？
+
+如果要继续把这个项目往前推，我认为最值得做的不是“再堆几个 feature”，而是沿着下面四条线继续长。
+
+### 9.1 更强的部署韧性
+
+把 perception、loop、viewer 的健康检查、超时恢复、异常重启补齐。
+
+这会让它从“能跑的研究原型”更进一步变成“能持续运行的系统”。
+
+### 9.2 更丰富的 embodied capabilities
+
+在 tracking 之外，继续接入更多 grounded skill：
+- spatial question answering
+- action recommendation
+- multimodal memory update
+- environment-aware interaction
+
+前提不是扩框架，而是沿着现在这条 skill surface 往里接。
+
+### 9.3 更强的可观测性
+
+如果要让系统真正工程化，就应该更系统地记录：
+- turn latency
+- route decision
+- skill hit rate
+- rewrite success / failure
+- tracking recovery 质量
+
+让系统不只是“跑起来”，而是“看得懂为什么这么跑”。
+
+### 9.4 远程 / 多设备部署能力
+
+如果未来要把 perception、agent、viewer 拆到不同机器上，
+那时再引入更明确的 service 边界，会非常自然。
+
+因为现在这套内核边界已经足够干净了。
+
+---
+
+## 10. 最后怎么讲，才像一个真正的人类 presentation？
+
+如果你要拿这个项目去讲，我建议核心叙事不要从模型细节开始，而要从这句开始：
+
+> **我们做的不是一个 tracking demo，**
+> **而是一套让机器人能把“看见世界”和“理解任务”接起来的 embodied agent runtime。**
+
+然后顺着这个逻辑讲：
+
+1. **问题**：普通 tracking demo 只能框人，不能形成持续任务闭环  
+2. **目标**：把 perception、对话理解、状态记忆和能力执行连成一条链  
+3. **架构**：perception 常驻，runner 单轮处理，session 单源，skills 插拔，viewer 只读  
+4. **效果**：系统知道自己正在跟谁、为什么这样做、以及怎么把状态展示给人  
+5. **价值**：这是一套可继续扩能力的 embodied agent kernel，而不是一次性脚本堆叠  
+
+---
+
+## 11. 一段可以直接拿去讲的结尾
+
+> `tracking_agent` 最值得强调的，不是它能把一个人框出来，
+> 而是它已经把 embodied agent 最难的那条链条接通了：
+> 
+> - 机器人持续看世界
+> - 用户用自然语言给任务
+> - 系统在 session 里记住“我正在跟谁”
+> - tracking loop 在现实变化中继续推进
+> - viewer 把整个状态清楚地展示给人
+> 
+> 这让它从一个 tracking 功能，变成了一套真正可以继续长出更多能力的 agent runtime。
+
+---
+
+## 12. 最后压缩成五个关键词
+
+- **持续感知**
+- **单轮决策主链**
+- **单一状态真相源**
+- **能力可插拔**
+- **系统可观察**
+
+这五个词，基本就是这套 embodied agent 技术方案的骨架。

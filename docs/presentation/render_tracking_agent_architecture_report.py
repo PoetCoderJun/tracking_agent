@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from PIL import Image, ImageDraw, ImageFont
-
 
 ROOT = Path(__file__).resolve().parent
 OUTPUT_PDF = ROOT / "tracking-agent-embodied-architecture-report.pdf"
@@ -13,642 +12,442 @@ PAGE_W = 1240
 PAGE_H = 1754
 MARGIN = 72
 
-BG = "#f5efe6"
-PAPER = "#fffaf3"
+BG = "#f6efe6"
+PAPER = "#fffaf4"
 PANEL = "#fffdf9"
-TEXT = "#1d1b17"
-MUTED = "#5d584f"
-LINE = "#d9d0c4"
+TEXT = "#1f1b17"
+MUTED = "#655b52"
+LINE = "#ddd2c5"
 TEAL = "#0d6b63"
-TEAL_SOFT = "#e7f4f1"
+TEAL_SOFT = "#e8f4f1"
 ORANGE = "#b85b2f"
-ORANGE_SOFT = "#f8ebe3"
-NAVY = "#1d3557"
-NAVY_SOFT = "#e9eef5"
-GOLD = "#c18b2f"
-SHADOW = "#efe7db"
+ORANGE_SOFT = "#f8ece4"
+NAVY = "#223650"
+NAVY_SOFT = "#ebf0f6"
+SHADOW = "#efe6da"
 
 FONT_REGULAR = "/System/Library/Fonts/Hiragino Sans GB.ttc"
 FONT_BOLD = "/System/Library/Fonts/STHeiti Medium.ttc"
 FONT_MONO = "/System/Library/Fonts/Helvetica.ttc"
 
 
-def load_font(size: int, *, bold: bool = False, mono: bool = False) -> ImageFont.FreeTypeFont:
+def font(size: int, *, bold: bool = False, mono: bool = False):
     path = FONT_MONO if mono else (FONT_BOLD if bold else FONT_REGULAR)
     return ImageFont.truetype(path, size=size)
 
 
-FONT_TINY = load_font(12, bold=True)
-FONT_SMALL = load_font(15)
-FONT_BODY = load_font(18)
-FONT_BODY_BOLD = load_font(18, bold=True)
-FONT_H3 = load_font(22, bold=True)
-FONT_H2 = load_font(30, bold=True)
-FONT_H1 = load_font(54, bold=True)
-FONT_METRIC = load_font(30, bold=True)
-FONT_MONO_SMALL = load_font(16, mono=True)
+FONT_TINY = font(12, bold=True)
+FONT_SMALL = font(16)
+FONT_BODY = font(19)
+FONT_BODY_BOLD = font(19, bold=True)
+FONT_H3 = font(24, bold=True)
+FONT_H2 = font(32, bold=True)
+FONT_H1 = font(52, bold=True)
+FONT_METRIC = font(28, bold=True)
+FONT_MONO_SMALL = font(16, mono=True)
 
 
-def text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont) -> int:
-    bbox = draw.textbbox((0, 0), text, font=font)
-    return bbox[2] - bbox[0]
+def text_w(draw: ImageDraw.ImageDraw, text: str, fnt) -> int:
+    box = draw.textbbox((0, 0), text, font=fnt)
+    return box[2] - box[0]
 
 
-def wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
+def wrap(draw: ImageDraw.ImageDraw, text: str, fnt, max_width: int) -> list[str]:
     if not text:
         return [""]
     lines: list[str] = []
-    for paragraph in text.split("\n"):
-        if paragraph == "":
+    for para in text.split("\n"):
+        if para == "":
             lines.append("")
             continue
-        current = ""
-        for char in paragraph:
-            tentative = current + char
-            if not current or text_width(draw, tentative, font) <= max_width:
-                current = tentative
-                continue
-            lines.append(current)
-            current = char
-        if current:
-            lines.append(current)
+        cur = ""
+        for ch in para:
+            trial = cur + ch
+            if not cur or text_w(draw, trial, fnt) <= max_width:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = ch
+        if cur:
+            lines.append(cur)
     return lines or [""]
 
 
-def draw_wrapped(
-    draw: ImageDraw.ImageDraw,
-    text: str,
-    *,
-    x: int,
-    y: int,
-    font: ImageFont.FreeTypeFont,
-    fill: str,
-    max_width: int,
-    line_gap: int = 8,
-) -> int:
-    lines = wrap_text(draw, text, font, max_width)
-    line_h = (draw.textbbox((0, 0), "测试Ag", font=font)[3] - draw.textbbox((0, 0), "测试Ag", font=font)[1]) + line_gap
-    cursor = y
+def draw_text(draw, text: str, *, x: int, y: int, fnt, fill: str, max_width: int, gap: int = 8) -> int:
+    lines = wrap(draw, text, fnt, max_width)
+    line_h = draw.textbbox((0, 0), "测试Ag", font=fnt)[3] + gap
+    cy = y
     for line in lines:
-        draw.text((x, cursor), line, font=font, fill=fill)
-        cursor += line_h
-    return cursor
+        draw.text((x, cy), line, font=fnt, fill=fill)
+        cy += line_h
+    return cy
 
 
-def rounded_panel(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], *, fill: str = PANEL, outline: str = LINE, radius: int = 28) -> None:
+def panel(draw, box: tuple[int, int, int, int], *, fill: str = PANEL, radius: int = 28):
     x1, y1, x2, y2 = box
-    shadow_box = (x1 + 6, y1 + 8, x2 + 6, y2 + 8)
-    draw.rounded_rectangle(shadow_box, radius=radius, fill=SHADOW)
-    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=2)
+    draw.rounded_rectangle((x1 + 6, y1 + 8, x2 + 6, y2 + 8), radius=radius, fill=SHADOW)
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=LINE, width=2)
 
 
-def pill(draw: ImageDraw.ImageDraw, *, x: int, y: int, text: str, fill: str = TEAL_SOFT, ink: str = TEAL) -> int:
-    padding_x = 18
-    h = 34
-    w = text_width(draw, text, FONT_SMALL) + padding_x * 2
-    draw.rounded_rectangle((x, y, x + w, y + h), radius=17, fill=fill, outline=LINE, width=1)
-    draw.text((x + padding_x, y + 7), text, font=FONT_SMALL, fill=ink)
+def section_title(draw, *, x: int, y: int, eyebrow: str, title: str) -> int:
+    draw.text((x, y), eyebrow, font=FONT_TINY, fill=TEAL)
+    draw.text((x, y + 24), title, font=FONT_H2, fill=TEXT)
+    return y + 74
+
+
+def pill(draw, *, x: int, y: int, text: str, fill: str = TEAL_SOFT, ink: str = TEAL) -> int:
+    w = text_w(draw, text, FONT_SMALL) + 30
+    draw.rounded_rectangle((x, y, x + w, y + 34), radius=17, fill=fill, outline=LINE, width=1)
+    draw.text((x + 15, y + 7), text, font=FONT_SMALL, fill=ink)
     return w
 
 
-def footer(draw: ImageDraw.ImageDraw, page_no: int, total: int) -> None:
-    draw.text((MARGIN, PAGE_H - 42), "Tracking Agent Embodied Architecture Report", font=FONT_SMALL, fill=MUTED)
+def metric(draw, *, x: int, y: int, w: int, number: str, label: str):
+    panel(draw, (x, y, x + w, y + 120))
+    draw.text((x + 18, y + 18), number, font=FONT_METRIC, fill=TEXT)
+    draw_text(draw, label, x=x + 18, y=y + 62, fnt=FONT_SMALL, fill=MUTED, max_width=w - 36, gap=4)
+
+
+def card(draw, *, x: int, y: int, w: int, title: str, body: str, fill: str = PANEL) -> int:
+    lines = wrap(draw, body, FONT_SMALL, w - 32)
+    h = 56 + len(lines) * 23
+    panel(draw, (x, y, x + w, y + h), fill=fill, radius=20)
+    draw.text((x + 16, y + 14), title, font=FONT_BODY_BOLD, fill=TEXT)
+    draw_text(draw, body, x=x + 16, y=y + 40, fnt=FONT_SMALL, fill=MUTED, max_width=w - 32, gap=5)
+    return h
+
+
+def story_step(draw, *, x: int, y: int, w: int, idx: int, title: str, body: str, fill: str) -> int:
+    lines = wrap(draw, body, FONT_SMALL, w - 92)
+    h = 58 + len(lines) * 22
+    panel(draw, (x, y, x + w, y + h), fill=fill, radius=22)
+    draw.ellipse((x + 16, y + 14, x + 54, y + 52), fill="white", outline=LINE, width=1)
+    n = str(idx)
+    draw.text((x + 35 - text_w(draw, n, FONT_BODY_BOLD) / 2, y + 18), n, font=FONT_BODY_BOLD, fill=TEAL)
+    draw.text((x + 70, y + 12), title, font=FONT_BODY_BOLD, fill=TEXT)
+    draw_text(draw, body, x=x + 70, y=y + 38, fnt=FONT_SMALL, fill=MUTED, max_width=w - 86, gap=4)
+    return h
+
+
+def footer(draw, page_no: int, total: int):
+    draw.text((MARGIN, PAGE_H - 40), "Tracking Agent Storytelling Architecture Report", font=FONT_SMALL, fill=MUTED)
     label = f"{page_no} / {total}"
-    draw.text((PAGE_W - MARGIN - text_width(draw, label, FONT_SMALL), PAGE_H - 42), label, font=FONT_SMALL, fill=MUTED)
+    draw.text((PAGE_W - MARGIN - text_w(draw, label, FONT_SMALL), PAGE_H - 40), label, font=FONT_SMALL, fill=MUTED)
 
 
-def create_page() -> tuple[Image.Image, ImageDraw.ImageDraw]:
+def create_page():
     image = Image.new("RGB", (PAGE_W, PAGE_H), BG)
     draw = ImageDraw.Draw(image)
-    draw.ellipse((-120, -70, 240, 280), fill=TEAL_SOFT)
-    draw.ellipse((PAGE_W - 280, -90, PAGE_W + 80, 260), fill=ORANGE_SOFT)
-    draw.rectangle((0, 0, PAGE_W, PAGE_H), outline=None, fill=None)
+    draw.ellipse((-120, -80, 240, 260), fill=TEAL_SOFT)
+    draw.ellipse((PAGE_W - 270, -90, PAGE_W + 80, 230), fill=ORANGE_SOFT)
     return image, draw
 
 
-def metric_card(draw: ImageDraw.ImageDraw, *, x: int, y: int, w: int, number: str, label: str) -> None:
-    rounded_panel(draw, (x, y, x + w, y + 124), fill=PANEL)
-    draw.text((x + 18, y + 20), number, font=FONT_METRIC, fill=TEXT)
-    draw.text((x + 18, y + 74), label, font=FONT_SMALL, fill=MUTED)
-
-
-def small_card(draw: ImageDraw.ImageDraw, *, x: int, y: int, w: int, title: str, body: str, accent: str = TEAL) -> int:
-    body_lines = wrap_text(draw, body, FONT_SMALL, w - 36)
-    h = 64 + len(body_lines) * 24
-    rounded_panel(draw, (x, y, x + w, y + h), fill=PANEL)
-    draw.text((x + 18, y + 16), title, font=FONT_BODY_BOLD, fill=accent)
-    draw_wrapped(draw, body, x=x + 18, y=y + 46, font=FONT_SMALL, fill=MUTED, max_width=w - 36, line_gap=6)
-    return h
-
-
-def section_title(draw: ImageDraw.ImageDraw, *, x: int, y: int, title: str, eyebrow: str | None = None) -> int:
-    cursor = y
-    if eyebrow:
-        draw.text((x, cursor), eyebrow, font=FONT_TINY, fill=TEAL)
-        cursor += 24
-    draw.text((x, cursor), title, font=FONT_H2, fill=TEXT)
-    return cursor + 44
-
-
-def bullet_block(draw: ImageDraw.ImageDraw, *, x: int, y: int, w: int, title: str, body: str, bg: str = PAPER) -> int:
-    body_lines = wrap_text(draw, body, FONT_SMALL, w - 44)
-    h = 58 + len(body_lines) * 24
-    rounded_panel(draw, (x, y, x + w, y + h), fill=bg)
-    draw.ellipse((x + 16, y + 18, x + 32, y + 34), fill=TEAL)
-    draw.text((x + 42, y + 13), title, font=FONT_BODY_BOLD, fill=TEXT)
-    draw_wrapped(draw, body, x=x + 42, y=y + 40, font=FONT_SMALL, fill=MUTED, max_width=w - 60, line_gap=6)
-    return h
-
-
-def step_block(draw: ImageDraw.ImageDraw, *, x: int, y: int, w: int, index: int, title: str, body: str) -> int:
-    body_lines = wrap_text(draw, body, FONT_SMALL, w - 84)
-    h = 62 + len(body_lines) * 22
-    rounded_panel(draw, (x, y, x + w, y + h), fill=PANEL)
-    draw.ellipse((x + 18, y + 18, x + 54, y + 54), fill=TEAL_SOFT, outline=LINE, width=1)
-    idx = str(index)
-    idx_w = text_width(draw, idx, FONT_BODY_BOLD)
-    draw.text((x + 36 - idx_w / 2, y + 22), idx, font=FONT_BODY_BOLD, fill=TEAL)
-    draw.text((x + 72, y + 14), title, font=FONT_BODY_BOLD, fill=TEXT)
-    draw_wrapped(draw, body, x=x + 72, y=y + 40, font=FONT_SMALL, fill=MUTED, max_width=w - 90, line_gap=5)
-    return h
-
-
-def draw_table(
-    draw: ImageDraw.ImageDraw,
-    *,
-    x: int,
-    y: int,
-    widths: Sequence[int],
-    headers: Sequence[str],
-    rows: Sequence[Sequence[str]],
-    row_font: ImageFont.FreeTypeFont = FONT_SMALL,
-) -> int:
-    total_w = sum(widths)
-    header_h = 42
-    draw.rounded_rectangle((x, y, x + total_w, y + header_h), radius=16, fill=NAVY_SOFT, outline=LINE, width=1)
-    cursor_x = x
-    for index, header in enumerate(headers):
-        draw.text((cursor_x + 10, y + 10), header, font=FONT_TINY, fill=NAVY)
-        cursor_x += widths[index]
-        if index < len(headers) - 1:
-            draw.line((cursor_x, y + 4, cursor_x, y + header_h - 4), fill=LINE, width=1)
-    cursor_y = y + header_h
-    for row in rows:
-        cell_lines = [wrap_text(draw, cell, row_font, widths[i] - 18) for i, cell in enumerate(row)]
-        max_lines = max(len(lines) for lines in cell_lines)
-        row_h = max(44, 14 + max_lines * 24)
-        draw.rounded_rectangle((x, cursor_y, x + total_w, cursor_y + row_h), radius=0, fill=PANEL, outline=LINE, width=1)
-        cx = x
-        for idx, lines in enumerate(cell_lines):
-            ty = cursor_y + 10
-            for line in lines:
-                draw.text((cx + 9, ty), line, font=row_font, fill=TEXT if idx == 0 else MUTED)
-                ty += 22
-            cx += widths[idx]
-            if idx < len(cell_lines) - 1:
-                draw.line((cx, cursor_y + 2, cx, cursor_y + row_h - 2), fill=LINE, width=1)
-        cursor_y += row_h
-    return cursor_y
-
-
 @dataclass(frozen=True)
-class PageBundle:
+class Page:
     image: Image.Image
 
 
-def build_cover() -> PageBundle:
+def page1() -> Page:
     image, draw = create_page()
-    left_x = MARGIN
-    top_y = MARGIN
-    hero_w = 760
-    right_x = PAGE_W - MARGIN - 320
-
-    rounded_panel(draw, (left_x, top_y, left_x + hero_w, top_y + 370), fill=PANEL)
-    draw.text((left_x + 26, top_y + 26), "EMBODIED AGENT ARCHITECTURE", font=FONT_TINY, fill=TEAL)
-    draw.text((left_x + 26, top_y + 68), "Tracking Agent", font=FONT_H1, fill=TEXT)
-    draw.text((left_x + 26, top_y + 132), "技术架构报告", font=FONT_H2, fill=TEXT)
-    subtitle = "一个运行在 robot / Pi 侧的 chat-first embodied agent kernel。项目当前最核心的价值，在于把持续感知、事件驱动 turn、状态单源与 skill 插拔化收敛成清晰、可解释、可演进的系统骨架。"
-    draw_wrapped(draw, subtitle, x=left_x + 26, y=top_y + 192, font=FONT_BODY, fill=MUTED, max_width=hero_w - 52, line_gap=9)
-    pill_x = left_x + 26
-    pill_y = top_y + 314
+    hero_h = 400
+    panel(draw, (MARGIN, MARGIN, PAGE_W - MARGIN, MARGIN + hero_h), fill=PANEL)
+    draw.text((MARGIN + 28, MARGIN + 26), "EMBODIED AGENT STORYTELLING REPORT", font=FONT_TINY, fill=TEAL)
+    draw.text((MARGIN + 28, MARGIN + 72), "Tracking Agent", font=FONT_H1, fill=TEXT)
+    draw.text((MARGIN + 28, MARGIN + 136), "不是“会框人”，而是“会持续理解任务”的机器人运行骨架", font=FONT_H2, fill=TEXT)
+    lead = "如果只看算法，这像一个 tracking 系统；如果站在系统设计角度看，它其实是在回答一个更大的问题：机器人怎样把“持续看世界”和“理解人类任务”接成一条真正可用的链。"
+    draw_text(draw, lead, x=MARGIN + 28, y=MARGIN + 204, fnt=FONT_BODY, fill=MUTED, max_width=700, gap=8)
+    px = MARGIN + 28
     for label in ["Chat-first", "Perception 常驻", "Single Runner", "Session Truth", "Skill-Pluggable"]:
-        pill_w = pill(draw, x=pill_x, y=pill_y, text=label)
-        pill_x += pill_w + 10
+        pw = pill(draw, x=px, y=MARGIN + 326, text=label)
+        px += pw + 10
 
-    metric_card(draw, x=right_x, y=top_y, w=150, number="3+1", label="推荐运行形态")
-    metric_card(draw, x=right_x + 170, y=top_y, w=150, number="1", label="Session Truth")
-    metric_card(draw, x=right_x, y=top_y + 144, w=150, number="Pi + Direct", label="决策路径")
-    metric_card(draw, x=right_x + 170, y=top_y + 144, w=150, number="3", label="已验证 Skills")
-    small_card(
-        draw,
-        x=right_x,
-        y=top_y + 288,
-        w=320,
-        title="Inspection Scope",
-        body="本报告基于仓库实态检查整理，聚焦系统设计、组件职责、状态与数据流、部署方式和扩展路径，不下钻到函数级实现。",
-        accent=ORANGE,
-    )
+    metric_x = PAGE_W - MARGIN - 320
+    metric(draw, x=metric_x, y=MARGIN + 26, w=150, number="3+1", label="推荐运行形态")
+    metric(draw, x=metric_x + 170, y=MARGIN + 26, w=150, number="1", label="状态真相源")
+    metric(draw, x=metric_x, y=MARGIN + 162, w=150, number="Pi + Direct", label="决策路径")
+    metric(draw, x=metric_x + 170, y=MARGIN + 162, w=150, number="Tracking", label="成熟能力样板")
 
-    left_panel_y = top_y + 404
-    rounded_panel(draw, (left_x, left_panel_y, left_x + 530, left_panel_y + 1070), fill=PANEL)
-    cy = section_title(draw, x=left_x + 22, y=left_panel_y + 20, title="项目目标与问题 framing", eyebrow="Project Goal")
-    bullets = [
-        ("目标不是单点 tracking demo", "仓库正在从 tracking-specific runtime 收敛为通用 embodied agent kernel，tracking 和 speech 是当前最明确的能力样板。"),
-        ("要解决的是系统问题", "持续感知、会话状态、多轮对话、技能编排和展示层需要稳定协作，但不能演化成过度工程化的 runtime 框架。"),
-        ("关键约束", "perception 负责提供世界状态，runner 负责单轮处理，viewer 负责状态投影，skills 负责具体 capability。"),
-    ]
-    for title, body in bullets:
-        h = bullet_block(draw, x=left_x + 22, y=cy, w=486, title=title, body=body)
-        cy += h + 14
-
-    cy += 10
-    draw.text((left_x + 22, cy), "Architecture Thesis", font=FONT_TINY, fill=ORANGE)
-    cy += 24
-    thesis = "系统最值得汇报的不是某个 tracking 算法细节，而是已经形成了“持续感知只做感知、单轮 runner 只做编排、状态只有一个真相源、skills 通过统一 surface 接入、viewer 只是展示层”的整体技术形态。"
-    draw_wrapped(draw, thesis, x=left_x + 22, y=cy, font=FONT_BODY, fill=TEXT, max_width=486, line_gap=9)
-
-    right_panel_x = left_x + 548
-    rounded_panel(draw, (right_panel_x, left_panel_y, PAGE_W - MARGIN, left_panel_y + 1070), fill=PANEL)
-    cy = section_title(draw, x=right_panel_x + 22, y=left_panel_y + 20, title="架构原则", eyebrow="Design Principles")
-    principles = [
-        ("Chat-first, not perception-first", "turn 由聊天、脚本或 loop 事件触发；perception 只提供 grounded context。", TEAL_SOFT),
-        ("Perception is the only always-on subsystem", "只有 perception 常驻运行并持续写 observation 与 snapshot。", PAPER),
-        ("Single runner path", "所有 turn 最终归并到 PiAgentRunner 的同一条主处理路径。", PAPER),
-        ("Single persisted state truth", "session.json 是 agent-owned state 的主真相源。", TEAL_SOFT),
-        ("Skills are ordinary modules", "tracking、speech、web_search 都通过统一 skill surface 接入。", PAPER),
-        ("Viewer is a read-only projection", "viewer 聚合并展示状态，但不反向驱动业务逻辑。", TEAL_SOFT),
-    ]
-    for title, body, fill in principles:
-        h = bullet_block(draw, x=right_panel_x + 22, y=cy, w=576, title=title, body=body, bg=fill)
+    y = MARGIN + hero_h + 18
+    left_w = 530
+    panel(draw, (MARGIN, y, MARGIN + left_w, y + 1080))
+    cy = section_title(draw, x=MARGIN + 22, y=y + 20, eyebrow="WHY THE PROJECT EXISTS", title="为什么普通 tracking demo 不够？")
+    for title, body, fill in [
+        ("它能框人，但不一定能理解任务", "用户说的是“跟着最开始出现的穿黑衣服的人”，不是“跟踪 ID 7”。系统必须先理解语义，再执行。", ORANGE_SOFT),
+        ("它能追一帧，但不一定能维持连续状态", "真正的机器人不是处理单帧图像，而是要跨多轮、跨时间地记住“我现在正在跟谁”。", PANEL),
+        ("它能显示画框，但不一定能解释自己在做什么", "如果没有统一状态与展示层，用户看到的只是框，看不到系统为什么这样选、下一步准备做什么。", TEAL_SOFT),
+    ]:
+        h = card(draw, x=MARGIN + 22, y=cy, w=486, title=title, body=body, fill=fill)
         cy += h + 12
 
-    footer(draw, 1, 7)
-    return PageBundle(image)
+    cy += 10
+    draw.text((MARGIN + 22, cy), "真正难的，不是某个模型强不强，而是整条链必须连起来。", font=FONT_BODY_BOLD, fill=TEXT)
+    cy += 36
+    for bullet in [
+        "机器人能不能一直看着现实世界？",
+        "用户能不能用自然语言告诉它“去跟着那个人”？",
+        "系统能不能把“那个人是谁”记住，而不是每一轮都重新猜？",
+        "当目标短暂丢失、重新出现、或用户要求切换时，系统能不能继续工作？",
+    ]:
+        draw.ellipse((MARGIN + 22, cy + 7, MARGIN + 34, cy + 19), fill=TEAL)
+        draw_text(draw, bullet, x=MARGIN + 44, y=cy, fnt=FONT_BODY, fill=MUTED, max_width=460, gap=6)
+        cy += 44
 
-
-def build_overview() -> PageBundle:
-    image, draw = create_page()
-    cy = section_title(draw, x=MARGIN, y=MARGIN, title="系统全景与架构分层", eyebrow="System Overview")
-
-    left_w = 520
     right_x = MARGIN + left_w + 20
-    rounded_panel(draw, (MARGIN, cy, MARGIN + left_w, cy + 530), fill=PANEL)
-    inner_y = cy + 20
-    draw.text((MARGIN + 20, inner_y), "三条运行平面", font=FONT_H3, fill=TEXT)
-    inner_y += 42
-    planes = [
-        ("Continuous Perception Plane", "scripts/run_tracking_perception.py 持续读取 camera / video，经过 LocalPerceptionService 写入 perception snapshot 与 keyframes。"),
-        ("Turn Orchestration Plane", "backend/cli.py 与 PiAgentRunner 负责一次 turn 的上下文构造、skill 路由、Pi 调用或 deterministic direct path。"),
-        ("Presentation Plane", "agent_viewer_stream 聚合 session + observation + viewer modules，经 websocket 提供给 tracking-viewer。"),
+    panel(draw, (right_x, y, PAGE_W - MARGIN, y + 1080))
+    cy = section_title(draw, x=right_x + 22, y=y + 20, eyebrow="THE REAL GOAL", title="这个项目真正想解决什么？")
+    blocks = [
+        ("持续感知", "机器人一直在看世界，不需要每次等用户开口才“醒过来”。", TEAL_SOFT),
+        ("对话驱动的任务理解", "用户用自然语言发任务，系统把当前世界状态和历史状态一起拿来解释这句话。", NAVY_SOFT),
+        ("单一状态真相源", "系统必须稳定记住“我正在跟谁、上一步发生了什么”，而不是让多个缓存互相猜。", ORANGE_SOFT),
+        ("能力可扩展", "tracking 只是第一能力样板，speech、web_search 乃至更多 embodied skill 都要能自然接进来。", PANEL),
     ]
-    for idx, (title, body) in enumerate(planes, start=1):
-        h = step_block(draw, x=MARGIN + 20, y=inner_y, w=left_w - 40, index=idx, title=title, body=body)
-        inner_y += h + 12
+    for title, body, fill in blocks:
+        h = card(draw, x=right_x + 22, y=cy, w=576, title=title, body=body, fill=fill)
+        cy += h + 12
+    quote_y = cy + 18
+    panel(draw, (right_x + 22, quote_y, PAGE_W - MARGIN - 22, quote_y + 180), fill=ORANGE_SOFT, radius=24)
+    quote = "它想解决的不是“目标检测准不准”这一个点，而是怎样把 perception、对话理解、状态持久化、技能调用和展示层，收敛成同一个 agent runtime。"
+    draw_text(draw, quote, x=right_x + 42, y=quote_y + 34, fnt=FONT_BODY, fill=TEXT, max_width=536, gap=8)
 
-    rounded_panel(draw, (right_x, cy, PAGE_W - MARGIN, cy + 530), fill=PANEL)
-    draw.text((right_x + 20, cy + 20), "高层结构关系", font=FONT_H3, fill=TEXT)
-    layer_x1 = right_x + 26
-    layer_x2 = PAGE_W - MARGIN - 26
-    top = cy + 76
-    layer_h = 72
-    layers = [
-        ("Trigger Layer", "User / Script / Tracking Loop"),
-        ("Turn Orchestration", "backend/cli.py -> PiAgentRunner -> Pi or direct skill"),
-        ("State Layer", "active_session.json + session.json + perception snapshot.json"),
-        ("Capability Layer", "skills/tracking + skills/speech + skills/web_search"),
-        ("Presentation Layer", "viewer stream websocket -> React app"),
-        ("Continuous Perception", "camera / video -> perception service -> snapshot"),
-    ]
-    for idx, (title, body) in enumerate(layers):
-        y = top + idx * (layer_h + 12)
-        fill = TEAL_SOFT if idx % 2 == 0 else PAPER
-        rounded_panel(draw, (layer_x1, y, layer_x2, y + layer_h), fill=fill, radius=20)
-        draw.text((layer_x1 + 16, y + 12), title, font=FONT_BODY_BOLD, fill=TEXT)
-        draw.text((layer_x1 + 16, y + 40), body, font=FONT_SMALL, fill=MUTED)
-
-    table_y = cy + 560
-    draw.text((MARGIN, table_y), "总体架构分层", font=FONT_H3, fill=TEXT)
-    rows = [
-        ("Trigger", "chat / loop / scripts", "产生 turn", "把事件触发从内核逻辑中剥离"),
-        ("Orchestration", "runner + pi_protocol", "统一处理一次事件", "避免多条并行决策主链"),
-        ("State", "session + snapshot", "落盘与共享状态", "确保单一真相源和可调试性"),
-        ("Capability", "skills/<name>/", "实现具体能力", "新增能力不污染 backend 主干"),
-        ("Presentation", "viewer stream + app", "聚合并展示状态", "保持 UI 为只读投影层"),
-    ]
-    draw_table(
-        draw,
-        x=MARGIN,
-        y=table_y + 18,
-        widths=[160, 260, 250, 384],
-        headers=["Layer", "代表对象", "职责", "架构意义"],
-        rows=rows,
-    )
-
-    footer(draw, 2, 7)
-    return PageBundle(image)
+    footer(draw, 1, 6)
+    return Page(image)
 
 
-def build_components() -> PageBundle:
+def page2() -> Page:
     image, draw = create_page()
-    cy = section_title(draw, x=MARGIN, y=MARGIN, title="主要组件与职责", eyebrow="Major Components")
-    rows = [
-        ("Perception Service", "backend/perception/", "维护 observation window、keyframe、snapshot、CLI 读取接口", "持续感知层，但不做高层 orchestration"),
-        ("Agent Runner", "backend/agent/runner.py", "接收 turn、生成上下文、调用 Pi 或 direct path、应用 payload", "系统唯一主处理链"),
-        ("Pi Protocol", "backend/agent/pi_protocol.py", "定义 reasoning plane 的输入输出边界", "让 LLM 决策与本地状态管理解耦"),
-        ("Session Persistence", "backend/persistence/", "维护 session.json 与 active_session.json", "保证单一状态真相源"),
-        ("Skill Surface", "backend/skills.py", "统一 discovery、route summary、turn context、viewer module 聚合", "让 backend 保持通用"),
-        ("Tracking Skill", "skills/tracking/", "target init、continue tracking、memory rewrite、viewer module", "当前最成熟的 embodied capability"),
-        ("Speech / Web Search", "skills/speech/ + skills/web_search/", "TTS 与外部信息样例能力", "证明 plugability 不依赖 tracking 特例"),
-        ("Viewer Stream", "backend/agent_viewer_stream.py", "聚合 agent / observation / modules 并经 websocket 输出", "将执行态转成展示态"),
-        ("Frontend App", "apps/tracking-viewer/", "展示目标框、memory、conversation history、状态标签", "read-only projection layer"),
-        ("Runtime Scripts", "scripts/", "启动 perception、loop、viewer、frontend、stack", "部署与进程编排层"),
-    ]
-    draw_table(
-        draw,
-        x=MARGIN,
-        y=cy,
-        widths=[170, 255, 365, 306],
-        headers=["组件", "代表路径", "主要职责", "架构意义"],
-        rows=rows,
-    )
-
-    lower_y = 1320
-    rounded_panel(draw, (MARGIN, lower_y, MARGIN + 520, lower_y + 320), fill=PANEL)
-    draw.text((MARGIN + 20, lower_y + 18), "Skill 接口为什么关键", font=FONT_H3, fill=TEXT)
-    cards = [
-        ("build_route_summary", "每个 skill 用自己的摘要参与 turn routing，而不是强迫 Pi 去阅读整份 session。"),
-        ("build_turn_context", "为 skill 暴露专属上下文，缩小推理输入面。"),
-        ("process_direct_init / turn", "为 fragile、确定性强的路径保留稳态入口。"),
-        ("schedule_rewrite / build_viewer_module", "把慢操作和展示扩展下沉给 skill 自己。"),
-    ]
-    y = lower_y + 62
-    for title, body in cards:
-        h = bullet_block(draw, x=MARGIN + 18, y=y, w=484, title=title, body=body, bg=TEAL_SOFT)
-        y += h + 10
-
-    rounded_panel(draw, (MARGIN + 540, lower_y, PAGE_W - MARGIN, lower_y + 320), fill=PANEL)
-    draw.text((MARGIN + 560, lower_y + 18), "Tracking Skill 的系统位置", font=FONT_H3, fill=TEXT)
-    y = lower_y + 62
-    tracking_notes = [
-        ("它是 single-turn skill，不拥有 perception loop", "skills/tracking/SKILL.md 明确要求 tracking skill 只处理当前 turn。"),
-        ("deterministic 入口比自由推理更重要", "init / track 走固定入口脚本，降低 fragile workflow 被 LLM 发散的概率。"),
-        ("memory rewrite 脱离关键路径", "先确认目标与结果，再异步更新 tracking memory，优先保证主交互响应。"),
-    ]
-    for title, body in tracking_notes:
-        h = bullet_block(draw, x=MARGIN + 558, y=y, w=504, title=title, body=body, bg=ORANGE_SOFT)
-        y += h + 10
-
-    footer(draw, 3, 7)
-    return PageBundle(image)
-
-
-def build_loop() -> PageBundle:
-    image, draw = create_page()
-    cy = section_title(draw, x=MARGIN, y=MARGIN, title="Embodied Agent Loop", eyebrow="Perception -> Planning -> Action")
-
-    left_w = 680
-    rounded_panel(draw, (MARGIN, cy, MARGIN + left_w, cy + 1160), fill=PANEL)
-    draw.text((MARGIN + 20, cy + 18), "标准 turn 处理路径", font=FONT_H3, fill=TEXT)
-    steps = [
-        ("Perception 持续写世界状态", "camera / video 输入被采样并形成 observation、detections、keyframes 和 persisted snapshot。"),
-        ("外部事件触发一次 turn", "来源可以是用户 chat、tracking continuation loop 或脚本入口。"),
-        ("Runner 聚合上下文", "读取 session.json 与 perception snapshot，生成 route context、skill context 和 turn context。"),
-        ("Planning / Routing", "如果满足 deterministic 条件则走 direct path；否则由 Pi 在 enabled skills 中完成单轮路由。"),
-        ("Action / Result", "skill 返回统一 JSON payload，包含 session_result、skill_state_patch、robot_response 等结构化结果。"),
-        ("Persistence + Projection", "runner 应用状态更新；viewer stream 从持久化状态生成可视化投影；必要时异步执行 rewrite worker。"),
-    ]
-    y = cy + 66
-    for index, (title, body) in enumerate(steps, start=1):
-        h = step_block(draw, x=MARGIN + 20, y=y, w=left_w - 40, index=index, title=title, body=body)
+    cy = section_title(draw, x=MARGIN, y=MARGIN, eyebrow="CORE THESIS", title="这套方案最聪明的地方：不让任何一个模块变成“整个系统”")
+    top_y = cy
+    left_w = 550
+    panel(draw, (MARGIN, top_y, MARGIN + left_w, top_y + 600))
+    y = top_y + 20
+    for title, body, fill in [
+        ("Perception 只负责“看见”", "它持续读 camera / video、产出 observation、保存 keyframe 和 snapshot，但不替系统做高层决策。", TEAL_SOFT),
+        ("Runner 只负责“这一轮”", "每来一个 turn，就认真处理完这一轮：读状态、组上下文、选 skill 路径、落盘结果。", ORANGE_SOFT),
+        ("Session state 只有一个主真相源", "session.json 把“我正在跟谁、上一轮结果是什么、skill 记住了什么”稳定收在一个地方。", NAVY_SOFT),
+        ("Skill 是能力模块，不是系统分叉", "tracking、speech、web_search 都通过统一 surface 接入，backend 主干不因新能力而变形。", PANEL),
+        ("Viewer 只负责让人看懂", "viewer 是 read-only projection layer，负责显示系统状态，而不是控制业务逻辑。", TEAL_SOFT),
+    ]:
+        h = card(draw, x=MARGIN + 20, y=y, w=510, title=title, body=body, fill=fill)
         y += h + 12
 
     right_x = MARGIN + left_w + 20
-    rounded_panel(draw, (right_x, cy, PAGE_W - MARGIN, cy + 540), fill=PANEL)
-    draw.text((right_x + 20, cy + 18), "Perception / Planning / Action 的实际含义", font=FONT_H3, fill=TEXT)
-    y = cy + 66
-    semantic_cards = [
-        ("Perception", "以 LocalPerceptionService 为中心，关注 frame、detections、window、snapshot 和 keyframe 保存。", TEAL_SOFT),
-        ("Planning", "以 PiAgentRunner + Pi routing 为中心，决定该轮应该走哪个 skill、采用 Pi path 还是 direct path。", PAPER),
-        ("Action", "当前更偏 capability result，例如 tracking 的 track / wait / ask，speech 的 TTS 输出，而不是完整机器人运动控制栈。", TEAL_SOFT),
-    ]
-    for title, body, fill in semantic_cards:
-        h = bullet_block(draw, x=right_x + 18, y=y, w=378, title=title, body=body, bg=fill)
-        y += h + 12
+    panel(draw, (right_x, top_y, PAGE_W - MARGIN, top_y + 600))
+    draw.text((right_x + 20, top_y + 20), "如果把整套系统压缩成一张图", font=FONT_H3, fill=TEXT)
+    panel(draw, (right_x + 20, top_y + 70, PAGE_W - MARGIN - 20, top_y + 520), fill="#fffaf8", radius=22)
+    diagram = "现实世界（camera / video）\n        ↓\n[ Perception Service ]\n持续写 detection / tracking / snapshot\n        ↓\n[ Persisted World State ]\n最近画面、关键帧、snapshot\n        ↓\n用户 / loop / script 触发一次 turn\n        ↓\n[ PiAgentRunner ]\n读取 session + perception，生成 route context\n        ↓\n[ Skill Execution ]\ntracking / speech / web_search\n        ↓\n[ Session Truth ]\nlatest_result / skill_cache / history\n        ↓\n[ Viewer Stream ]\n把系统状态投影给前端\n        ↓\n[ Frontend ]\n让人看懂系统现在“看到什么、记得什么、准备做什么”"
+    draw_text(draw, diagram, x=right_x + 44, y=top_y + 102, fnt=FONT_MONO_SMALL, fill=TEXT, max_width=500, gap=8)
 
-    rounded_panel(draw, (right_x, cy + 560, PAGE_W - MARGIN, cy + 1160), fill=PANEL)
-    draw.text((right_x + 20, cy + 578), "为什么这不是一个“大 while 循环”", font=FONT_H3, fill=TEXT)
-    narrative = [
-        "仓库把持续感知和事件驱动 turn 明确拆开。",
-        "这样做的结果是，系统既保留 embodied 状态感知能力，又避免把所有职责糅成一个难以替换、难以验证的大 runtime。",
-        "tracking loop 只是 capability-oriented trigger，不是系统总控中心；viewer 只是投影层，不承担执行逻辑。",
-    ]
-    y = cy + 628
-    for idx, text in enumerate(narrative, start=1):
-        h = bullet_block(draw, x=right_x + 18, y=y, w=378, title=f"Key Point {idx}", body=text, bg=ORANGE_SOFT if idx == 2 else PAPER)
-        y += h + 12
-    px = right_x + 18
-    py = cy + 1038
-    for label in ["Perception 常驻", "Turn 单次处理", "Viewer 只读", "Rewrite 异步", "Loop 只是触发器"]:
-        pw = pill(draw, x=px, y=py, text=label, fill=NAVY_SOFT, ink=NAVY)
-        px += pw + 8
-        if px > PAGE_W - MARGIN - 160:
-            px = right_x + 18
-            py += 44
-
-    footer(draw, 4, 7)
-    return PageBundle(image)
-
-
-def build_dataflow() -> PageBundle:
-    image, draw = create_page()
-    cy = section_title(draw, x=MARGIN, y=MARGIN, title="Runtime / Backend / App / Data Flow", eyebrow="Relationships")
-
-    rounded_panel(draw, (MARGIN, cy, PAGE_W - MARGIN, cy + 280), fill=PANEL)
-    draw.text((MARGIN + 20, cy + 18), "当前推荐运行形态：3 个长期进程 + 1 个可选前端", font=FONT_H3, fill=TEXT)
-    card_y = cy + 78
-    card_w = 256
-    gap = 16
-    process_cards = [
-        ("Perception", "持续读取 camera / video，运行 detection / tracking，向共享状态写 observation。"),
-        ("Tracking Loop", "轮询 session 与 perception，在目标已绑定时触发 continuation turn。"),
-        ("Viewer Stream", "把聚合后的 agent / perception / module 状态通过 websocket 推给前端。"),
-        ("Frontend", "React + Vite 演示界面，负责目标框、状态、记忆和对话记录的可视化。"),
-    ]
-    for idx, (title, body) in enumerate(process_cards):
-        x = MARGIN + 20 + idx * (card_w + gap)
-        rounded_panel(draw, (x, card_y, x + card_w, card_y + 160), fill=TEAL_SOFT if idx % 2 == 0 else PAPER, radius=22)
-        draw.text((x + 16, card_y + 16), title, font=FONT_BODY_BOLD, fill=TEXT)
-        draw_wrapped(draw, body, x=x + 16, y=card_y + 46, font=FONT_SMALL, fill=MUTED, max_width=card_w - 32, line_gap=6)
-
-    table_y = cy + 310
-    draw.text((MARGIN, table_y), "五种关系视角", font=FONT_H3, fill=TEXT)
-    rows = [
-        ("Runtime", "perception、loop、viewer、frontend", "共享同一 state-root / session_id 的进程集合", "职责清晰，可独立重启与组合"),
-        ("Backend", "backend/", "perception、runner、persistence、viewer aggregation 所在内核层", "把主线保持在最小闭环里"),
-        ("Skills", "skills/<name>/", "实现具体 capability 与 helper，不改变 backend 核心形状", "继续长能力而不是长框架"),
-        ("App", "apps/tracking-viewer", "通过 websocket 消费聚合状态", "UI 与内核解耦"),
-        ("Data Flow", "session + snapshot + artifacts", "共享文件状态连接多个进程与视图", "减少依赖，增强可调试性"),
-    ]
-    end_y = draw_table(
-        draw,
-        x=MARGIN,
-        y=table_y + 18,
-        widths=[130, 275, 395, 296],
-        headers=["视角", "代表对象", "关系描述", "架构含义"],
-        rows=rows,
-    )
-
-    artifacts_y = end_y + 30
-    draw.text((MARGIN, artifacts_y), "关键状态对象", font=FONT_H3, fill=TEXT)
-    artifact_cards = [
-        ("Active Session", "active_session.json 指向当前活跃会话，是 perception、viewer、CLI 的共同索引。"),
-        ("Session Truth", "sessions/<id>/session.json 保存 latest_result、history、recent_frames、skill_cache 等 agent-owned state。"),
-        ("Perception Snapshot", "perception/sessions/<id>/snapshot.json 保存最新 observation、recent window、stream status 与 saved keyframes。"),
-        ("Turn Artifacts", ".runtime/pi-agent/requests/... 保存 route context、skill context、prompt 等 turn 证据。"),
-    ]
-    x_positions = [MARGIN, MARGIN + 560]
-    y_positions = [artifacts_y + 18, artifacts_y + 142]
-    idx = 0
-    for y in y_positions:
-        for x in x_positions:
-            title, body = artifact_cards[idx]
-            small_card(draw, x=x, y=y, w=536, title=title, body=body, accent=NAVY)
-            idx += 1
-
-    footer(draw, 5, 7)
-    return PageBundle(image)
-
-
-def build_tradeoffs() -> PageBundle:
-    image, draw = create_page()
-    cy = section_title(draw, x=MARGIN, y=MARGIN, title="设计理由、Tradeoffs 与可扩展性", eyebrow="Rationale")
-
-    rounded_panel(draw, (MARGIN, cy, PAGE_W - MARGIN, cy + 780), fill=PANEL)
-    draw.text((MARGIN + 20, cy + 18), "关键设计取舍", font=FONT_H3, fill=TEXT)
-    tradeoffs = [
-        ("Chat-first vs perception-first", "turn 由聊天或事件触发，perception 只提供 grounded context；适合 agent interaction，但未来高频闭环控制仍需更硬实时的 control plane。"),
-        ("Single session truth vs 多份 memory", "session.json 让调试和 viewer 聚合都有统一落点，但当前更偏单机和单活跃 session 形态。"),
-        ("File-backed shared state vs event bus", "本地共享文件简单、直观、易部署，但不以分布式吞吐和强一致消息语义为目标。"),
-        ("Direct path vs full LLM mediation", "tracking 的 init / track 支持 deterministic 入口，让 fragile workflow 更稳，但 skill 需要承担更明确的契约维护。"),
-        ("Async rewrite vs inline completion", "主 turn 响应更快，但 memory 更新变成 eventual consistency。"),
-        ("Generic viewer shell vs tracking-only UI", "viewer 可继续承载更多 skill 模块，但公共 schema 必须保持克制，避免重新长成大框架。"),
-    ]
-    box_w = 520
-    x_values = [MARGIN + 20, MARGIN + 20 + box_w + 16]
-    y = cy + 70
-    row_h = 220
-    idx = 0
-    for row in range(3):
-        for col in range(2):
-            x = x_values[col]
-            fill = ORANGE_SOFT if (idx % 2 == 0) else TEAL_SOFT
-            h = bullet_block(draw, x=x, y=y, w=box_w, title=tradeoffs[idx][0], body=tradeoffs[idx][1], bg=fill)
-            _ = h
-            idx += 1
-        y += row_h
-
-    lower_y = cy + 820
-    rounded_panel(draw, (MARGIN, lower_y, MARGIN + 548, lower_y + 690), fill=PANEL)
-    draw.text((MARGIN + 20, lower_y + 18), "扩展性判断", font=FONT_H3, fill=TEXT)
-    y = lower_y + 68
-    extensibility = [
-        ("已经具备的扩展点", "新增 skill 可以放在 skills/<name>/，backend 自动发现，并在 route summary、turn context、viewer module、direct path 等协作点接入。"),
-        ("当前刻意不做的事", "不引入复杂 plugin lifecycle、不引入消息总线、不把 tracking loop 升级为总控中心，以避免再次回到过度工程化路径。"),
-        ("最重要的判断", "仓库已经具备“继续长能力而不是继续长框架”的结构条件。"),
-    ]
-    for title, body in extensibility:
-        h = bullet_block(draw, x=MARGIN + 20, y=y, w=508, title=title, body=body, bg=PAPER if "不做" in title else TEAL_SOFT)
-        y += h + 12
-
-    rounded_panel(draw, (MARGIN + 568, lower_y, PAGE_W - MARGIN, lower_y + 690), fill=PANEL)
-    draw.text((MARGIN + 588, lower_y + 18), "部署判断", font=FONT_H3, fill=TEXT)
-    y = lower_y + 68
-    deploy_items = [
-        ("进程职责清晰", "perception、loop、viewer 可分别重启和定位问题，不会形成单点超级进程。"),
-        ("Viewer 可选", "前端不再是主流程依赖，既适合 headless，也适合演示。"),
-        ("状态共享简单", "共享同一 state-root 和 session 路径即可运行，贴合 robot / Pi 侧轻量部署。"),
-        ("能力替换容易", "perception 源、skills 和展示层都可以演进，而不需要先改内核。"),
-    ]
-    for title, body in deploy_items:
-        h = bullet_block(draw, x=MARGIN + 588, y=y, w=500, title=title, body=body, bg=NAVY_SOFT if "Viewer" in title else PAPER)
-        y += h + 12
-
-    footer(draw, 6, 7)
-    return PageBundle(image)
-
-
-def build_future() -> PageBundle:
-    image, draw = create_page()
-    cy = section_title(draw, x=MARGIN, y=MARGIN, title="边界、Future Work 与总结", eyebrow="Outlook")
-
-    rounded_panel(draw, (MARGIN, cy, MARGIN + 520, cy + 590), fill=PANEL)
-    draw.text((MARGIN + 20, cy + 18), "当前边界与成熟度", font=FONT_H3, fill=TEXT)
-    y = cy + 72
-    boundaries = [
-        ("最成熟的 embodied capability 仍然是 tracking", "speech 与 web_search 已经证明 plugability，但 embodied 主场景仍围绕 tracking。"),
-        ("状态共享主要是本地文件级协作", "这非常适合单机部署和调试，但不等于已经具备跨机分布式架构。"),
-        ("Action plane 仍偏结果型输出", "当前重点是 grounded 决策与能力执行，而不是完整机器人控制栈。"),
-        ("Perception 仍聚焦 tracking 场景", "它已经是独立感知层，但还不是通用多传感器融合平台。"),
-    ]
-    for title, body in boundaries:
-        h = bullet_block(draw, x=MARGIN + 20, y=y, w=480, title=title, body=body, bg=PAPER if "Action" in title else ORANGE_SOFT)
-        y += h + 12
-
-    rounded_panel(draw, (MARGIN + 540, cy, PAGE_W - MARGIN, cy + 590), fill=PANEL)
-    draw.text((MARGIN + 560, cy + 18), "Future Work", font=FONT_H3, fill=TEXT)
-    y = cy + 72
-    futures = [
-        ("更强的部署韧性", "为 perception、loop、viewer 增加更明确的健康检查、超时与恢复策略。"),
-        ("更通用的 capability surface", "在保持 skill surface 克制的前提下，接入更多 embodied 能力。"),
-        ("更强的 observability", "补齐 turn latency、skill routing、rewrite worker、session lifecycle 等指标。"),
-        ("多设备 / 远程部署能力", "如果跨机部署成为刚需，再从本地文件共享迁移到更明确的 service / bus 架构。"),
-    ]
-    for idx, (title, body) in enumerate(futures, start=1):
-        box_fill = TEAL_SOFT if idx % 2 == 1 else PAPER
-        h = bullet_block(draw, x=MARGIN + 560, y=y, w=460, title=f"{idx}. {title}", body=body, bg=box_fill)
-        y += h + 12
-
-    rounded_panel(draw, (MARGIN, cy + 620, PAGE_W - MARGIN, PAGE_H - 110), fill=PANEL)
-    draw.text((MARGIN + 24, cy + 642), "汇报结论", font=FONT_H3, fill=TEXT)
-    conclusion = (
-        "tracking_agent 当前最值得强调的成果，不是某一个 tracking 算法细节，而是已经把 embodied agent 方案压缩成一个可解释、可部署、可扩展的技术骨架。"
-    )
-    draw_wrapped(draw, conclusion, x=MARGIN + 24, y=cy + 690, font=FONT_BODY, fill=TEXT, max_width=PAGE_W - MARGIN * 2 - 48, line_gap=9)
-    px = MARGIN + 24
-    py = cy + 772
-    for label in ["持续感知只做感知", "单轮 runner 只做编排", "状态只有一个真相源", "skills 通过统一 surface 接入", "viewer 只是展示层"]:
-        pw = pill(draw, x=px, y=py, text=label, fill=TEAL_SOFT, ink=TEAL)
+    lower_y = top_y + 620
+    panel(draw, (MARGIN, lower_y, PAGE_W - MARGIN, lower_y + 900))
+    draw.text((MARGIN + 22, lower_y + 20), "五个架构关键词", font=FONT_H3, fill=TEXT)
+    px = MARGIN + 22
+    py = lower_y + 70
+    for label, fill, ink in [
+        ("Chat-first", TEAL_SOFT, TEAL),
+        ("Perception 常驻", TEAL_SOFT, TEAL),
+        ("Single Runner", NAVY_SOFT, NAVY),
+        ("Session Truth", ORANGE_SOFT, ORANGE),
+        ("Skill-Pluggable", TEAL_SOFT, TEAL),
+        ("Viewer 只读", NAVY_SOFT, NAVY),
+    ]:
+        pw = pill(draw, x=px, y=py, text=label, fill=fill, ink=ink)
         px += pw + 10
-        if px > PAGE_W - MARGIN - 160:
-            px = MARGIN + 24
-            py += 46
-    closing = (
-        "这让项目从“为 tracking 服务的一组脚本”演进为“以 tracking 为样板能力的 embodied agent kernel”。对外汇报时，应把这种系统级收敛能力作为主叙事。"
-    )
-    draw_wrapped(draw, closing, x=MARGIN + 24, y=py + 70, font=FONT_BODY, fill=MUTED, max_width=PAGE_W - MARGIN * 2 - 48, line_gap=9)
-
-    footer(draw, 7, 7)
-    return PageBundle(image)
-
-
-def main() -> None:
-    bundles = [
-        build_cover(),
-        build_overview(),
-        build_components(),
-        build_loop(),
-        build_dataflow(),
-        build_tradeoffs(),
-        build_future(),
+    rows = [
+        ("Chat-first, not perception-first", "turn 由聊天、脚本或 loop 事件触发；perception 负责提供 grounded context。"),
+        ("Perception is the only always-on subsystem", "只有 perception 常驻运行；其余组件围绕一次次 turn 工作。"),
+        ("Single runner path", "所有 turn 最终都收敛到 PiAgentRunner 这一条主处理链。"),
+        ("Single persisted state truth", "session.json 是 agent-owned state 的主真相源。"),
+        ("Skills are ordinary modules", "tracking、speech、web_search 都通过统一 skill surface 接入。"),
     ]
-    images = [bundle.image.convert("RGB") for bundle in bundles]
-    images[0].save(
-        OUTPUT_PDF,
-        "PDF",
-        resolution=150.0,
-        save_all=True,
-        append_images=images[1:],
-    )
+    y = lower_y + 130
+    for title, body in rows:
+        h = card(draw, x=MARGIN + 22, y=y, w=1072, title=title, body=body, fill=PANEL)
+        y += h + 12
+
+    footer(draw, 2, 6)
+    return Page(image)
+
+
+def page3() -> Page:
+    image, draw = create_page()
+    cy = section_title(draw, x=MARGIN, y=MARGIN, eyebrow="TELL IT LIKE A STORY", title="用一个真实场景，讲完整套 embodied agent 流程")
+    panel(draw, (MARGIN, cy, PAGE_W - MARGIN, PAGE_H - 100))
+    draw.text((MARGIN + 24, cy + 20), "场景：用户说“开始跟踪最开始出现的穿黑衣服的人。”", font=FONT_H3, fill=TEXT)
+    y = cy + 70
+    steps = [
+        ("系统先看到世界", "Perception 服务一直在跑，不需要等用户下命令。它像机器人的眼睛，持续把“现在看到了什么”写成 snapshot。", TEAL_SOFT),
+        ("用户给出的是语义任务，不是 track id", "“最开始出现的穿黑衣服的人”是一句带上下文、带歧义空间的话。系统不能直接执行，它要先理解。", ORANGE_SOFT),
+        ("Runner 组装这次 turn 的完整上下文", "它把最近对话、当前世界和已有 session 状态拼起来。于是系统不是“听一句话”，而是“带着记忆去理解一句话”。", NAVY_SOFT),
+        ("该自由发挥的地方让模型发挥，该收紧的地方就收紧", "tracking init / track 这种 fragile workflow，优先走 deterministic entry script，而不是完全依赖开放式 LLM 推理。", TEAL_SOFT),
+        ("目标一旦确认，就正式写进 session", "系统不是“这轮猜到是谁了”，而是“从这一刻起，我正式知道自己正在跟谁”。", ORANGE_SOFT),
+        ("Tracking loop 负责持续推进，但不是系统总控", "它只在 tracking 这个能力上推动 continuation / recovery，不把整个 runtime 拖进一个大 while loop。", NAVY_SOFT),
+        ("Viewer 负责把系统脑子里的想法展示出来", "用户能看到目标框、记忆、对话和当前状态；系统因此变得可解释、可观察、可调试。", TEAL_SOFT),
+    ]
+    for idx, (title, body, fill) in enumerate(steps, start=1):
+        h = story_step(draw, x=MARGIN + 24, y=y, w=1070, idx=idx, title=title, body=body, fill=fill)
+        y += h + 12
+
+    footer(draw, 3, 6)
+    return Page(image)
+
+
+def page4() -> Page:
+    image, draw = create_page()
+    cy = section_title(draw, x=MARGIN, y=MARGIN, eyebrow="CAST LIST", title="主要组件，换成“角色表”来讲")
+    panel(draw, (MARGIN, cy, PAGE_W - MARGIN, cy + 720))
+    headers = ["角色", "代表路径", "它在故事里扮演什么角色"]
+    widths = [150, 320, 594]
+    x = MARGIN + 20
+    y = cy + 24
+    total_w = sum(widths)
+    draw.rounded_rectangle((x, y, x + total_w, y + 42), radius=16, fill=NAVY_SOFT, outline=LINE, width=1)
+    cx = x
+    for i, h in enumerate(headers):
+        draw.text((cx + 10, y + 10), h, font=FONT_TINY, fill=NAVY)
+        cx += widths[i]
+        if i < len(headers) - 1:
+            draw.line((cx, y + 5, cx, y + 37), fill=LINE, width=1)
+    rows = [
+        ("眼睛", "backend/perception/", "持续看世界，把 observation、snapshot、keyframe 写下来"),
+        ("单轮工作台", "backend/agent/runner.py", "处理一次 turn：读状态、组上下文、选路径、落结果"),
+        ("决策边界", "backend/agent/pi_protocol.py", "规定 Pi 能读什么、该返回什么"),
+        ("记忆本", "backend/persistence/ + session.json", "把“系统当前正在做什么”稳稳记住"),
+        ("技能面板", "backend/skills.py", "让 tracking / speech / web_search 以统一方式接进来"),
+        ("主力能力", "skills/tracking/", "做目标初始化、持续跟踪、记忆更新与 viewer 模块"),
+        ("展示层", "agent_viewer_stream + tracking-viewer", "把系统状态翻译成人类可读的 UI"),
+        ("舞台监督", "scripts/", "把 perception、loop、viewer、frontend 分别启动起来"),
+    ]
+    cy2 = y + 42
+    for row in rows:
+        cell_lines = [wrap(draw, row[i], FONT_SMALL, widths[i] - 20) for i in range(3)]
+        max_lines = max(len(c) for c in cell_lines)
+        rh = max(46, 16 + max_lines * 24)
+        draw.rectangle((x, cy2, x + total_w, cy2 + rh), fill=PANEL, outline=LINE, width=1)
+        cx = x
+        for i, lines in enumerate(cell_lines):
+            yy = cy2 + 10
+            for line in lines:
+                draw.text((cx + 10, yy), line, font=FONT_SMALL if i else FONT_BODY_BOLD, fill=TEXT if i == 0 else MUTED)
+                yy += 22
+            cx += widths[i]
+            if i < 2:
+                draw.line((cx, cy2 + 2, cx, cy2 + rh - 2), fill=LINE, width=1)
+        cy2 += rh
+
+    lower_y = cy + 750
+    left_w = 540
+    panel(draw, (MARGIN, lower_y, MARGIN + left_w, PAGE_H - 100))
+    draw.text((MARGIN + 20, lower_y + 18), "为什么这种分工舒服？", font=FONT_H3, fill=TEXT)
+    y = lower_y + 66
+    for title, body, fill in [
+        ("因为你能一眼看出谁负责什么", "一套系统只要角色分工清楚，它就更容易维护，也更容易解释给别人听。", TEAL_SOFT),
+        ("因为新增能力不会逼 backend 变形", "新 skill 往 skills/<name>/ 里接，不需要把主干 runtime 再拆一遍。", ORANGE_SOFT),
+        ("因为系统主线永远只有一条", "不是 perception 一套逻辑、loop 一套逻辑、前端一套逻辑各说各话，而是统一回到 runner 和 session truth。", NAVY_SOFT),
+    ]:
+        h = card(draw, x=MARGIN + 20, y=y, w=500, title=title, body=body, fill=fill)
+        y += h + 12
+
+    right_x = MARGIN + left_w + 20
+    panel(draw, (right_x, lower_y, PAGE_W - MARGIN, PAGE_H - 100))
+    draw.text((right_x + 20, lower_y + 18), "部署方式也很“人能理解”", font=FONT_H3, fill=TEXT)
+    y = lower_y + 70
+    for title, body, fill in [
+        ("Perception", "一直看世界，负责把现实变成机器可读状态。", TEAL_SOFT),
+        ("Tracking Loop", "在 tracking 语境里推动 continuation / recovery。", ORANGE_SOFT),
+        ("Viewer Stream + Frontend", "把系统状态变成用户可见的界面。", NAVY_SOFT),
+    ]:
+        h = card(draw, x=right_x + 20, y=y, w=500, title=title, body=body, fill=fill)
+        y += h + 12
+    summary = "“3 个长期进程 + 1 个可选前端”的部署方式不花哨，但特别实用：职责分离、定位清楚、前端可选、单机易跑。"
+    draw_text(draw, summary, x=right_x + 20, y=y + 10, fnt=FONT_BODY, fill=MUTED, max_width=500, gap=7)
+
+    footer(draw, 4, 6)
+    return Page(image)
+
+
+def page5() -> Page:
+    image, draw = create_page()
+    cy = section_title(draw, x=MARGIN, y=MARGIN, eyebrow="TRADEOFFS", title="这套方案的成熟，不在于没有边界，而在于边界讲得清楚")
+    left_w = 550
+    panel(draw, (MARGIN, cy, MARGIN + left_w, PAGE_H - 100))
+    draw.text((MARGIN + 20, cy + 18), "要诚实地讲它的边界", font=FONT_H3, fill=TEXT)
+    y = cy + 70
+    for title, body, fill in [
+        ("它更像 embodied decision kernel，不是完整 motion stack", "现在更强的是“看、记、理解、执行 capability”的闭环，而不是完整机器人运动控制闭环。", ORANGE_SOFT),
+        ("它非常适合单机 / 单 session，但还不是分布式多机系统", "本地文件共享状态对当前阶段特别合理，但未来跨设备部署需要更明确的 service / bus 边界。", PANEL),
+        ("tracking 是当前最成熟的 embodied capability", "这不是短板，反而证明项目在先把一个核心能力打磨到位，而不是空泛许愿。", TEAL_SOFT),
+    ]:
+        h = card(draw, x=MARGIN + 20, y=y, w=510, title=title, body=body, fill=fill)
+        y += h + 14
+
+    panel(draw, (MARGIN + left_w + 20, cy, PAGE_W - MARGIN, PAGE_H - 100))
+    draw.text((MARGIN + left_w + 40, cy + 18), "最值得肯定的设计取舍", font=FONT_H3, fill=TEXT)
+    y = cy + 70
+    for title, body, fill in [
+        ("不把 perception 变成大脑", "感知层长期跑，但不越权做高层决策。", TEAL_SOFT),
+        ("不把 tracking loop 变成总控中心", "loop 只是 tracking 能力的推进器，不绑架整个 runtime 形状。", ORANGE_SOFT),
+        ("不让 LLM 包办脆弱流程", "tracking init / track 走 deterministic entry script，这是一种成熟的工程选择。", NAVY_SOFT),
+        ("不让 viewer 决定系统怎么运行", "viewer 只负责让人看懂，不反向塑造业务逻辑。", PANEL),
+    ]:
+        h = card(draw, x=MARGIN + left_w + 40, y=y, w=510, title=title, body=body, fill=fill)
+        y += h + 12
+    panel(draw, (MARGIN + left_w + 40, y + 14, PAGE_W - MARGIN - 20, y + 180), fill=ORANGE_SOFT, radius=22)
+    quote = "这套架构真正成熟的地方，不在于它“什么都做”，而在于它知道哪些事情现在该做，哪些事情暂时不要装成已经做好了。"
+    draw_text(draw, quote, x=MARGIN + left_w + 62, y=y + 54, fnt=FONT_BODY, fill=TEXT, max_width=466, gap=8)
+
+    footer(draw, 5, 6)
+    return Page(image)
+
+
+def page6() -> Page:
+    image, draw = create_page()
+    cy = section_title(draw, x=MARGIN, y=MARGIN, eyebrow="OUTLOOK", title="Future Work，以及你上台时最应该怎么讲")
+    left_w = 560
+    panel(draw, (MARGIN, cy, MARGIN + left_w, cy + 730))
+    draw.text((MARGIN + 20, cy + 18), "下一步最值得长什么？", font=FONT_H3, fill=TEXT)
+    y = cy + 70
+    for title, body, fill in [
+        ("更强的部署韧性", "补齐 perception、loop、viewer 的健康检查、恢复与异常处理，让它更像持续运行系统。", TEAL_SOFT),
+        ("更多 embodied capabilities", "沿着现有 skill surface 接入 spatial QA、action recommendation、multimodal memory 等新能力。", ORANGE_SOFT),
+        ("更强的 observability", "系统化记录 turn latency、route decision、rewrite worker 成功率和 recovery 质量。", NAVY_SOFT),
+        ("远程 / 多设备部署", "当跨机部署成为刚需时，再把当前清晰边界升级成真正的 service 边界。", PANEL),
+    ]:
+        h = card(draw, x=MARGIN + 20, y=y, w=520, title=title, body=body, fill=fill)
+        y += h + 12
+
+    panel(draw, (MARGIN + left_w + 20, cy, PAGE_W - MARGIN, cy + 730))
+    draw.text((MARGIN + left_w + 40, cy + 18), "如果拿去讲，我建议这样收尾", font=FONT_H3, fill=TEXT)
+    panel(draw, (MARGIN + left_w + 40, cy + 70, PAGE_W - MARGIN - 20, cy + 214), fill=TEAL_SOFT, radius=24)
+    quote = "我们做的不是一个 tracking demo，而是一套让机器人把‘看见世界’和‘理解任务’接起来的 embodied agent runtime。"
+    draw_text(draw, quote, x=MARGIN + left_w + 62, y=cy + 110, fnt=FONT_BODY, fill=TEXT, max_width=500, gap=8)
+    y = cy + 238
+    for title, body, fill in [
+        ("先讲问题", "普通 tracking demo 只能框人，不能形成持续任务闭环。", ORANGE_SOFT),
+        ("再讲架构", "perception 常驻、runner 单轮处理、session 单源、skills 插拔、viewer 只读。", NAVY_SOFT),
+        ("最后讲价值", "这不是一次性脚本堆叠，而是一套可以继续长能力的 embodied agent kernel。", TEAL_SOFT),
+    ]:
+        h = card(draw, x=MARGIN + left_w + 40, y=y, w=500, title=title, body=body, fill=fill)
+        y += h + 12
+
+    lower_y = cy + 760
+    panel(draw, (MARGIN, lower_y, PAGE_W - MARGIN, PAGE_H - 100), fill=PANEL)
+    draw.text((MARGIN + 24, lower_y + 18), "最后压缩成五个关键词", font=FONT_H3, fill=TEXT)
+    px = MARGIN + 24
+    for label in ["持续感知", "单轮决策主链", "单一状态真相源", "能力可插拔", "系统可观察"]:
+        pw = pill(draw, x=px, y=lower_y + 64, text=label)
+        px += pw + 12
+    summary = "这五个词，基本就是这套 embodied agent 技术方案的骨架。也是你讲完之后，听众应该带走的记忆点。"
+    draw_text(draw, summary, x=MARGIN + 24, y=lower_y + 124, fnt=FONT_BODY, fill=MUTED, max_width=1070, gap=8)
+
+    footer(draw, 6, 6)
+    return Page(image)
+
+
+def main():
+    pages: Sequence[Page] = [page1(), page2(), page3(), page4(), page5(), page6()]
+    images = [p.image.convert("RGB") for p in pages]
+    images[0].save(OUTPUT_PDF, "PDF", resolution=150.0, save_all=True, append_images=images[1:])
     print(f"wrote {OUTPUT_PDF}")
 
 
