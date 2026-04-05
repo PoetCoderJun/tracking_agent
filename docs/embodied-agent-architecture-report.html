@@ -1,0 +1,918 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tracking Agent：一份关于简洁与边界的架构报告</title>
+    <style>
+      :root {
+        --paper: #fdfcfa;
+        --ink: #1a1a1a;
+        --ink-light: #4a4a4a;
+        --ink-muted: #737373;
+        --accent: #8f4c32;
+        --accent-soft: #c9a189;
+        --accent-forest: #3d5a40;
+        --accent-gold: #8c6b2f;
+        --line: #e8e5df;
+        --line-strong: #d8d4cb;
+        --highlight: #f7f5f0;
+        --font-display: "Source Han Serif SC", "Noto Serif CJK SC", "STSong", Georgia, serif;
+        --font-body: "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        --font-mono: "SF Mono", "Fira Code", Consolas, monospace;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #f0ede6;
+        color: var(--ink);
+        font-family: var(--font-body);
+        font-size: 16px;
+        line-height: 1.75;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .page {
+        width: min(1000px, calc(100vw - 40px));
+        min-height: calc(100vh - 32px);
+        margin: 16px auto;
+        padding: 56px 64px 48px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        box-shadow: 0 4px 24px rgba(0,0,0,0.04);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        break-after: page;
+        page-break-after: always;
+        position: relative;
+      }
+
+      .page:last-child {
+        break-after: auto;
+        page-break-after: auto;
+      }
+
+      .page-number {
+        position: absolute;
+        bottom: 32px;
+        right: 64px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--ink-muted);
+        letter-spacing: 0.1em;
+      }
+
+      .cover .page-number,
+      .closing .page-number {
+        display: none;
+      }
+
+      /* Typography */
+      h1, h2, h3 {
+        font-family: var(--font-display);
+        font-weight: 600;
+        margin: 0;
+        line-height: 1.25;
+      }
+
+      h1 {
+        font-size: 3.2rem;
+        letter-spacing: -0.02em;
+        color: var(--ink);
+      }
+
+      h2 {
+        font-size: 2rem;
+        margin-bottom: 0.6em;
+        color: var(--ink);
+      }
+
+      h3 {
+        font-size: 1.15rem;
+        margin-bottom: 0.5em;
+        color: var(--accent-forest);
+        font-family: var(--font-body);
+        font-weight: 600;
+      }
+
+      p {
+        margin: 0 0 1em;
+        color: var(--ink-light);
+      }
+
+      p:last-child {
+        margin-bottom: 0;
+      }
+
+      .kicker {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-muted);
+        margin-bottom: 1em;
+      }
+
+      .lead {
+        font-size: 1.25rem;
+        line-height: 1.65;
+        color: var(--ink-light);
+        font-family: var(--font-display);
+      }
+
+      /* Cover */
+      .cover {
+        justify-content: center;
+      }
+
+      .cover-content {
+        max-width: 720px;
+      }
+
+      .cover h1 {
+        margin-bottom: 0.4em;
+      }
+
+      .cover-subtitle {
+        font-size: 1.35rem;
+        line-height: 1.6;
+        color: var(--ink-light);
+        margin-bottom: 2.5em;
+        max-width: 26em;
+      }
+
+      .cover-meta {
+        display: flex;
+        gap: 40px;
+        font-size: 0.9rem;
+        color: var(--ink-muted);
+      }
+
+      .cover-meta-item strong {
+        display: block;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--accent);
+        margin-bottom: 4px;
+      }
+
+      /* Content layouts */
+      .page-body {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .section-header {
+        margin-bottom: 2.5em;
+        max-width: 640px;
+      }
+
+      .section-header .kicker {
+        color: var(--accent);
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        align-items: start;
+      }
+
+      .three-col {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 32px;
+      }
+
+      .four-col {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 24px;
+      }
+
+      /* Cards */
+      .card {
+        background: var(--highlight);
+        border: 1px solid var(--line);
+        padding: 24px;
+        border-radius: 4px;
+      }
+
+      .card strong {
+        display: block;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        margin-bottom: 10px;
+      }
+
+      .card p {
+        font-size: 0.95rem;
+        line-height: 1.7;
+      }
+
+      .card-border-top {
+        border-top: 3px solid var(--accent-forest);
+      }
+
+      .card-border-gold {
+        border-top: 3px solid var(--accent-gold);
+      }
+
+      /* Architecture blocks */
+      .arch-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .arch-item {
+        background: var(--highlight);
+        border: 1px solid var(--line-strong);
+        border-top: 3px solid var(--accent-forest);
+        padding: 20px;
+        text-align: center;
+        border-radius: 3px;
+      }
+
+      .arch-item h4 {
+        font-family: var(--font-display);
+        font-size: 1.1rem;
+        margin: 0 0 8px;
+        color: var(--ink);
+      }
+
+      .arch-item p {
+        font-size: 0.85rem;
+        line-height: 1.6;
+        color: var(--ink-light);
+        margin: 0;
+      }
+
+      .arch-spine {
+        background: linear-gradient(90deg, rgba(143,76,50,0.06), rgba(143,76,50,0.02));
+        border: 1px dashed var(--line-strong);
+        padding: 16px 24px;
+        text-align: center;
+        margin-bottom: 24px;
+        border-radius: 3px;
+      }
+
+      .arch-spine strong {
+        color: var(--accent);
+        font-size: 0.85rem;
+        letter-spacing: 0.05em;
+      }
+
+      .arch-spine p {
+        margin: 6px 0 0;
+        font-size: 0.9rem;
+        color: var(--ink-light);
+      }
+
+      /* Quote / highlight */
+      .pull-quote {
+        font-family: var(--font-display);
+        font-size: 1.5rem;
+        line-height: 1.5;
+        color: var(--ink);
+        padding-left: 24px;
+        border-left: 3px solid var(--accent-soft);
+        margin: 1.5em 0;
+      }
+
+      .pull-quote cite {
+        display: block;
+        font-family: var(--font-body);
+        font-size: 0.85rem;
+        color: var(--ink-muted);
+        margin-top: 0.6em;
+        font-style: normal;
+      }
+
+      /* Lists */
+      .bullet-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+
+      .bullet-list li {
+        position: relative;
+        padding-left: 1.4em;
+        margin-bottom: 0.8em;
+        color: var(--ink-light);
+      }
+
+      .bullet-list li::before {
+        content: "—";
+        position: absolute;
+        left: 0;
+        color: var(--accent);
+      }
+
+      /* Comparison */
+      .compare-item {
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: 3px;
+      }
+
+      .compare-item.good {
+        border-top: 3px solid var(--accent-forest);
+      }
+
+      .compare-item.bad {
+        border-top: 3px solid var(--accent);
+      }
+
+      .compare-item strong {
+        display: block;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 8px;
+      }
+
+      .compare-item.good strong { color: var(--accent-forest); }
+      .compare-item.bad strong { color: var(--accent); }
+
+      .compare-item p {
+        font-size: 0.92rem;
+        line-height: 1.65;
+        margin: 0;
+      }
+
+      /* Closing */
+      .closing {
+        justify-content: center;
+        text-align: center;
+      }
+
+      .closing-content {
+        max-width: 680px;
+        margin: 0 auto;
+      }
+
+      .closing .lead {
+        font-size: 1.4rem;
+        color: var(--ink-light);
+      }
+
+      /* Flow steps */
+      .flow-row {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 12px;
+        margin-top: 1.5em;
+      }
+
+      .flow-step {
+        background: var(--highlight);
+        border: 1px solid var(--line);
+        padding: 16px;
+        position: relative;
+      }
+
+      .flow-step::after {
+        content: "→";
+        position: absolute;
+        top: 50%;
+        right: -10px;
+        transform: translateY(-50%);
+        color: var(--line-strong);
+        font-size: 18px;
+      }
+
+      .flow-step:last-child::after {
+        content: none;
+      }
+
+      .flow-step .step-num {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--accent);
+        letter-spacing: 0.1em;
+        margin-bottom: 6px;
+      }
+
+      .flow-step h4 {
+        font-size: 0.95rem;
+        margin: 0 0 6px;
+        color: var(--ink);
+      }
+
+      .flow-step p {
+        font-size: 0.8rem;
+        line-height: 1.6;
+        color: var(--ink-muted);
+        margin: 0;
+      }
+
+      /* Print & responsive */
+      @media print {
+        body {
+          background: #fff;
+        }
+        .page {
+          width: auto;
+          min-height: 274mm;
+          margin: 0;
+          box-shadow: none;
+          border: none;
+        }
+      }
+
+      @media (max-width: 900px) {
+        .page {
+          width: calc(100vw - 24px);
+          padding: 36px 28px 32px;
+        }
+        h1 { font-size: 2.2rem; }
+        h2 { font-size: 1.5rem; }
+        .two-col, .three-col, .four-col, .arch-row, .flow-row {
+          grid-template-columns: 1fr;
+        }
+        .flow-step::after {
+          content: "↓";
+          right: auto;
+          left: 50%;
+          bottom: -14px;
+          top: auto;
+          transform: translateX(-50%);
+        }
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- Page 1: Cover -->
+    <section class="page cover">
+      <div class="cover-content">
+        <div class="kicker">Architecture Report</div>
+        <h1>机器人的 System 2</h1>
+        <p class="cover-subtitle">
+          关键不是做一个更复杂的调度框架，<br/>
+          而是反过来思考：什么样的系统边界，<br/>
+          才能让大模型在物理世界里真正承担起慢思考的角色？
+        </p>
+        <div class="cover-meta">
+          <div class="cover-meta-item">
+            <strong>核心信条</strong>
+            让大模型在 System 2 里充分释放慢思考能力
+          </div>
+          <div class="cover-meta-item">
+            <strong>当前形态</strong>
+            一个以 Tracking 和 Speech 为能力样例的 Embodied Agent Kernel
+          </div>
+          <div class="cover-meta-item">
+            <strong>设计入口</strong>
+            对话触发，观察环境，调用工具，验证闭环
+          </div>
+        </div>
+      </div>
+      <div class="page-number">00</div>
+    </section>
+
+    <!-- Page 2: What this project is -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">01 / 出发点</div>
+          <h2>我们要做机器人的 System 2</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          机器人的底层运动控制、反射性避障、电机驱动，是快速的 System 1。而我们的目标是构建它的<strong>System 2</strong>：一个能够慢思考、拆解任务、调用工具、验证结果的认知决策层。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>System 2 应该由大模型本身来驱动</h3>
+            <p>
+              过往做 embodied agent 时，我们习惯于在一个统一的调度框架里写死业务编排逻辑：跟踪目标要写一套状态机，导航要写一套流程控制。结果是，<strong>框架越来越重，大模型被压缩成了只负责"最后一步分类"的薄层</strong>，它的拆解、推理、验证能力都被硬编码的逻辑扼杀了。
+            </p>
+            <p>
+              Tracking Agent 的核心理念是反过来的：我们要做的不是"一个会调用大模型的框架"，而是<strong>给大模型提供一个安全、确定、可观察的具身环境</strong>，让它自己去做拆解、思考、闭环和验证。runner 不是编排器，而是 System 2 的运行容器。
+            </p>
+          </div>
+          <div class="card" style="border-top: 3px solid var(--accent);">
+            <strong>System 2 的四大能力</strong>
+            <ul class="bullet-list">
+              <li><strong>拆解任务：</strong>把"跟踪那个人"分解为搜索、确认、锁定、持续观察等子步骤。</li>
+              <li><strong>思考推理：</strong>基于当前环境快照判断"目标是否还在""是否需要调整视角"。</li>
+              <li><strong>调用工具：</strong>通过 CLI/API 调用下游能力（tracking、speech、导航等）来影响世界。</li>
+              <li><strong>验证闭环：</strong>观察动作执行后的环境变化，确认预期是否达成，并决定下一步。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>与纯云端 agent（如 Operator / Computer Use）的根本区别</strong>
+          <div class="two-col" style="margin-top: 16px;">
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent);">Operator：数字世界的 System 2</h4>
+              <p style="font-size: 0.95rem;">
+                环境是标准化的网页和 API。操作可撤销、状态可重拉、并行探索没有物理风险。它的闭环验证很简单：刷新页面，看结果对不对。
+              </p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Tracking Agent：物理世界的 System 2</h4>
+              <p style="font-size: 0.95rem;">
+                环境是连续、不可逆的物理现实。System 2 必须处理<strong>时间连续性</strong>和<strong>动作后果的不可撤销性</strong>。大模型不仅要思考"做什么"，还要在每一轮验证"做了之后世界变成什么样"，并基于这个变化继续推理。
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">01</div>
+    </section>
+
+    <!-- Page 3: Architecture overview -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">02 / 架构骨架</div>
+          <h2>System 2 的工作空间</h2>
+          <p class="lead">
+            系统的全部复杂性，被收敛成给大模型提供的一个安全、确定、可观察的工作空间。没有中央调度器去限制模型的推理，只有清晰的边界来保护物理世界的安全。
+          </p>
+        </div>
+
+        <div class="arch-row">
+          <div class="arch-item">
+            <h4>感知</h4>
+            <p>System 2 的眼睛。持续观察物理世界，为大模型的思考提供可查询的环境快照。</p>
+          </div>
+          <div class="arch-item">
+            <h4>Runner</h4>
+            <p>System 2 的运行容器。每一轮为大模型组装上下文，接收它的推理结果，并把关物理动作的发出。</p>
+          </div>
+          <div class="arch-item">
+            <h4>Tools</h4>
+            <p>下游能力的 CLI/API 封装。System 2 通过调用工具来影响世界，而不是直接控制系统。</p>
+          </div>
+          <div class="arch-item">
+            <h4>状态</h4>
+            <p>System 2 的外部记忆。保存任务拆解进度、验证结果和环境认知，支持跨轮慢思考。</p>
+          </div>
+        </div>
+
+        <div class="arch-spine">
+          <strong>共享状态脊柱</strong>
+          <p>连接 System 2 与物理现实的桥梁。大模型通过它读取世界、记录思考、追踪任务进度；其他模块通过它共享对同一现实的认知。</p>
+        </div>
+
+        <div class="three-col">
+          <div class="card card-border-top">
+            <strong>Chat-First</strong>
+            <p>对话不是触发一个函数，而是触发一整轮"理解任务—观察现实—调用能力—验证结果"的认知循环。</p>
+          </div>
+          <div class="card card-border-top">
+            <strong>One Runner Path</strong>
+            <p>不是框架在编排，而是大模型在一个串行的安全环境里自主推理。避免并发决策对物理世界造成冲突。</p>
+          </div>
+          <div class="card card-border-top">
+            <strong>One Truth Source</strong>
+            <p>System 2 的长期记忆必须外化。大模型的上下文窗口是工作记忆，共享状态是支持慢思考的长期记忆。</p>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">02</div>
+    </section>
+
+    <!-- Page 4: Perception -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">03 / 感知层</div>
+          <h2>System 2 的思考质量，取决于观察的充分性</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          大模型在 System 2 里做的所有判断——"目标还在不在""动作是否生效""下一步该做什么"——都建立在它所能观察到的环境信息之上。如果观察是残缺或过时的，再强的推理能力也会建立在沙子上。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>充分观察是 System 2 的前提</h3>
+            <p>
+              想象一下：System 2 刚刚调用了一个让机器人转头的工具，它需要验证这个动作是否成功，以及目标是否还在视野内。如果感知进程在 System 2 不活跃时就停止记录，那么当它准备验证时，拿到的可能是动作执行前的旧快照，或者根本没有相关帧。
+            </p>
+            <p>
+              这就是为什么感知必须是<strong>唯一常驻者</strong>。它不随某一轮推理的结束而停止，而是持续地、忠实地记录物理世界的变化。只有这样，System 2 在任何时候启动思考时，都能基于一份足够新鲜、足够连续的世界快照来拆解任务、推理判断和验证闭环。
+            </p>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-forest);">
+              <strong>核心张力</strong>
+              <p style="margin-bottom: 0;">
+                物理世界连续运转，而 System 2 的思考是离散触发的。感知层的使命就是弥合这条裂缝，让大模型的慢思考能够随时接入"当前现实"。
+              </p>
+            </div>
+            <div class="pull-quote" style="margin: 0;">
+              "System 2 不是全知的，它的智慧受限于感知的窗口。感知必须是那扇永远不会关闭的窗。"
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>常驻带来的结构性结果</strong>
+          <div class="two-col" style="margin-top: 16px;">
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">事实垄断</h4>
+              <p style="font-size: 0.95rem;">
+                System 2 和 tools 不必各自去连接摄像头或解析传感器。"环境里发生了什么"这个核心事实有且只有一个权威来源，避免了大模型基于矛盾信息做推理。
+              </p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">验证就绪</h4>
+              <p style="font-size: 0.95rem;">
+                当 System 2 执行了一个动作后，它能立即查询动作之后的世界状态，完成"观察-行动-验证"的闭环。没有感知的长驻，验证就无从谈起。
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">03</div>
+    </section>
+
+    <!-- Page 5: Runner -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">04 / 运行层</div>
+          <h2>串行是具身环境里的基本秩序</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          Runner 不是一个大模型调用器，也不是一个硬编码的调度框架。它是 System 2 的运行容器：每一轮，它为大模型准备好完整的上下文（观察、记忆、可用工具），让大模型自主地完成<strong>拆解、思考、调用工具、验证结果</strong>的完整循环。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>Runner 让 System 2 的判断能对自己的后果负责</h3>
+            <p>
+              在物理世界里，System 2 必须验证它的行动是否产生了预期效果。比如它让机器人向左转，接下来它需要观察画面，确认目标是否仍在视野内、机器人是否确实转动了。如果这个验证还没完成，下一轮的指令又发了出去，System 2 就会失去对因果链的追踪。
+            </p>
+            <p>
+              所以 runner 坚持<strong>单轮串行</strong>：一个完整的"思考-行动-验证"循环必须结束后，才能开启下一个循环。这不是为了限制大模型的能力，而是因为<strong>串行是具身环境里的基本秩序</strong>。只有在一个因果干净的物理空间里，System 2 才能可靠地验证自己的推理，并为自己的判断负责。
+            </p>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent);">
+              <strong>为什么不做并发</strong>
+              <p style="margin-bottom: 0;">
+                并发在数字世界里是效率，在物理世界里是灾难。两个并发的决策流可能同时向机器人发冲突指令，而 System 2 将无法验证哪个指令导致了什么后果。串行是对物理世界因果律的尊重。
+              </p>
+            </div>
+            <div class="pull-quote" style="margin: 0;">
+              "Runner 不是调度器，而是让 System 2 的判断能够对自己的后果负责的运行容器。"
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>一轮循环里的四件事</strong>
+          <div class="four-col" style="margin-top: 16px;">
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">1. 观察</h4>
+              <p style="font-size: 0.9rem;">runner 组装当前感知快照、历史对话和外部记忆。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">2. 思考</h4>
+              <p style="font-size: 0.9rem;">大模型基于上下文自主拆解任务、推理判断。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">3. 行动</h4>
+              <p style="font-size: 0.9rem;">模型决定调用哪个 tool（CLI/API），runner 把关并执行。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">4. 验证</h4>
+              <p style="font-size: 0.9rem;">结果和环境变化被写回状态，供下一轮验证预期。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">04</div>
+    </section>
+
+    <!-- Page 6: State -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">05 / 状态层</div>
+          <h2>System 2 需要外部记忆来支持慢思考</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          大模型的上下文窗口是它的"工作记忆"，容量有限且随每次调用而刷新。但 System 2 的慢思考往往需要跨越多个轮次：拆解任务、追踪子任务进度、记录验证结果、修正之前的假设。这些都需要一个<strong>外部长期记忆</strong>。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>状态是 System 2 的笔记本</h3>
+            <p>
+              假设 System 2 把一个复杂任务拆解成了三步：搜索目标、确认身份、持续跟踪。执行到第二步时，它需要记得第一步已经找到了哪些候选对象、排除了哪些区域。如果这些信息只存在于大模型的上下文里，一旦进程重启或 token 超限，整个任务拆解就断裂了。
+            </p>
+            <p>
+              外部状态就是 System 2 的<strong>笔记本</strong>。它把任务进度、验证结果、环境认知都显式地写下来，不仅自己能随时查阅，系统里的其他模块——viewer、recovery、人类操作员——也能读到同一页笔记。这让人和机器能够对物理现实达成共识，也让 System 2 的思考可以跨轮次持续推进。
+            </p>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-forest);">
+              <strong>外部记忆支撑的长程能力</strong>
+              <ul class="bullet-list">
+                <li><strong>任务拆解追踪：</strong>记录复杂任务分解后的子步骤和完成状态。</li>
+                <li><strong>跨轮验证：</strong>保存"之前做了什么""结果如何"，供下一轮修正推理。</li>
+                <li><strong>环境认知同步：</strong>让 recovery 进程、viewer、人类操作员共享同一现实。</li>
+                <li><strong>故障恢复：</strong>System 2 重启后能从笔记中断点续传，而不是从零开始。</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>状态外化的本质</strong>
+          <p style="margin-bottom: 0;">
+            Pi agent 负责思考，但不垄断系统真相。所有跨轮延续的信息——当前目标、最新检测结果、任务拆解进度、验证记录——都被显式地写回共享状态。这不是为了调试方便，而是为了让 System 2 的慢思考能够在一个<strong>稳定、可恢复、可共享</strong>的认知基础上持续进行。外部记忆让机器人的 System 2 真正拥有了断点续传的能力。
+          </p>
+        </div>
+      </div>
+      <div class="page-number">05</div>
+    </section>
+
+    <!-- Page 7: Skills -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">06 / 技能层</div>
+          <h2>下游能力是工具，System 2 通过调用工具来闭环</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          在这个架构中，skill 的下游实现会被打包成标准的 CLI 或 API。System 2 不需要知道摄像头怎么驱动、语音怎么合成，它只需要知道：当我调用某个 tool 时，物理世界会发生什么变化，以及我如何在调用后验证这个变化。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>Tool 是 System 2 影响物理世界的接口</h3>
+            <p>
+              大模型在 System 2 里的推理可能是："用户要求跟踪穿黑衣服的人，我需要先调用 tracking tool 锁定目标，然后持续观察画面确认没有跟丢。"这些 tool 对 System 2 来说就像函数调用：传入参数、获得结果、观察副作用。
+            </p>
+            <p>
+              但 tool 本身<strong>不能越俎代庖地控制系统</strong>。它只负责在被调用时执行自己的局部能力，并把结果返回给 System 2。runner 作为 System 2 的守门人，确保任何 tool 的调用都建立在完整的全局上下文之上，避免多个 tool 同时盲操同一个机器人。
+            </p>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-gold);">
+              <strong>Tool 的三条契约</strong>
+              <ul class="bullet-list">
+                <li>以 CLI/API 形式暴露，System 2 通过标准接口调用。</li>
+                <li>不直接控制硬件调度，只响应单次调用并返回结果。</li>
+                <li>不维护独立状态，所有跨轮信息由 System 2 写入共享状态。</li>
+              </ul>
+            </div>
+            <div class="pull-quote" style="margin: 0;">
+              "tool 是 System 2 伸进物理世界的手，而 runner 确保这只手不会在没有想清楚时就乱动。"
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>能力的生长方式</strong>
+          <p style="margin-bottom: 0;">
+            当新的下游能力（如导航、抓取）被其他组实现并封装成 CLI/API 时，System 2 不需要改动自己的内核逻辑就能调用它。只要新 tool 遵守"单次调用、返回结果、不维护独立状态"的契约，它就能自然成为 System 2 思考-行动-验证循环中的一环。系统不是因为 tool 变多而变复杂，而是因为 System 2 逐渐拥有了更多可以支配的身体与世界接口。
+          </p>
+        </div>
+      </div>
+      <div class="page-number">06</div>
+    </section>
+
+    <!-- Page 8: Current shape -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">07 / 当前形态</div>
+          <h2>我们做出了一个 embodied agent 的认知内核</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          当前项目真正完成的，并不是某一个具体任务，而是一个<strong>能够承载 embodied cognition 的最小内核</strong>。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>内核已经具备的关键特征</h3>
+            <p>
+              这个内核以对话作为 System 2 的入口，让感知保持常驻，使大模型在任意一轮都能接入当前现实。它坚持单一的 runner 路径，让每一次行动都能被放进清晰的因果链中验证。它把跨轮信息写入共享状态，而不是让长期认知漂浮在 prompt 里。
+            </p>
+            <p>
+              更重要的是，它把 tracking、speech 乃至未来更多能力都收敛成可调用的 tools，而不是框架内置的逻辑。这意味着，内核不是为某一个 skill 定制出来的脚手架，而是一个<strong>可以让不同 embodied capabilities 被统一组织起来的认知底座</strong>。
+            </p>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-gold);">
+              <strong>Tracking 的角色</strong>
+              <p style="margin-bottom: 0;">
+                Tracking 是当下最能暴露 System 2 特性的能力样例。它要求语言 grounding、持续观察、动作后验证和异常修正——这些都是 embodied cognition 的核心张力。
+              </p>
+            </div>
+            <div class="card card-border-top">
+              <strong>Speech 的角色</strong>
+              <p style="margin-bottom: 0;">
+                Speech 说明这个内核不只服务于视觉或空间任务。任何能返回结构化结果的能力，都能自然接入同一个 System 2 工作空间。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="pull-quote" style="margin: 0;">
+          "我们现在做成的，不是一个 tracking agent，而是一个以 tracking 和 speech 为能力样例的 embodied agent kernel。"
+        </div>
+      </div>
+      <div class="page-number">07</div>
+    </section>
+
+    <!-- Page 9: Future & Boundaries -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">08 / 未来与边界</div>
+          <h2>System 2 不做 System 1 的事，也不做硬编码编排</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          一个好的架构，不仅要说明能走多远，更要说明会在哪里停下来。Tracking Agent 的定位非常清晰：它是机器人的 System 2，而不是 System 1；它是大模型思考的运行容器，而不是替代大模型做思考的硬编码框架。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>System 2 不做 System 1 的事</h3>
+            <p>
+              底层的运动控制、反射性避障、电机驱动、实时传感器融合，是快速的 System 1。这些领域有成熟的 OS 和实时控制方案。System 2 的职责层级更高：它要在 System 1 提供的能力之上，回答"在当前这个不确定的物理环境里，下一步该做什么"。
+            </p>
+            <p>
+              如果我们把实时控制、传感器协议封装、硬件抽象都吞进 System 2，边界就会膨胀，大模型的慢思考会被底层细节淹没，对物理连续性的严格控制也会被侵蚀。
+            </p>
+          </div>
+          <div>
+            <h3>System 2 不做硬编码编排</h3>
+            <p>
+              传统框架试图用硬编码逻辑去编排"先做什么、后做什么"，结果是框架越来越重，大模型被压缩成了分类器。我们的选择是反过来的：<strong>让大模型 itself 成为编排者</strong>。
+            </p>
+            <p>
+              Runner 提供的不是编排逻辑，而是一个<strong>安全、确定、可观察的具身环境</strong>。单一路径不是框架在限制模型，而是为了让大模型在一个因果清晰的物理空间里，自主地完成拆解、思考、调用和验证。
+            </p>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>明确不做的事情</strong>
+          <div class="three-col" style="margin-top: 16px;">
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent);">不做多 agent 并发</h4>
+              <p style="font-size: 0.95rem;">物理动作不可并发。System 2 必须以串行方式指挥身体，确保每一轮都能验证结果。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent);">不做实时控制</h4>
+              <p style="font-size: 0.95rem;">毫秒级的避障、平衡、电机反馈是 System 1 的事。System 2 只负责秒级或分钟级的决策和任务规划。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent);">不允许隐式记忆</h4>
+              <p style="font-size: 0.95rem;">System 2 的外部记忆必须完全显式。没有"方便起见"的内部缓存，所有跨轮信息落盘共享。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">08</div>
+    </section>
+
+    <!-- Page 10: Closing -->
+    <section class="page closing">
+      <div class="closing-content">
+        <div class="kicker" style="color: var(--accent);">Closing Note</div>
+        <h2 style="margin-bottom: 0.6em;">System 2 不是框架，<br/>而是大模型与物理世界之间的信任协议。</h2>
+        <p class="lead">
+          当感知为 System 2 提供充分的观察，runner 为它守护串行的行动与验证空间，tool 以标准接口供它调用，而共享状态支撑它的慢思考与长期记忆——大模型才能在这个安全、确定、可观察的具身工作空间里，真正释放拆解、思考、闭环与验证的能力。
+        </p>
+        <p style="color: var(--ink-muted); margin-top: 2em;">
+          Tracking Agent 正是这种协议的工程化表达：<br/>
+          简洁、有边界、环境扎根、让大模型 itself 来思考。
+        </p>
+      </div>
+      <div class="page-number">09</div>
+    </section>
+
+  </body>
+</html>

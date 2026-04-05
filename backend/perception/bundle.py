@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
 
-from backend.agent.session import AgentSession
+from agent.session import AgentSession
 from backend.session_frames import observation_recent_frames
 
 

@@ -5,11 +5,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TRACKING_SKILL_ROOT = ROOT / "skills" / "tracking"
+TRACKING_BACKEND_ROOT = ROOT / "backend" / "tracking"
 
 
 def _load_config() -> dict:
-    path = TRACKING_SKILL_ROOT / "references" / "robot-agent-config.json"
+    path = TRACKING_BACKEND_ROOT / "references" / "robot-agent-config.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 

@@ -7,15 +7,14 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from backend.agent.session_store import AgentSessionStore
+from agent.session_store import AgentSessionStore
 from backend.config import Settings
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TRACKING_SCRIPT_ROOT = ROOT / "skills" / "tracking" / "scripts"
-TRACKING_CORE_ROOT = ROOT / "skills" / "tracking" / "core"
-TRACKING_WORKER_PATH = ROOT / "skills" / "tracking" / "scripts" / "rewrite_worker.py"
+TRACKING_BACKEND_ROOT = ROOT / "backend" / "tracking"
+TRACKING_WORKER_PATH = TRACKING_BACKEND_ROOT / "rewrite_worker.py"
 
 
 def _load_module(name: str, path: Path):
@@ -29,23 +28,23 @@ def _load_module(name: str, path: Path):
 
 
 def _load_select():
-    return _load_module("tracking_select", TRACKING_CORE_ROOT / "select.py")
+    return _load_module("tracking_select", TRACKING_BACKEND_ROOT / "select.py")
 
 
 def _load_rewrite():
-    return _load_module("tracking_rewrite", TRACKING_SCRIPT_ROOT / "rewrite_memory.py")
+    return _load_module("tracking_rewrite", TRACKING_BACKEND_ROOT / "rewrite_memory.py")
 
 
 def _load_turn_payload():
-    return _load_module("tracking_turn_payload", TRACKING_CORE_ROOT / "payload.py")
+    return _load_module("tracking_turn_payload", TRACKING_BACKEND_ROOT / "payload.py")
 
 
 def _load_run_init():
-    return _load_module("tracking_run_init", TRACKING_SCRIPT_ROOT / "run_tracking_init.py")
+    return _load_module("tracking_run_init", TRACKING_BACKEND_ROOT / "cli.py")
 
 
 def _load_run_track():
-    return _load_module("tracking_run_track", TRACKING_SCRIPT_ROOT / "run_tracking_track.py")
+    return _load_module("tracking_run_track", TRACKING_BACKEND_ROOT / "cli.py")
 
 
 def _load_run_worker():
@@ -53,7 +52,7 @@ def _load_run_worker():
 
 
 def _load_target_crop():
-    return _load_module("tracking_target_crop", TRACKING_CORE_ROOT / "crop.py")
+    return _load_module("tracking_target_crop", TRACKING_BACKEND_ROOT / "crop.py")
 
 
 def _frame_image(path: Path) -> Path:
@@ -215,8 +214,10 @@ def test_select_target_init_uses_sub_model(tmp_path: Path, monkeypatch) -> None:
                 {
                     "found": True,
                     "bounding_box_id": 15,
+                    "decision": "track",
                     "text": "已确认目标。",
                     "reason": "外观匹配。",
+                    "reject_reason": "",
                     "needs_clarification": False,
                     "clarification_question": None,
                 },
@@ -272,7 +273,7 @@ def test_select_target_track_uses_model_with_memory_guidance(tmp_path: Path, mon
     draw.rectangle((48, 8, 78, 56), fill=(220, 40, 40))
     image.save(frame_path, format="JPEG")
     reference_path = _frame_image(tmp_path / "reference.jpg")
-    session = _session_state(frame_path, latest_memory="黑衣服，短发。", latest_target_id=15)
+    session = _session_state(frame_path, latest_memory=_structured_memory("黑衣服，短发。"), latest_target_id=15)
     session["recent_frames"][0]["detections"] = [
         {"track_id": 42, "bbox": [8, 8, 36, 56], "score": 0.95},
         {"track_id": 16, "bbox": [48, 8, 78, 56], "score": 0.82},
@@ -316,8 +317,10 @@ def test_select_target_track_uses_model_with_memory_guidance(tmp_path: Path, mon
                 {
                     "found": True,
                     "bounding_box_id": 42,
+                    "decision": "track",
                     "text": "已确认继续跟踪 ID 42。",
                     "reason": "tracking memory 与 ID 42 的黑衣服和短发特征最一致。",
+                    "reject_reason": "",
                     "needs_clarification": False,
                     "clarification_question": None,
                 },
@@ -368,7 +371,7 @@ def test_select_target_track_survives_source_frame_cleanup(tmp_path: Path, monke
     draw = ImageDraw.Draw(image)
     draw.rectangle((8, 8, 36, 56), fill=(20, 20, 20))
     image.save(frame_path, format="JPEG")
-    session = _session_state(frame_path, latest_memory="黑衣服，短发。", latest_target_id=15)
+    session = _session_state(frame_path, latest_memory=_structured_memory("黑衣服，短发。"), latest_target_id=15)
     session["recent_frames"][0]["detections"] = [{"track_id": 42, "bbox": [8, 8, 36, 56], "score": 0.95}]
     reference_path = _frame_image(tmp_path / "reference.jpg")
     session["skill_cache"]["tracking"]["latest_confirmed_frame_path"] = str(reference_path)
@@ -397,8 +400,10 @@ def test_select_target_track_survives_source_frame_cleanup(tmp_path: Path, monke
                 {
                     "found": True,
                     "bounding_box_id": 42,
+                    "decision": "track",
                     "text": "已确认继续跟踪 ID 42。",
                     "reason": "tracking memory 与 ID 42 的黑衣服和短发特征最一致。",
+                    "reject_reason": "",
                     "needs_clarification": False,
                     "clarification_question": None,
                 },
@@ -477,8 +482,10 @@ def test_select_target_recovery_downgrades_ask_to_wait(tmp_path: Path, monkeypat
                 {
                     "found": False,
                     "bounding_box_id": None,
+                    "decision": "ask",
                     "text": "请确认是不是 ID63。",
                     "reason": "当前只有一个候选，但下装看不清。",
+                    "reject_reason": "",
                     "needs_clarification": True,
                     "clarification_question": "是不是 ID63？",
                     "candidate_checks": [
@@ -538,9 +545,12 @@ def test_load_tracking_context_file_preserves_structured_memory_object(tmp_path:
 def test_load_tracking_context_preserves_structured_memory_object(tmp_path: Path) -> None:
     select = _load_select()
     frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
+    session_state = _session_state(frame_path, latest_memory=_structured_memory("黑色连帽外套、彩色鞋"))
+    session_state["recent_frames"][0]["detections"].append({"track_id": 21, "bbox": [14, 16, 30, 40], "score": 0.9})
+    session_state["skill_cache"]["tracking"]["excluded_track_ids"] = [21]
     session_file = tmp_path / "session.json"
     session_file.write_text(
-        json.dumps(_session_state(frame_path, latest_memory=_structured_memory("黑色连帽外套、彩色鞋"))),
+        json.dumps(session_state),
         encoding="utf-8",
     )
 
@@ -548,6 +558,8 @@ def test_load_tracking_context_preserves_structured_memory_object(tmp_path: Path
 
     assert isinstance(loaded["memory"], dict)
     assert loaded["memory"]["core"] == "黑色连帽外套、彩色鞋"
+    assert loaded["excluded_track_ids"] == [21]
+    assert [detection["track_id"] for detection in loaded["frames"][0]["detections"]] == [15, 16]
 
 
 def test_select_target_track_rejects_model_target_not_in_current_candidates(
@@ -611,8 +623,10 @@ def test_select_target_track_rejects_model_target_not_in_current_candidates(
                 {
                     "found": True,
                     "bounding_box_id": 1,
+                    "decision": "track",
                     "text": "已重新绑定目标（ID 1）。",
                     "reason": "左侧人物与历史目标最像。",
+                    "reject_reason": "",
                     "needs_clarification": False,
                     "clarification_question": None,
                 },
@@ -852,7 +866,7 @@ def test_turn_payload_resets_view_specific_reference_crops_for_new_target(tmp_pa
     assert tracking_state["latest_back_target_crop"] is None
 
 
-def test_normalize_select_result_treats_string_none_as_missing_clarification_question(tmp_path: Path) -> None:
+def test_normalize_select_result_keeps_literal_string_clarification_question(tmp_path: Path) -> None:
     select = _load_select()
 
     payload = select.normalize_select_result(
@@ -866,7 +880,7 @@ def test_normalize_select_result_treats_string_none_as_missing_clarification_que
         }
     )
 
-    assert payload["clarification_question"] is None
+    assert payload["clarification_question"] == "None"
 
 
 def test_run_tracking_track_script_returns_final_payload(tmp_path: Path, monkeypatch) -> None:
@@ -904,7 +918,8 @@ def test_run_tracking_track_script_returns_final_payload(tmp_path: Path, monkeyp
         sys,
         "argv",
         [
-            "run_tracking_track.py",
+            "tracking_cli.py",
+            "track",
             "--session-file",
             str(tmp_path / "session.json"),
             "--user-text",

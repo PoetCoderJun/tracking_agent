@@ -4,8 +4,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from backend.agent import AgentSessionStore
-from skills.tracking.core.context import build_route_context, build_tracking_context
+from agent import AgentSessionStore
+from backend.tracking.context import build_route_context, build_tracking_context
 from backend.perception import (
     CAMERA_SENSOR_NAME,
     PERSON_DETECTION_KIND,
@@ -160,8 +160,6 @@ def test_local_perception_service_describes_saved_state(tmp_path: Path) -> None:
     description = service.describe_saved_state(session_id="sess_001")
 
     assert description["session_id"] == "sess_001"
-    assert description["in_memory"]["recent_camera_observation_count"] == 1
-    assert description["in_memory"]["latest_camera_observation"]["id"] == "frame_000001"
     assert description["persisted"]["recent_camera_observation_count"] == 1
     assert description["persisted"]["latest_camera_observation"]["id"] == "frame_000001"
     assert description["persisted"]["saved_keyframe_count"] == 1

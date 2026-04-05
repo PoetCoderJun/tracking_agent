@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.run_tracking_agent import _chat_command, _loop_command, parse_args
+from backend.tracking.service import _chat_command, _loop_command, parse_args
 
 
 def test_parse_args_tracking_agent_reads_runtime_intervals_from_env(monkeypatch, tmp_path) -> None:
@@ -46,7 +46,7 @@ def test_loop_command_includes_optional_runtime_args() -> None:
 
     command = _loop_command(Args())
 
-    assert command[:4] == [command[0], "-m", "scripts.run_tracking_loop", "--device-id"]
+    assert command[:4] == [command[0], "-m", "backend.tracking.loop", "--device-id"]
     assert "--session-id" in command
     assert "--max-turns" in command
     assert "--stop-file" in command

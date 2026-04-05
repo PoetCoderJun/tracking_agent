@@ -4,17 +4,18 @@ from __future__ import annotations
 import argparse
 import json
 
-from backend.agent.runner import (
+from agent.runner import (
     AGENT_RUNTIME_NAMESPACE,
     ENABLED_SKILLS_FIELD,
     PiAgentRunner,
     available_project_skill_names,
     normalize_enabled_skill_names,
 )
-from backend.agent.session_store import AgentSessionStore
+from agent.session_store import AgentSessionStore
 from backend.perception.stream import generate_request_id, generate_session_id
 from backend.persistence import ActiveSessionStore, resolve_session_id
 from backend.project_paths import resolve_project_path
+from backend.tracking.deterministic import process_tracking_init_direct, process_tracking_request_direct
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,7 +46,7 @@ def parse_args() -> argparse.Namespace:
 
     chat_parser = subparsers.add_parser(
         "chat",
-        help="Append one user chat turn, let the agent choose a skill, and run Pi.",
+        help="Append one user chat turn, let Pi choose a skill and execute it.",
     )
     chat_parser.add_argument(
         "--session-id",
@@ -68,6 +69,40 @@ def parse_args() -> argparse.Namespace:
         help="Optional skill override for this command. Repeat the flag or pass comma-separated names.",
     )
 
+    tracking_track_parser = subparsers.add_parser(
+        "tracking-track",
+        help="Run one deterministic backend tracking step against the current session state.",
+    )
+    tracking_track_parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional. If omitted, uses the current active session.",
+    )
+    tracking_track_parser.add_argument("--text", default="继续跟踪")
+    tracking_track_parser.add_argument("--device-id", default="robot_01")
+    tracking_track_parser.add_argument("--state-root", default="./.runtime/agent-runtime")
+    tracking_track_parser.add_argument("--frame-buffer-size", type=int, default=3)
+    tracking_track_parser.add_argument("--env-file", default=".ENV")
+    tracking_track_parser.add_argument("--artifacts-root", default="./.runtime/pi-agent")
+    tracking_track_parser.add_argument("--request-id", default=None)
+
+    tracking_init_parser = subparsers.add_parser(
+        "tracking-init",
+        help="Run one deterministic backend init step against the current session state.",
+    )
+    tracking_init_parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional. If omitted, uses the current active session.",
+    )
+    tracking_init_parser.add_argument("--text", required=True)
+    tracking_init_parser.add_argument("--device-id", default="robot_01")
+    tracking_init_parser.add_argument("--state-root", default="./.runtime/agent-runtime")
+    tracking_init_parser.add_argument("--frame-buffer-size", type=int, default=3)
+    tracking_init_parser.add_argument("--env-file", default=".ENV")
+    tracking_init_parser.add_argument("--artifacts-root", default="./.runtime/pi-agent")
+    tracking_init_parser.add_argument("--request-id", default=None)
+
     return parser.parse_args()
 
 
@@ -76,7 +111,7 @@ def _runner_from_args(args: argparse.Namespace) -> PiAgentRunner:
     return PiAgentRunner(
         state_root=resolve_project_path(args.state_root),
         frame_buffer_size=args.frame_buffer_size,
-        pi_binary=str(args.pi_binary),
+        pi_binary=str(args.pi_binary or "pi"),
         enabled_skills=enabled_skills,
     )
 
@@ -148,6 +183,36 @@ def main() -> int:
             "enabled_skills": enabled_skills,
             "available_skills": available_skills,
         }
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    if args.command == "tracking-track":
+        sessions = _session_store_from_args(args)
+        session_id = _resolved_session_id(args)
+        payload = process_tracking_request_direct(
+            sessions=sessions,
+            session_id=session_id,
+            device_id=args.device_id,
+            text=args.text,
+            request_id=args.request_id or generate_request_id(prefix="track"),
+            env_file=resolve_project_path(args.env_file),
+            artifacts_root=resolve_project_path(args.artifacts_root),
+        )
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    if args.command == "tracking-init":
+        sessions = _session_store_from_args(args)
+        session_id = _resolved_session_id(args)
+        payload = process_tracking_init_direct(
+            sessions=sessions,
+            session_id=session_id,
+            device_id=args.device_id,
+            text=args.text,
+            request_id=args.request_id or generate_request_id(prefix="init"),
+            env_file=resolve_project_path(args.env_file),
+            artifacts_root=resolve_project_path(args.artifacts_root),
+        )
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 

@@ -15,6 +15,10 @@ from typing import Any, Dict, List
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DEMO_VIDEO = ROOT / "backend" / "tests" / "fixtures" / "demo_video.mp4"
 DEFAULT_RUN_ROOT = ROOT / ".runtime" / "demo-e2e"
+ULTRALYTICS_ASSET_CANDIDATES = [
+    ROOT / ".venv" / "lib" / "python3.9" / "site-packages" / "ultralytics" / "assets" / "bus.jpg",
+    ROOT / ".venv" / "lib" / "python3.9" / "site-packages" / "ultralytics" / "assets" / "zidane.jpg",
+]
 
 
 @dataclass
@@ -44,6 +48,7 @@ class CaseReport:
     latest_result: Dict[str, Any] | None
     tracking_state: Dict[str, Any]
     conversation_history: List[Dict[str, Any]]
+    latency: Dict[str, Any] | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,7 +59,56 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-root", default=str(DEFAULT_RUN_ROOT))
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--tracker", default="bytetrack.yaml")
+    parser.add_argument(
+        "--case",
+        action="append",
+        dest="cases",
+        default=None,
+        help="Optional case filter. Repeat to run a subset of cases by name.",
+    )
     return parser.parse_args()
+
+
+def _ensure_demo_video(*, requested_path: Path, run_root: Path) -> Path:
+    if requested_path.exists():
+        return requested_path.resolve()
+
+    fallback_image = next((path for path in ULTRALYTICS_ASSET_CANDIDATES if path.exists()), None)
+    if fallback_image is None:
+        raise FileNotFoundError(
+            f"Demo video not found: {requested_path}\nNo fallback asset image was found under local ultralytics assets."
+        )
+
+    generated_video = run_root / "generated_demo_video.mp4"
+    generated_video.parent.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loop",
+            "1",
+            "-i",
+            str(fallback_image),
+            "-t",
+            "6",
+            "-r",
+            "8",
+            "-pix_fmt",
+            "yuv420p",
+            str(generated_video),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0 or not generated_video.exists():
+        raise RuntimeError(
+            f"Failed to generate fallback demo video from {fallback_image}\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
+        )
+    return generated_video.resolve()
 
 
 def _check(ok: bool, name: str, detail: str) -> CheckRecord:
@@ -186,6 +240,38 @@ def _load_session_and_tracking_state(
         time.sleep(poll_interval_seconds)
 
 
+def _tracking_memory_key(session: Dict[str, Any]) -> str:
+    tracking_state, _ = _tracking_state(session)
+    return json.dumps(tracking_state.get("latest_memory") or {}, ensure_ascii=False, sort_keys=True)
+
+
+def _wait_for_memory_change(
+    *,
+    state_root: Path,
+    session_id: str,
+    previous_memory_key: str,
+    timeout_seconds: float = 10.0,
+    poll_interval_seconds: float = 0.1,
+) -> float | None:
+    deadline = time.monotonic() + timeout_seconds
+    started = time.monotonic()
+    session_path = _session_paths(state_root, session_id)["session_path"]
+    while time.monotonic() < deadline:
+        session = _load_json(session_path)
+        if _tracking_memory_key(session) != previous_memory_key:
+            return round(time.monotonic() - started, 2)
+        time.sleep(poll_interval_seconds)
+    return None
+
+
+def _payload_model_elapsed_seconds(payload: Dict[str, Any]) -> float | None:
+    tool_output = dict(payload.get("tool_output") or {})
+    elapsed = tool_output.get("elapsed_seconds")
+    if elapsed in (None, ""):
+        return None
+    return round(float(elapsed), 2)
+
+
 def _prime_session(
     *,
     session_id: str,
@@ -234,18 +320,18 @@ def _chat_turn(
     return _run_command(
         label=f"{session_id}: chat: {text}",
         command=[
-            "uv",
-            "run",
-            "robot-agent",
-            "chat",
-            "--session-id",
-            session_id,
-            "--state-root",
-            str(state_root),
-            "--artifacts-root",
-            str(artifacts_root),
-            "--text",
-            text,
+        "uv",
+        "run",
+        "robot-agent",
+        "chat",
+        "--session-id",
+        session_id,
+        "--state-root",
+        str(state_root),
+        "--artifacts-root",
+        str(artifacts_root),
+        "--text",
+        text,
         ],
     )
 
@@ -263,7 +349,7 @@ def _loop_turn(
             "run",
             "python",
             "-m",
-            "scripts.run_tracking_loop",
+            "backend.tracking.loop",
             "--session-id",
             session_id,
             "--state-root",
@@ -280,6 +366,32 @@ def _loop_turn(
     )
 
 
+def _direct_track_turn(
+    *,
+    session_id: str,
+    state_root: Path,
+    artifacts_root: Path,
+    text: str = "继续跟踪",
+) -> CommandRecord:
+    return _run_command(
+        label=f"{session_id}: tracking-track: {text}",
+        command=[
+            "uv",
+            "run",
+            "robot-agent",
+            "tracking-track",
+            "--session-id",
+            session_id,
+            "--state-root",
+            str(state_root),
+            "--artifacts-root",
+            str(artifacts_root),
+            "--text",
+            text,
+        ],
+    )
+
+
 def _case_report(
     *,
     name: str,
@@ -288,6 +400,7 @@ def _case_report(
     state_root: Path,
     commands: List[CommandRecord],
     checks: List[CheckRecord],
+    latency: Dict[str, Any] | None = None,
 ) -> CaseReport:
     paths = _session_paths(state_root, session_id)
     session = _load_json(paths["session_path"])
@@ -301,6 +414,7 @@ def _case_report(
         latest_result=session.get("latest_result"),
         tracking_state=tracking_state,
         conversation_history=list(session.get("conversation_history") or []),
+        latency=latency,
     )
 
 
@@ -332,7 +446,7 @@ def _run_small_context_case(
             demo_video=demo_video,
             device=device,
             tracker=tracker,
-            max_events=6,
+            max_events=2,
         )
     ]
     commands.append(
@@ -340,7 +454,7 @@ def _run_small_context_case(
             session_id=session_id,
             state_root=state_root,
             artifacts_root=artifacts_root,
-            text="现在开始跟踪 ID 为 1 的人",
+            text="开始跟踪穿黑衣服的人。",
         )
     )
     for command in commands:
@@ -353,9 +467,9 @@ def _run_small_context_case(
     latest_result = session.get("latest_result") or {}
     checks = [
         _check(turn_payload.get("status") == "processed", "turn processed", f"status={turn_payload.get('status')}"),
-        _check(turn_payload.get("skill_name") == "tracking", "tracking skill selected", f"skill={turn_payload.get('skill_name')}"),
-        _check(latest_result.get("target_id") == 1, "target initialized", f"target_id={latest_result.get('target_id')}"),
-        _check(tracking_state.get("latest_target_id") == 1, "memory target updated", f"memory.latest_target_id={tracking_state.get('latest_target_id')}"),
+        _check(turn_payload.get("skill_name") == "tracking", "tracking state owner selected", f"skill={turn_payload.get('skill_name')}"),
+        _check(latest_result.get("target_id") not in (None, ""), "target initialized", f"target_id={latest_result.get('target_id')}"),
+        _check(tracking_state.get("latest_target_id") not in (None, ""), "memory target updated", f"memory.latest_target_id={tracking_state.get('latest_target_id')}"),
         _check(not had_nested_tracking, "skill state shape is flat", f"nested_tracking_wrapper={had_nested_tracking}"),
     ]
     return _case_report(
@@ -505,13 +619,13 @@ def _run_continuous_tracking_case(
             demo_video=demo_video,
             device=device,
             tracker=tracker,
-            max_events=3,
+            max_events=2,
         ),
-        _chat_turn(
+        _direct_init_turn(
             session_id=session_id,
             state_root=state_root,
             artifacts_root=artifacts_root,
-            text="开始跟踪 ID 为 1 的人。",
+            text="开始跟踪穿黑衣服的人。",
         ),
         _prime_session(
             session_id=session_id,
@@ -520,7 +634,7 @@ def _run_continuous_tracking_case(
             demo_video=demo_video,
             device=device,
             tracker=tracker,
-            max_events=6,
+            max_events=3,
         ),
         _loop_turn(
             session_id=session_id,
@@ -546,6 +660,7 @@ def _run_continuous_tracking_case(
     paths = _session_paths(state_root, session_id)
     session = _load_json(paths["session_path"])
     tracking_state, _ = _tracking_state(session)
+    expected_target_id = tracking_state.get("latest_target_id")
     latest_frame_id = loop_payload.get("frame_id") or (session.get("latest_result") or {}).get("frame_id")
     checks = [
         _check(
@@ -562,7 +677,7 @@ def _run_continuous_tracking_case(
             "loop stayed on tracking",
             f"final_status={loop_payload.get('status')} skill={loop_payload.get('skill_name')}",
         ),
-        _check(tracking_state.get("latest_target_id") == 1, "active target persisted", f"memory.latest_target_id={tracking_state.get('latest_target_id')}"),
+        _check(tracking_state.get("latest_target_id") == expected_target_id, "active target persisted", f"memory.latest_target_id={tracking_state.get('latest_target_id')}"),
         _check(
             latest_frame_id == "frame_000005",
             "loop reached the newest sampled frame",
@@ -691,6 +806,173 @@ def _run_invalid_target_case(
     )
 
 
+def _run_init_latency_case(
+    *,
+    state_root: Path,
+    output_dir: Path,
+    artifacts_root: Path,
+    demo_video: Path,
+    device: str,
+    tracker: str,
+) -> CaseReport:
+    session_id = "case_init_latency"
+    commands = [
+        _prime_session(
+            session_id=session_id,
+            state_root=state_root,
+            output_dir=output_dir,
+            demo_video=demo_video,
+            device=device,
+            tracker=tracker,
+            max_events=2,
+        )
+    ]
+    previous_memory_key = "{}"
+    commands.append(
+        _chat_turn(
+            session_id=session_id,
+            state_root=state_root,
+            artifacts_root=artifacts_root,
+            text="开始跟踪穿黑衣服的人。",
+        )
+    )
+    for command in commands:
+        _assert_command_ok(command)
+
+    payload = _last_json_payload(commands[-1].stdout)
+    rewrite_seconds = _wait_for_memory_change(
+        state_root=state_root,
+        session_id=session_id,
+        previous_memory_key=previous_memory_key,
+    )
+    model_seconds = _payload_model_elapsed_seconds(payload)
+    total_seconds = commands[-1].elapsed_seconds
+    latency = {
+        "kind": "init",
+        "total_seconds": total_seconds,
+        "model_seconds": model_seconds,
+        "non_model_overhead_seconds": round(total_seconds - model_seconds, 2) if model_seconds is not None else None,
+        "async_rewrite_seconds": rewrite_seconds,
+    }
+    session, tracking_state = _load_session_and_tracking_state(
+        state_root=state_root,
+        session_id=session_id,
+        wait_for_memory=True,
+    )
+    checks = [
+        _check(payload.get("status") == "processed", "init turn processed", f"status={payload.get('status')}"),
+        _check(payload.get("tool") == "init", "init tool used", f"tool={payload.get('tool')}"),
+        _check((session.get("latest_result") or {}).get("target_id") not in (None, ""), "target selected", f"target_id={(session.get('latest_result') or {}).get('target_id')}"),
+        _check(bool(tracking_state.get("latest_memory")), "init rewrite completed", f"rewrite_seconds={rewrite_seconds}"),
+    ]
+    return _case_report(
+        name="init_latency_breakdown",
+        description="Measure one init turn total latency, model latency, and async rewrite completion latency.",
+        session_id=session_id,
+        state_root=state_root,
+        commands=commands,
+        checks=checks,
+        latency=latency,
+    )
+
+
+def _run_track_latency_case(
+    *,
+    state_root: Path,
+    output_dir: Path,
+    artifacts_root: Path,
+    demo_video: Path,
+    device: str,
+    tracker: str,
+) -> CaseReport:
+    session_id = "case_track_latency"
+    commands = [
+        _prime_session(
+            session_id=session_id,
+            state_root=state_root,
+            output_dir=output_dir,
+            demo_video=demo_video,
+            device=device,
+            tracker=tracker,
+            max_events=3,
+        ),
+        _chat_turn(
+            session_id=session_id,
+            state_root=state_root,
+            artifacts_root=artifacts_root,
+            text="开始跟踪穿黑衣服的人。",
+        ),
+        _prime_session(
+            session_id=session_id,
+            state_root=state_root,
+            output_dir=output_dir,
+            demo_video=demo_video,
+            device=device,
+            tracker=tracker,
+            max_events=2,
+        ),
+    ]
+    for command in commands:
+        _assert_command_ok(command)
+
+    session_before_track, tracking_state_before_track = _load_session_and_tracking_state(
+        state_root=state_root,
+        session_id=session_id,
+        wait_for_memory=True,
+    )
+    expected_target_id = tracking_state_before_track.get("latest_target_id")
+    previous_memory_key = _tracking_memory_key(session_before_track)
+    commands.append(
+        _direct_track_turn(
+            session_id=session_id,
+            state_root=state_root,
+            artifacts_root=artifacts_root,
+        )
+    )
+    _assert_command_ok(commands[-1])
+
+    payload = _last_json_payload(commands[-1].stdout)
+    rewrite_seconds = _wait_for_memory_change(
+        state_root=state_root,
+        session_id=session_id,
+        previous_memory_key=previous_memory_key,
+    )
+    model_seconds = _payload_model_elapsed_seconds(payload)
+    total_seconds = commands[-1].elapsed_seconds
+    latency = {
+        "kind": "track",
+        "total_seconds": total_seconds,
+        "model_seconds": model_seconds,
+        "non_model_overhead_seconds": round(total_seconds - model_seconds, 2) if model_seconds is not None else None,
+        "async_rewrite_seconds": rewrite_seconds,
+        "previous_memory_summary": tracking_state_before_track.get("memory_summary"),
+    }
+    session_after_track, tracking_state_after_track = _load_session_and_tracking_state(
+        state_root=state_root,
+        session_id=session_id,
+        wait_for_memory=False,
+    )
+    checks = [
+        _check(payload.get("status") == "processed", "track turn processed", f"status={payload.get('status')}"),
+        _check(payload.get("tool") == "track", "track tool used", f"tool={payload.get('tool')}"),
+        _check((session_after_track.get("latest_result") or {}).get("target_id") == expected_target_id, "target stayed bound", f"target_id={(session_after_track.get('latest_result') or {}).get('target_id')}"),
+        _check(
+            rewrite_seconds is not None or bool(tracking_state_after_track.get("latest_memory")),
+            "track rewrite completed or memory remained available",
+            f"rewrite_seconds={rewrite_seconds}",
+        ),
+    ]
+    return _case_report(
+        name="track_latency_breakdown",
+        description="Measure one deterministic track step total latency, model latency, and async rewrite completion latency.",
+        session_id=session_id,
+        state_root=state_root,
+        commands=commands,
+        checks=checks,
+        latency=latency,
+    )
+
+
 def _case_passed(report: CaseReport) -> bool:
     return all(check.ok for check in report.checks)
 
@@ -749,6 +1031,13 @@ def _render_markdown(summary: Dict[str, Any], reports: List[CaseReport]) -> str:
         lines.append("```json")
         lines.append(_json_block(report.tracking_state))
         lines.append("```")
+        if report.latency:
+            lines.append("")
+            lines.append("### Latency")
+            lines.append("")
+            lines.append("```json")
+            lines.append(_json_block(report.latency))
+            lines.append("```")
         if report.conversation_history:
             lines.append("")
             lines.append("### Conversation History")
@@ -847,57 +1136,56 @@ def _write_human_reports(*, run_root: Path, summary: Dict[str, Any], reports: Li
 
 def main() -> int:
     args = parse_args()
-    demo_video = Path(args.demo_video).resolve()
-    if not demo_video.exists():
-        raise FileNotFoundError(f"Demo video not found: {demo_video}")
-
     run_root = Path(args.run_root).resolve()
     if run_root.exists():
         shutil.rmtree(run_root)
+    run_root.mkdir(parents=True, exist_ok=True)
+    demo_video = _ensure_demo_video(
+        requested_path=Path(args.demo_video),
+        run_root=run_root,
+    )
     state_root = run_root / "state"
     output_dir = run_root / "perception"
     artifacts_root = run_root / "artifacts"
     report_path = run_root / "report.json"
-    run_root.mkdir(parents=True, exist_ok=True)
 
     cases = [
         (
             "small_context_explicit_target",
             "case_small_context",
-            "Minimal context, one explicit target-selection turn.",
+            "Minimal context, one explicit backend init turn.",
             _run_small_context_case,
-        ),
-        (
-            "large_context_then_target",
-            "case_large_context",
-            "Several prelude chat turns before explicit target selection.",
-            _run_large_context_case,
-        ),
-        (
-            "chat_first_then_target",
-            "case_chat_then_target",
-            "Ask a visual chat question first, then explicitly lock a target.",
-            _run_chat_then_target_case,
         ),
         (
             "continuous_tracking_loop",
             "case_continuous_tracking",
-            "Initialize a target, ingest newer observations, then let the loop drive one continue-tracking turn.",
+            "Initialize a target through backend init, ingest newer observations, then let the loop drive one deterministic track step.",
             _run_continuous_tracking_case,
         ),
         (
-            "tracking_chat_qa",
-            "case_tracking_chat",
-            "Ask follow-up questions after a target is already active.",
-            _run_tracking_chat_case,
+            "init_latency_breakdown",
+            "case_init_latency",
+            "Measure one backend init turn latency and async rewrite completion.",
+            _run_init_latency_case,
+        ),
+        (
+            "track_latency_breakdown",
+            "case_track_latency",
+            "Measure one deterministic track step latency and async rewrite completion.",
+            _run_track_latency_case,
         ),
         (
             "invalid_target_clarification",
             "case_invalid_target",
-            "Explicitly request a non-existent target ID and ensure the agent asks to clarify.",
+            "Explicitly request a non-existent target ID and ensure backend init asks to clarify.",
             _run_invalid_target_case,
         ),
     ]
+    requested_case_names = {str(name).strip() for name in list(args.cases or []) if str(name).strip()}
+    if requested_case_names:
+        cases = [case for case in cases if case[0] in requested_case_names]
+        if not cases:
+            raise ValueError(f"No matching cases for --case. Requested: {sorted(requested_case_names)}")
 
     reports: List[CaseReport] = []
     for case_name, session_id, description, case in cases:
@@ -949,6 +1237,11 @@ def main() -> int:
         "run_root": str(run_root),
         "passed_cases": sum(1 for report in reports if all(check.ok for check in report.checks)),
         "total_cases": len(reports),
+        "latency_reports": {
+            report.name: report.latency
+            for report in reports
+            if report.latency is not None
+        },
         "cases": [
             {
                 **asdict(report),

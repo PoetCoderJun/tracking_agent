@@ -15,6 +15,7 @@ The repository is actively being reduced from an over-engineered runtime shape t
 - Prefer explicit state updates in runner/capability code over generic patch protocols returned by models or helper scripts.
 - Avoid or remove detached workers, generic jobs, extra runtime wrappers, and orchestration-heavy CLI layers unless profiling proves they are necessary.
 - Prefer deleting and collapsing layers over renaming or rewrapping them.
+- At any time, prefer deleting compatibility surfaces, fallback paths, and defensive over-handling so the system stays on one clear, strict, failure-visible MVP path.
 
 ## Project Structure & Module Organization
 Core package code lives in `backend/`. Keep long-running world observation in `backend/perception/`. Keep event handling, state reduction, and capability invocation in the runner/agent path. Keep executable robot interfaces in `backend/actions/`. Tests live in `backend/tests/` and fixtures live in `backend/tests/fixtures/`. Capability-specific helper logic should stay close to the capability that owns it; avoid rebuilding a generic runtime framework around those helpers.

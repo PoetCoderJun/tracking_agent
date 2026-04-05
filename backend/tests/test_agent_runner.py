@@ -5,10 +5,11 @@ import json
 
 from PIL import Image
 
-import backend.agent.runner as runner_module
-import skills.tracking.runtime as tracking_orchestration_module
-from backend.agent import PiAgentRunner
+import agent.pi_protocol as pi_protocol_module
+import agent.runner as runner_module
+from agent import PiAgentRunner
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
+import backend.tracking.deterministic as tracking_orchestration_module
 
 
 def _structured_memory(summary: str) -> dict:
@@ -67,7 +68,7 @@ def test_pi_agent_runner_processes_event_and_updates_memory(monkeypatch, tmp_pat
     )
 
     monkeypatch.setattr(
-        "backend.agent.runner._run_pi_turn",
+        "agent.runner._run_pi_turn",
         lambda **_: {
             "status": "processed",
             "skill_name": "tracking",
@@ -168,7 +169,7 @@ def test_runner_schedules_tracking_memory_rewrite_from_payload(monkeypatch, tmp_
         lambda **kwargs: scheduled.append(kwargs),
     )
     monkeypatch.setattr(
-        "backend.agent.runner._run_pi_turn",
+        "agent.runner._run_pi_turn",
         lambda **_: {
             "status": "processed",
             "skill_name": "tracking",
@@ -241,7 +242,7 @@ def test_runner_schedules_init_memory_rewrite_asynchronously(monkeypatch, tmp_pa
         lambda **kwargs: scheduled.append(kwargs),
     )
     monkeypatch.setattr(
-        "backend.agent.runner._run_pi_turn",
+        "agent.runner._run_pi_turn",
         lambda **_: {
             "status": "processed",
             "skill_name": "tracking",
@@ -290,52 +291,6 @@ def test_runner_schedules_init_memory_rewrite_asynchronously(monkeypatch, tmp_pa
     assert "memory" not in result["latest_result"]
     context = runner.sessions.load("sess_init")
     assert "latest_memory" not in context.skill_cache["tracking"]
-
-
-def test_runner_processes_direct_tracking_request(monkeypatch, tmp_path: Path) -> None:
-    runner = PiAgentRunner(state_root=tmp_path / "state")
-    frame_path = _frame_image(tmp_path / "frame.jpg")
-
-    _write_observation(
-        runner,
-        session_id="sess_direct",
-        frame_path=frame_path,
-        request_id="req_obs_direct",
-        detections=[RobotDetection(track_id=12, bbox=[10, 20, 30, 40], score=0.95)],
-    )
-
-    monkeypatch.setattr(
-        tracking_orchestration_module,
-        "execute_select_tool",
-        lambda **_: {
-            "behavior": "track",
-            "frame_id": "frame_000001",
-            "target_id": 12,
-            "bounding_box_id": 12,
-            "found": True,
-            "decision": "track",
-            "text": "已确认继续跟踪 ID 12。",
-            "reason": "deterministic rebind",
-            "confirmed_frame_path": str(frame_path),
-            "confirmed_bbox": [10, 20, 30, 40],
-        },
-    )
-
-    result = runner.process_tracking_request_direct(
-        session_id="sess_direct",
-        device_id="robot_01",
-        text="继续跟踪",
-        request_id="req_direct",
-        env_file=tmp_path / ".ENV",
-        artifacts_root=tmp_path / "artifacts",
-    )
-
-    assert result["status"] == "processed"
-    assert result["tool"] == "track"
-    assert result["session_result"]["target_id"] == 12
-    assert result["robot_response"]["action"] == "track"
-    context = runner.sessions.load("sess_direct")
-    assert context.skill_cache["tracking"]["latest_target_id"] == 12
 
 
 def test_runner_process_chat_request_uses_pi_for_tracking_init(monkeypatch, tmp_path: Path) -> None:
@@ -391,7 +346,7 @@ def test_runner_process_chat_request_uses_pi_for_tracking_init(monkeypatch, tmp_
             "reason": None,
         }
 
-    monkeypatch.setattr("backend.agent.runner._run_pi_turn", _fake_run_pi_turn)
+    monkeypatch.setattr("agent.runner._run_pi_turn", _fake_run_pi_turn)
 
     result = runner.process_chat_request(
         session_id="sess_chat_init",
@@ -407,45 +362,74 @@ def test_runner_process_chat_request_uses_pi_for_tracking_init(monkeypatch, tmp_
     assert result["session_result"]["target_id"] == 12
 
 
-def test_runner_direct_tracking_returns_wait_without_pi_fallback_on_uncertainty(
+def test_runner_chat_continue_stays_on_pi_path(
     monkeypatch, tmp_path: Path
 ) -> None:
-    runner = PiAgentRunner(state_root=tmp_path / "state")
+    runner = PiAgentRunner(state_root=tmp_path / "state", enabled_skills=["tracking"])
     frame_path = _frame_image(tmp_path / "frame.jpg")
 
     _write_observation(
         runner,
-        session_id="sess_direct_fallback",
+        session_id="sess_chat_track",
         frame_path=frame_path,
-        request_id="req_obs_direct_fallback",
+        request_id="req_obs_chat_track",
         detections=[RobotDetection(track_id=12, bbox=[10, 20, 30, 40], score=0.95)],
+    )
+    runner.sessions.patch_skill_state(
+        "sess_chat_track",
+        skill_name="tracking",
+        patch={
+            "latest_target_id": 12,
+            "latest_confirmed_frame_path": str(frame_path),
+        },
     )
 
     monkeypatch.setattr(
         tracking_orchestration_module,
-        "execute_select_tool",
-        lambda **_: {
-            "behavior": "track",
-            "frame_id": "frame_000001",
-            "target_id": 12,
-            "bounding_box_id": 12,
-            "found": False,
-            "decision": "wait",
-            "text": "当前不确定，保持等待。",
-            "reason": "ambiguous",
-        },
-    )
-    monkeypatch.setattr(
-        PiAgentRunner,
-        "process_session",
-        lambda self, **kwargs: (_ for _ in ()).throw(AssertionError("Pi fallback should not be used")),
+        "process_tracking_request_direct",
+        lambda **_: (_ for _ in ()).throw(AssertionError("chat continue should stay on Pi path")),
     )
 
-    result = runner.process_tracking_request_direct(
-        session_id="sess_direct_fallback",
+    def _fake_run_pi_turn(**kwargs: object) -> dict:
+        assert kwargs["enabled_skill_names"] == ["tracking"]
+        return {
+            "status": "processed",
+            "skill_name": "tracking",
+            "session_result": {
+                "behavior": "track",
+                "frame_id": "frame_000001",
+                "target_id": 12,
+                "bounding_box_id": 12,
+                "found": False,
+                "decision": "wait",
+                "text": "当前不确定，保持等待。",
+                "reason": "ambiguous",
+            },
+            "latest_result_patch": None,
+            "skill_state_patch": {"pending_question": None},
+            "user_preferences_patch": None,
+            "environment_map_patch": None,
+            "perception_cache_patch": None,
+            "robot_response": {"action": "wait", "text": "当前不确定，保持等待。"},
+            "tool": "track",
+            "tool_output": {
+                "behavior": "track",
+                "decision": "wait",
+                "text": "当前不确定，保持等待。",
+                "reason": "ambiguous",
+            },
+            "rewrite_output": None,
+            "rewrite_memory_input": None,
+            "reason": "ambiguous",
+        }
+
+    monkeypatch.setattr(runner_module, "_run_pi_turn", _fake_run_pi_turn)
+
+    result = runner.process_chat_request(
+        session_id="sess_chat_track",
         device_id="robot_01",
         text="继续跟踪",
-        request_id="req_direct_fallback",
+        request_id="req_chat_track",
         env_file=tmp_path / ".ENV",
         artifacts_root=tmp_path / "artifacts",
     )
@@ -453,6 +437,75 @@ def test_runner_direct_tracking_returns_wait_without_pi_fallback_on_uncertainty(
     assert result["status"] == "processed"
     assert result["session_result"]["decision"] == "wait"
     assert result["robot_response"]["action"] == "wait"
+
+
+def test_runner_grounded_tracking_question_stays_on_pi_path(monkeypatch, tmp_path: Path) -> None:
+    runner = PiAgentRunner(state_root=tmp_path / "state", enabled_skills=["tracking"])
+    frame_path = _frame_image(tmp_path / "frame.jpg")
+
+    _write_observation(
+        runner,
+        session_id="sess_tracking_reply",
+        frame_path=frame_path,
+        request_id="req_obs_tracking_reply",
+        detections=[RobotDetection(track_id=12, bbox=[10, 20, 30, 40], score=0.95)],
+    )
+    runner.sessions.patch_skill_state(
+        "sess_tracking_reply",
+        skill_name="tracking",
+        patch={
+            "latest_target_id": 12,
+            "latest_confirmed_frame_path": str(frame_path),
+        },
+    )
+
+    monkeypatch.setattr(
+        tracking_orchestration_module,
+        "process_tracking_request_direct",
+        lambda **_: (_ for _ in ()).throw(AssertionError("grounded QA should stay on Pi path")),
+    )
+
+    def _fake_run_pi_turn(**kwargs: object) -> dict:
+        assert kwargs["enabled_skill_names"] == ["tracking"]
+        return {
+            "status": "processed",
+            "skill_name": "tracking",
+            "session_result": {
+                "behavior": "reply",
+                "frame_id": "frame_000001",
+                "target_id": 12,
+                "bounding_box_id": 12,
+                "found": True,
+                "text": "目标现在还在右侧。",
+                "reason": "grounded reply",
+            },
+            "latest_result_patch": None,
+            "skill_state_patch": None,
+            "user_preferences_patch": None,
+            "environment_map_patch": None,
+            "perception_cache_patch": None,
+            "robot_response": {"action": "reply", "text": "目标现在还在右侧。"},
+            "tool": "reply",
+            "tool_output": {"behavior": "reply", "text": "目标现在还在右侧。"},
+            "rewrite_output": None,
+            "rewrite_memory_input": None,
+            "reason": None,
+        }
+
+    monkeypatch.setattr(runner_module, "_run_pi_turn", _fake_run_pi_turn)
+
+    result = runner.process_chat_request(
+        session_id="sess_tracking_reply",
+        device_id="robot_01",
+        text="他现在在哪",
+        request_id="req_tracking_reply",
+        env_file=tmp_path / ".ENV",
+        artifacts_root=tmp_path / "artifacts",
+    )
+
+    assert result["status"] == "processed"
+    assert result["tool"] == "reply"
+    assert result["session_result"]["text"] == "目标现在还在右侧。"
 
 
 def test_schedule_tracking_memory_rewrite_spawns_subprocess_worker(monkeypatch, tmp_path: Path) -> None:
@@ -502,7 +555,8 @@ def test_schedule_tracking_memory_rewrite_spawns_subprocess_worker(monkeypatch, 
 
     assert len(spawned) == 1
     command = spawned[0]["command"]
-    assert "skills/tracking/scripts/rewrite_worker.py" in command
+    assert "-m" in command
+    assert "backend.tracking.rewrite_worker" in command
     assert "--session-id" in command
     assert "sess_worker" in command
     assert "--frame-path" in command
@@ -514,7 +568,7 @@ def test_pi_agent_runner_returns_idle_from_pi(tmp_path: Path, monkeypatch) -> No
     runner = PiAgentRunner(state_root=tmp_path / "state")
 
     monkeypatch.setattr(
-        "backend.agent.runner._run_pi_turn",
+        "agent.runner._run_pi_turn",
         lambda **_: {
             "status": "idle",
             "skill_name": None,
@@ -536,38 +590,80 @@ def test_pi_agent_runner_returns_idle_from_pi(tmp_path: Path, monkeypatch) -> No
     assert result["reason"] == "No installed skill applies."
 
 
-def test_runner_recovers_turn_payload_from_later_assistant_text_part() -> None:
-    payload = runner_module._payload_from_messages(
+def test_runner_recovers_turn_payload_from_last_assistant_text_part() -> None:
+    payload = pi_protocol_module._payload_from_messages(
         [
             {
                 "role": "assistant",
                 "content": [
                     {
                         "type": "text",
-                        "text": "I inspected the state files and now return the final payload.",
+                        "text": "ignored prelude",
                     },
                     {
                         "type": "text",
-                        "text": (
-                            "```json\n"
-                            "{\n"
-                            '  "status": "processed",\n'
-                            '  "skill_name": "tracking",\n'
-                            '  "session_result": {"behavior": "reply", "text": "目标在右侧。"},\n'
-                            '  "latest_result_patch": null,\n'
-                            '  "skill_state_patch": null,\n'
-                            '  "user_preferences_patch": null,\n'
-                            '  "environment_map_patch": null,\n'
-                            '  "perception_cache_patch": null,\n'
-                            '  "robot_response": {"action": "wait"},\n'
-                            '  "tool": "reply",\n'
-                            '  "tool_output": {"behavior": "reply", "text": "目标在右侧。"},\n'
-                            '  "rewrite_output": null,\n'
-                            '  "reason": null\n'
-                            "}\n"
-                            "```"
+                        "text": json.dumps(
+                            {
+                                "status": "processed",
+                                "skill_name": "tracking",
+                                "session_result": {"behavior": "reply", "text": "目标在右侧。"},
+                                "latest_result_patch": None,
+                                "skill_state_patch": None,
+                                "user_preferences_patch": None,
+                                "environment_map_patch": None,
+                                "perception_cache_patch": None,
+                                "robot_response": {"action": "wait"},
+                                "tool": "reply",
+                                "tool_output": {"behavior": "reply", "text": "目标在右侧。"},
+                                "rewrite_output": None,
+                                "reason": None,
+                            },
+                            ensure_ascii=False,
                         ),
                     },
+                ],
+            }
+        ]
+    )
+
+    assert payload is not None
+    assert payload["status"] == "processed"
+    assert payload["skill_name"] == "tracking"
+    assert payload["tool"] == "reply"
+
+
+def test_runner_recovers_turn_payload_from_rpc_agent_end_messages() -> None:
+    payload = pi_protocol_module._payload_from_rpc_events(
+        [
+            {
+                "type": "agent_end",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "{\n"
+                                    '  "status": "processed",\n'
+                                    '  "skill_name": "tracking",\n'
+                                    '  "session_result": {"behavior": "reply", "text": "目标在右侧。"},\n'
+                                    '  "latest_result_patch": null,\n'
+                                    '  "skill_state_patch": null,\n'
+                                    '  "user_preferences_patch": null,\n'
+                                    '  "environment_map_patch": null,\n'
+                                    '  "perception_cache_patch": null,\n'
+                                    '  "robot_response": {"action": "wait"},\n'
+                                    '  "tool": "reply",\n'
+                                    '  "tool_output": {"behavior": "reply", "text": "目标在右侧。"},\n'
+                                    '  "rewrite_output": null,\n'
+                                    '  "rewrite_memory_input": null,\n'
+                                    '  "reason": null\n'
+                                    "}"
+                                ),
+                            }
+                        ],
+                    }
                 ],
             }
         ]
@@ -607,12 +703,11 @@ def test_runner_prompt_points_pi_to_generic_turn_context(tmp_path: Path) -> None
 
     assert "context_paths.route_context_path" in prompt
     assert "`enabled_skills`" in prompt
-    assert "Available project skills are already loaded natively into Pi" in prompt
+    assert "inside Pi" in prompt
     assert "state_paths.session_path" in prompt
     assert "service_commands.perception_read" in prompt
     assert "Only read `state_paths.session_path`" in prompt
-    assert "Never write the final payload into a temp file such as `pi_output.json`" in prompt
-    assert "`idle` is only for turns where no installed skill applies" in prompt
+    assert "`idle` is only for turns where no enabled skill applies" in prompt
     assert "copy those canonical fields directly into `session_result`" in prompt
     assert "context_paths.skill_context_paths" not in prompt
     assert "skip_rewrite_memory" not in prompt
@@ -632,7 +727,7 @@ def test_pi_subprocess_env_maps_dashscope_settings_for_pi(tmp_path: Path, monkey
     )
     monkeypatch.setenv("FROM_SHELL", "present")
 
-    env = runner_module._pi_subprocess_env(env_file)
+    env = pi_protocol_module._pi_subprocess_env(env_file)
 
     assert env["FROM_SHELL"] == "present"
     assert env["DASHSCOPE_API_KEY"] == "dashscope-key"
@@ -654,13 +749,49 @@ def test_pi_subprocess_env_keeps_explicit_openai_settings(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    env = runner_module._pi_subprocess_env(env_file)
+    env = pi_protocol_module._pi_subprocess_env(env_file)
 
     assert env["OPENAI_API_KEY"] == "openai-key"
     assert env["OPENAI_BASE_URL"] == "https://proxy.example.com/v1"
 
 
-def test_pi_command_uses_dashscope_model_with_openai_provider(tmp_path: Path) -> None:
+def test_resolve_pi_provider_and_model_prefers_dotenv_dashscope_settings(tmp_path: Path) -> None:
+    env_file = tmp_path / ".ENV"
+    env_file.write_text(
+        "\n".join(
+            [
+                "DASHSCOPE_API_KEY=dashscope-key",
+                "DASHSCOPE_MAIN_MODEL=qwen3.5-flash",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    provider_model = pi_protocol_module._resolve_pi_provider_and_model(env_file)
+
+    assert provider_model == ("dashscope", "qwen3.5-flash")
+
+
+def test_resolve_pi_provider_and_model_allows_explicit_pi_override(tmp_path: Path) -> None:
+    env_file = tmp_path / ".ENV"
+    env_file.write_text(
+        "\n".join(
+            [
+                "DASHSCOPE_API_KEY=dashscope-key",
+                "DASHSCOPE_MAIN_MODEL=qwen3.5-flash",
+                "PI_PROVIDER=openai",
+                "PI_MODEL=gpt-4.1-mini",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    provider_model = pi_protocol_module._resolve_pi_provider_and_model(env_file)
+
+    assert provider_model == ("openai", "gpt-4.1-mini")
+
+
+def test_pi_rpc_client_uses_pi_command_with_enabled_skills(tmp_path: Path) -> None:
     env_file = tmp_path / ".ENV"
     env_file.write_text(
         "\n".join(
@@ -672,23 +803,89 @@ def test_pi_command_uses_dashscope_model_with_openai_provider(tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
-    prompt_path = tmp_path / "pi_prompt.md"
-    prompt_path.write_text("prompt", encoding="utf-8")
-
-    command = runner_module._pi_command(
+    client = pi_protocol_module.PiRpcClient.for_skills(
         pi_binary="pi",
         pi_tools="read,bash",
         enabled_skill_names=["tracking"],
-        prompt_path=prompt_path,
         env_file=env_file,
     )
+    command = client.command
 
+    assert command[0] == "pi"
+    assert "--mode" in command
+    assert "json" in command
     assert "--provider" in command
-    assert "dashscope" in command
+    assert command[command.index("--provider") + 1] == "dashscope"
     assert "--model" in command
-    assert "qwen3.5-flash" in command
+    assert command[command.index("--model") + 1] == "qwen3.5-flash"
+    assert "--tools" in command
+    tool_arg = command[command.index("--tools") + 1]
+    assert "read" in tool_arg
+    assert "bash" in tool_arg
     assert "--skill" in command
-    assert command[-1] == f"@{prompt_path}"
+    assert any(item.endswith("/skills/tracking") for item in command)
+
+
+def test_pi_rpc_client_runs_pi_and_writes_logs(monkeypatch, tmp_path: Path) -> None:
+    payload_text = json.dumps(
+        {
+            "status": "processed",
+            "skill_name": "tracking",
+            "session_result": {"behavior": "reply", "text": "ok"},
+            "latest_result_patch": None,
+            "skill_state_patch": None,
+            "user_preferences_patch": None,
+            "environment_map_patch": None,
+            "perception_cache_patch": None,
+            "robot_response": None,
+            "tool": "reply",
+            "tool_output": None,
+            "rewrite_output": None,
+            "rewrite_memory_input": None,
+            "reason": None,
+        },
+        ensure_ascii=True,
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+
+        class _Result:
+            returncode = 0
+            stdout = payload_text
+            stderr = ""
+
+        return _Result()
+
+    monkeypatch.setattr(pi_protocol_module.shutil, "which", lambda _: "/usr/bin/pi")
+    monkeypatch.setattr("agent.pi_protocol.subprocess.run", _fake_run)
+
+    request_dir = tmp_path / "artifacts" / "requests" / "sess" / "req"
+    payload = pi_protocol_module.PiRpcClient.for_skills(
+        pi_binary="pi",
+        pi_tools="read,bash",
+        enabled_skill_names=["tracking"],
+        env_file=tmp_path / ".ENV",
+    ).run_prompt(
+        prompt_text="Prompt text",
+        turn_context_path=tmp_path / "turn_context.json",
+        request_dir=request_dir,
+    )
+
+    assert payload["status"] == "processed"
+    assert payload["tool"] == "reply"
+    if "--prompt-path" in captured["command"] or "--prompt-file" in captured["command"]:
+        prompt_flag = "--prompt-path" if "--prompt-path" in captured["command"] else "--prompt-file"
+        prompt_path = Path(captured["command"][captured["command"].index(prompt_flag) + 1])
+        assert prompt_path.read_text(encoding="utf-8") == "Prompt text"
+    else:
+        prompt_arg = str(captured["command"][-1])
+        assert prompt_arg.startswith("@")
+        prompt_path = Path(prompt_arg[1:])
+        assert prompt_path.read_text(encoding="utf-8") == "Prompt text"
+    assert (request_dir / "pi_stdout.jsonl").read_text(encoding="utf-8") == payload_text
 
 
 def test_project_skill_paths_include_tracking_skill() -> None:
@@ -733,7 +930,7 @@ def test_runner_uses_session_enabled_skills_when_present(monkeypatch, tmp_path: 
             "reason": "No installed skill applies.",
         }
 
-    monkeypatch.setattr("backend.agent.runner._run_pi_turn", _fake_run_pi_turn)
+    monkeypatch.setattr("agent.runner._run_pi_turn", _fake_run_pi_turn)
 
     result = runner.process_session(
         session_id="sess_enabled_skills",
@@ -759,7 +956,7 @@ def test_runner_flattens_redundant_skill_state_wrapper(monkeypatch, tmp_path: Pa
     )
 
     monkeypatch.setattr(
-        "backend.agent.runner._run_pi_turn",
+        "agent.runner._run_pi_turn",
         lambda **_: {
             "status": "processed",
             "skill_name": "tracking",
@@ -813,7 +1010,7 @@ def test_runner_does_not_backfill_tracking_fields_from_tool_outputs(monkeypatch,
     )
 
     monkeypatch.setattr(
-        "backend.agent.runner._run_pi_turn",
+        "agent.runner._run_pi_turn",
         lambda **_: {
             "status": "processed",
             "skill_name": "tracking",
@@ -867,7 +1064,7 @@ def test_runner_processes_speech_skill_without_backend_special_case(monkeypatch,
     runner = PiAgentRunner(state_root=tmp_path / "state", enabled_skills=["speech"])
 
     monkeypatch.setattr(
-        "backend.agent.runner._run_pi_turn",
+        "agent.runner._run_pi_turn",
         lambda **_: {
             "status": "processed",
             "skill_name": "speech",
@@ -905,132 +1102,56 @@ def test_runner_processes_speech_skill_without_backend_special_case(monkeypatch,
     assert session.skills["speech"]["last_audio_path"] == "output/speech/demo.mp3"
 
 
-def test_runner_processes_web_search_skill_without_backend_special_case(monkeypatch, tmp_path: Path) -> None:
-    runner = PiAgentRunner(state_root=tmp_path / "state", enabled_skills=["web_search"])
 
-    monkeypatch.setattr(
-        "backend.agent.runner._run_pi_turn",
-        lambda **_: {
-            "status": "processed",
-            "skill_name": "web_search",
-            "session_result": {
-                "behavior": "reply",
-                "text": "我查到了 OpenAI 的官网和 ChatGPT。",
-            },
-            "latest_result_patch": None,
-            "skill_state_patch": {
-                "last_query": "OpenAI",
-                "last_results": [
-                    {"title": "OpenAI", "url": "https://openai.com/"},
-                    {"title": "ChatGPT", "url": "https://chatgpt.com/"},
-                ],
-            },
-            "user_preferences_patch": None,
-            "environment_map_patch": None,
-            "perception_cache_patch": None,
-            "robot_response": {"action": "reply", "text": "我查到了 OpenAI 的官网和 ChatGPT。"},
-            "tool": "search",
-            "tool_output": {
-                "query": "OpenAI",
-                "results": [
-                    {"title": "OpenAI", "url": "https://openai.com/"},
-                    {"title": "ChatGPT", "url": "https://chatgpt.com/"},
-                ],
-            },
-            "rewrite_output": None,
-            "reason": None,
-        },
-    )
-
-    result = runner.process_chat_request(
-        session_id="sess_search",
-        device_id="robot_01",
-        text="帮我查一下 OpenAI",
-        request_id="req_search",
-        env_file=tmp_path / ".ENV",
-        artifacts_root=tmp_path / "artifacts",
-    )
-
-    assert result["skill_name"] == "web_search"
-    assert result["tool"] == "search"
-    assert result["latest_result"]["text"] == "我查到了 OpenAI 的官网和 ChatGPT。"
-    session = runner.sessions.load("sess_search")
-    assert session.skills["web_search"]["last_query"] == "OpenAI"
-
-
-def test_runner_retries_once_when_pi_returns_no_final_payload(monkeypatch, tmp_path: Path) -> None:
+def test_runner_does_not_retry_when_pi_returns_no_final_payload(monkeypatch, tmp_path: Path) -> None:
     runner = PiAgentRunner(state_root=tmp_path / "state")
     attempts = {"count": 0}
 
     def _fake_run_pi_turn(**_: object) -> dict:
         attempts["count"] += 1
-        if attempts["count"] == 1:
-            raise ValueError("Pi did not return a valid turn payload.")
-        return {
-            "status": "processed",
-            "skill_name": "tracking",
-            "session_result": {"behavior": "reply", "text": "ok"},
-            "latest_result_patch": None,
-            "skill_state_patch": None,
-            "user_preferences_patch": None,
-            "environment_map_patch": None,
-            "perception_cache_patch": None,
-            "robot_response": None,
-            "tool": "reply",
-            "tool_output": None,
-            "rewrite_output": None,
-            "reason": None,
-        }
+        raise ValueError("Pi did not return a valid turn payload.")
 
-    monkeypatch.setattr("backend.agent.runner._run_pi_turn", _fake_run_pi_turn)
+    monkeypatch.setattr("agent.runner._run_pi_turn", _fake_run_pi_turn)
 
-    result = runner.process_chat_request(
-        session_id="sess_retry",
-        device_id="robot_01",
-        text="hi",
-        request_id="req_retry",
-        env_file=tmp_path / ".ENV",
-        artifacts_root=tmp_path / "artifacts",
-    )
+    try:
+        runner.process_chat_request(
+            session_id="sess_retry",
+            device_id="robot_01",
+            text="hi",
+            request_id="req_retry",
+            env_file=tmp_path / ".ENV",
+            artifacts_root=tmp_path / "artifacts",
+        )
+    except ValueError as exc:
+        assert "valid turn payload" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected invalid payload to be raised")
 
-    assert attempts["count"] == 2
-    assert result["status"] == "processed"
+    assert attempts["count"] == 1
 
 
-def test_runner_retries_after_pi_timeout(monkeypatch, tmp_path: Path) -> None:
+def test_runner_does_not_retry_after_pi_timeout(monkeypatch, tmp_path: Path) -> None:
     runner = PiAgentRunner(state_root=tmp_path / "state")
     attempts = {"count": 0}
 
     def _fake_run_pi_turn(**_: object) -> dict:
         attempts["count"] += 1
-        if attempts["count"] == 1:
-            raise RuntimeError("Pi timed out before returning a final payload.")
-        return {
-            "status": "processed",
-            "skill_name": "tracking",
-            "session_result": {"behavior": "reply", "text": "ok"},
-            "latest_result_patch": None,
-            "skill_state_patch": None,
-            "user_preferences_patch": None,
-            "environment_map_patch": None,
-            "perception_cache_patch": None,
-            "robot_response": None,
-            "tool": "reply",
-            "tool_output": None,
-            "rewrite_output": None,
-            "reason": None,
-        }
+        raise RuntimeError("Pi timed out before returning a final payload.")
 
-    monkeypatch.setattr("backend.agent.runner._run_pi_turn", _fake_run_pi_turn)
+    monkeypatch.setattr("agent.runner._run_pi_turn", _fake_run_pi_turn)
 
-    result = runner.process_chat_request(
-        session_id="sess_retry_timeout",
-        device_id="robot_01",
-        text="hi",
-        request_id="req_retry_timeout",
-        env_file=tmp_path / ".ENV",
-        artifacts_root=tmp_path / "artifacts",
-    )
+    try:
+        runner.process_chat_request(
+            session_id="sess_retry_timeout",
+            device_id="robot_01",
+            text="hi",
+            request_id="req_retry_timeout",
+            env_file=tmp_path / ".ENV",
+            artifacts_root=tmp_path / "artifacts",
+        )
+    except RuntimeError as exc:
+        assert "timed out" in str(exc).lower()
+    else:  # pragma: no cover
+        raise AssertionError("Expected timeout to be raised")
 
-    assert attempts["count"] == 2
-    assert result["status"] == "processed"
+    assert attempts["count"] == 1

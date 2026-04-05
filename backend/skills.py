@@ -52,10 +52,14 @@ def project_skill_paths(enabled_skills: Any = None) -> list[Path]:
 
 
 def _load_skill_viewer_module(skill_name: str):
-    viewer_module_path = ROOT / "skills" / skill_name / "viewer.py"
-    if not viewer_module_path.exists():
-        return None
-    return importlib.import_module(f"skills.{skill_name}.viewer")
+    skill_viewer_module_path = ROOT / "skills" / skill_name / "viewer.py"
+    if skill_viewer_module_path.exists():
+        return importlib.import_module(f"skills.{skill_name}.viewer")
+
+    backend_viewer_module_path = ROOT / "backend" / skill_name / "viewer.py"
+    if backend_viewer_module_path.exists():
+        return importlib.import_module(f"backend.{skill_name}.viewer")
+    return None
 
 
 def build_viewer_modules(

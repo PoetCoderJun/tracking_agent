@@ -6,10 +6,10 @@ from pathlib import Path
 
 from PIL import Image
 
-from backend.agent import AgentSessionStore
+from agent import AgentSessionStore
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 from backend.persistence import ActiveSessionStore, LiveSessionStore
-from backend.agent_viewer_stream import build_agent_viewer_payload
+from viewer.stream import build_agent_viewer_payload
 
 
 def _memory_payload() -> dict:

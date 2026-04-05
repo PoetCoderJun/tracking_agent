@@ -4,13 +4,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from backend.perception.models import CAMERA_SENSOR_NAME, PERSON_DETECTION_KIND, DerivedObservation, Observation
+from backend.perception.models import CAMERA_SENSOR_NAME, PERSON_DETECTION_KIND
 from backend.perception.recorder import PerceptionRecorder
-from backend.perception.store import PerceptionStore
 from backend.perception.stream import RobotIngestEvent
 from backend.persistence import ActiveSessionStore, LiveSessionStore
-
-_PERCEPTION_STORE_REGISTRY: dict[str, PerceptionStore] = {}
 
 
 class LocalPerceptionService:
@@ -27,11 +24,6 @@ class LocalPerceptionService:
         self._state_root = state_root
         self._store = LiveSessionStore(state_root=state_root, frame_buffer_size=frame_buffer_size)
         self._observation_window_seconds = float(observation_window_seconds)
-        registry_key = str(state_root.resolve())
-        self._perception_store = _PERCEPTION_STORE_REGISTRY.setdefault(
-            registry_key,
-            PerceptionStore(default_window_seconds=observation_window_seconds),
-        )
         self._recorder = (
             None
             if recorder_root is None
@@ -91,24 +83,7 @@ class LocalPerceptionService:
         return self.read_snapshot(event.session_id)
 
     def read_snapshot(self, session_id: str) -> Dict[str, Any]:
-        persisted = self._read_persisted_snapshot(session_id)
-        recent_camera_observations = self._recent_camera_observations_from_memory(session_id=session_id)
-        if not recent_camera_observations:
-            recent_camera_observations = list((persisted or {}).get("recent_camera_observations") or [])
-        latest_camera_observation = self._latest_camera_observation_from_memory(session_id=session_id)
-        if latest_camera_observation is None and persisted is not None:
-            latest_camera_observation = persisted.get("latest_camera_observation")
-        latest_person_detection = self._latest_person_detection_from_memory(session_id=session_id)
-        if latest_person_detection is None and persisted is not None:
-            latest_person_detection = persisted.get("latest_person_detection")
-        return {
-            "session_id": session_id,
-            "latest_camera_observation": latest_camera_observation,
-            "recent_camera_observations": recent_camera_observations,
-            "latest_person_detection": latest_person_detection,
-            "saved_keyframes": list((persisted or {}).get("saved_keyframes") or []),
-            "stream_status": dict((persisted or {}).get("stream_status") or {}),
-        }
+        return self._read_snapshot_payload(session_id) or self._empty_snapshot_payload(session_id)
 
     def read_latest_frame(self, session_id: str) -> Optional[Dict[str, Any]]:
         latest_observation = self.latest_camera_observation(session_id=session_id)
@@ -124,14 +99,11 @@ class LocalPerceptionService:
         }
 
     def latest_camera_observation(self, *, session_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        latest = self._latest_camera_observation_from_memory(session_id=session_id)
-        if latest is not None:
-            return latest
-        persisted = self._read_persisted_snapshot(self._resolve_session_id(session_id))
+        persisted = self._read_snapshot_payload(self._resolve_session_id(session_id))
         if persisted is None:
             return None
-        latest = persisted.get("latest_camera_observation")
-        return None if not isinstance(latest, dict) else dict(latest)
+        latest_observation = persisted.get("latest_camera_observation")
+        return None if not isinstance(latest_observation, dict) else dict(latest_observation)
 
     def recent_camera_observations(
         self,
@@ -139,13 +111,7 @@ class LocalPerceptionService:
         seconds: Optional[float] = None,
         session_id: Optional[str] = None,
     ) -> list[Dict[str, Any]]:
-        observations = self._recent_camera_observations_from_memory(
-            seconds=seconds,
-            session_id=session_id,
-        )
-        if observations:
-            return observations
-        persisted = self._read_persisted_snapshot(self._resolve_session_id(session_id))
+        persisted = self._read_snapshot_payload(self._resolve_session_id(session_id))
         if persisted is None:
             return []
         items = list(persisted.get("recent_camera_observations") or [])
@@ -155,43 +121,18 @@ class LocalPerceptionService:
         return [item for item in items if int(item.get("ts_ms", 0)) >= cutoff_ms]
 
     def latest_person_detection(self, *, session_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        latest = self._latest_person_detection_from_memory(session_id=session_id)
-        if latest is not None:
-            return latest
-        persisted = self._read_persisted_snapshot(self._resolve_session_id(session_id))
-        if persisted is not None and isinstance(persisted.get("latest_person_detection"), dict):
-            return dict(persisted["latest_person_detection"])
-        latest_frame = self.latest_camera_observation(session_id=session_id)
-        if latest_frame is None:
+        persisted = self._read_snapshot_payload(self._resolve_session_id(session_id))
+        if persisted is None:
             return None
-        return {
-            "id": f"detection_{latest_frame['id']}",
-            "source_id": latest_frame["id"],
-            "ts_ms": latest_frame["ts_ms"],
-            "kind": PERSON_DETECTION_KIND,
-            "sensor": CAMERA_SENSOR_NAME,
-            "payload": {"detections": list((latest_frame.get("meta") or {}).get("detections") or [])},
-            "meta": {},
-        }
+        latest_detection = persisted.get("latest_person_detection")
+        return None if not isinstance(latest_detection, dict) else dict(latest_detection)
 
     def describe_saved_state(self, *, session_id: Optional[str] = None) -> Dict[str, Any]:
         resolved_session_id = self._resolve_session_id(session_id)
-        persisted_payload = (
-            self._read_persisted_snapshot(resolved_session_id)
-            if resolved_session_id is not None
-            else None
-        )
-        recent_memory = self._recent_camera_observations_from_memory(session_id=resolved_session_id)
-        latest_memory = self._latest_camera_observation_from_memory(session_id=resolved_session_id)
-        latest_detection = self._latest_person_detection_from_memory(session_id=resolved_session_id)
+        persisted_payload = self._read_snapshot_payload(resolved_session_id)
         return {
             "state_root": str(self._state_root.resolve()),
             "session_id": resolved_session_id,
-            "in_memory": {
-                "recent_camera_observation_count": len(recent_memory),
-                "latest_camera_observation": latest_memory,
-                "latest_person_detection": latest_detection,
-            },
             "persisted": None
             if persisted_payload is None
             else {
@@ -212,14 +153,7 @@ class LocalPerceptionService:
         status: str,
         ended_at_ms: Optional[int] = None,
     ) -> Dict[str, Any]:
-        existing = self._read_persisted_snapshot(session_id) or {
-            "session_id": session_id,
-            "recent_camera_observations": [],
-            "latest_camera_observation": None,
-            "latest_person_detection": None,
-            "saved_keyframes": [],
-            "stream_status": {},
-        }
+        existing = self._read_snapshot_payload(session_id) or self._empty_snapshot_payload(session_id)
         stream_status = dict(existing.get("stream_status") or {})
         stream_status["status"] = str(status).strip() or "unknown"
         if ended_at_ms is not None:
@@ -272,16 +206,16 @@ class LocalPerceptionService:
                 ts_ms=event.frame.timestamp_ms,
                 source_path=Path(event.frame.image_path),
             )
-        observation = Observation(
-            id=event.frame.frame_id,
-            ts_ms=event.frame.timestamp_ms,
-            sensor=CAMERA_SENSOR_NAME,
-            kind="image",
-            payload={
+        observation = {
+            "id": event.frame.frame_id,
+            "ts_ms": event.frame.timestamp_ms,
+            "sensor": CAMERA_SENSOR_NAME,
+            "kind": "image",
+            "payload": {
                 "frame_id": event.frame.frame_id,
                 "image_path": str(saved_path or event.frame.image_path),
             },
-            meta={
+            "meta": {
                 "session_id": event.session_id,
                 "device_id": event.device_id,
                 "request_id": request_id,
@@ -289,74 +223,24 @@ class LocalPerceptionService:
                 "text": event.text,
                 "detections": detections,
             },
-        )
-        self._perception_store.append_observation(observation)
-        self._perception_store.append_derived(
-            DerivedObservation(
-                id=f"{event.frame.frame_id}:{PERSON_DETECTION_KIND}",
-                source_id=event.frame.frame_id,
-                ts_ms=event.frame.timestamp_ms,
-                kind=PERSON_DETECTION_KIND,
-                sensor=CAMERA_SENSOR_NAME,
-                payload={"detections": detections},
-                meta={
-                    "session_id": event.session_id,
-                    "device_id": event.device_id,
-                },
-            )
-        )
+        }
+        latest_person_detection = {
+            "id": f"{event.frame.frame_id}:{PERSON_DETECTION_KIND}",
+            "source_id": event.frame.frame_id,
+            "ts_ms": event.frame.timestamp_ms,
+            "kind": PERSON_DETECTION_KIND,
+            "sensor": CAMERA_SENSOR_NAME,
+            "payload": {"detections": detections},
+            "meta": {
+                "session_id": event.session_id,
+                "device_id": event.device_id,
+            },
+        }
         self._write_persisted_snapshot(
             session_id=event.session_id,
-            observation=self._observation_as_persisted_dict(observation),
-            latest_person_detection={
-                "id": f"{event.frame.frame_id}:{PERSON_DETECTION_KIND}",
-                "source_id": event.frame.frame_id,
-                "ts_ms": event.frame.timestamp_ms,
-                "kind": PERSON_DETECTION_KIND,
-                "sensor": CAMERA_SENSOR_NAME,
-                "payload": {"detections": detections},
-                "meta": {
-                    "session_id": event.session_id,
-                    "device_id": event.device_id,
-                },
-            },
+            observation=observation,
+            latest_person_detection=latest_person_detection,
         )
-
-    def _latest_camera_observation_from_memory(self, *, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        observations = self._recent_camera_observations_from_memory(session_id=session_id)
-        if not observations:
-            return None
-        return observations[-1]
-
-    def _recent_camera_observations_from_memory(
-        self,
-        *,
-        seconds: Optional[float] = None,
-        session_id: Optional[str] = None,
-    ) -> list[Dict[str, Any]]:
-        observations = self._perception_store.window_as_dicts(CAMERA_SENSOR_NAME, seconds=seconds)
-        if session_id is None:
-            return observations
-        return [
-            item
-            for item in observations
-            if str((item.get("meta") or {}).get("session_id", "")).strip() == session_id
-        ]
-
-    def _latest_person_detection_from_memory(self, *, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        detections = self._perception_store.window_derived_as_dicts(
-            PERSON_DETECTION_KIND,
-            sensor=CAMERA_SENSOR_NAME,
-        )
-        if session_id is not None:
-            detections = [
-                item
-                for item in detections
-                if str((item.get("meta") or {}).get("session_id", "")).strip() == session_id
-            ]
-        if not detections:
-            return None
-        return detections[-1]
 
     def _write_persisted_snapshot(
         self,
@@ -365,14 +249,7 @@ class LocalPerceptionService:
         observation: Dict[str, Any],
         latest_person_detection: Dict[str, Any],
     ) -> None:
-        existing = self._read_persisted_snapshot(session_id) or {
-            "session_id": session_id,
-            "recent_camera_observations": [],
-            "latest_camera_observation": None,
-            "latest_person_detection": None,
-            "saved_keyframes": [],
-            "stream_status": {"status": "running"},
-        }
+        existing = self._read_snapshot_payload(session_id) or self._empty_snapshot_payload(session_id)
         observations = [
             dict(item)
             for item in list(existing.get("recent_camera_observations") or [])
@@ -407,26 +284,25 @@ class LocalPerceptionService:
             encoding="utf-8",
         )
 
-    def _read_persisted_snapshot(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _read_snapshot_payload(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if session_id is None:
             return None
         snapshot_path = self._perception_snapshot_path(session_id)
         if not snapshot_path.exists():
             return None
-        try:
-            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
+        payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Invalid perception snapshot: {snapshot_path}")
         return payload if isinstance(payload, dict) else None
 
-    def _observation_as_persisted_dict(self, observation: Observation) -> Dict[str, Any]:
+    def _empty_snapshot_payload(self, session_id: str) -> Dict[str, Any]:
         return {
-            "id": observation.id,
-            "ts_ms": observation.ts_ms,
-            "sensor": observation.sensor,
-            "kind": observation.kind,
-            "payload": dict(observation.payload),
-            "meta": dict(observation.meta),
+            "session_id": session_id,
+            "recent_camera_observations": [],
+            "latest_camera_observation": None,
+            "latest_person_detection": None,
+            "saved_keyframes": [],
+            "stream_status": {},
         }
 
     def _camera_sensor_key(self, session_id: str) -> str:

@@ -97,11 +97,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${INIT_TEXT}" ]]; then
-  echo "--init-text is required" >&2
-  exit 1
-fi
-
 if [[ -z "${SESSION_ID}" ]]; then
   SESSION_ID="session_$(date -u +"%Y%m%dT%H%M%S%NZ")"
 fi
@@ -211,13 +206,13 @@ if [[ "${REALTIME_PLAYBACK}" == "1" ]]; then
   PERCEPTION_CMD+=(--realtime-playback)
 fi
 
-BACKEND_CMD=(uv run python -m scripts.run_tracking_viewer_stream
+BACKEND_CMD=(uv run python -m viewer.stream
   --state-root "${STATE_ROOT}"
   --host "${BACKEND_HOST}"
   --port "${BACKEND_PORT}"
 )
 
-AGENT_CMD=(uv run python -m scripts.run_tracking_agent
+AGENT_CMD=(uv run python -m backend.tracking.service
   --session-id "${SESSION_ID}"
   --device-id "${DEVICE_ID}"
   --state-root "${STATE_ROOT}"
@@ -240,8 +235,12 @@ if [[ "${START_FRONTEND}" == "1" ]]; then
   run_component frontend "${FRONTEND_CMD[@]}"
 fi
 
-printf '[stack] init-text: %s\n' "${INIT_TEXT}"
 printf '[stack] session-id: %s\n' "${SESSION_ID}"
+if [[ -n "${INIT_TEXT}" ]]; then
+  printf '[stack] init-text: %s\n' "${INIT_TEXT}"
+else
+  printf '[stack] init-text not provided. Start the stack first, then send one init chat turn manually.\n'
+fi
 printf '[stack] backend ws: ws://%s:%s\n' "${BACKEND_HOST}" "${BACKEND_PORT}"
 if [[ "${START_FRONTEND}" == "1" ]]; then
   printf '[stack] frontend: http://%s:%s\n' "${FRONTEND_HOST}" "${FRONTEND_PORT}"

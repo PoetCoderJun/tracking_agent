@@ -4,9 +4,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
-import re
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -34,19 +31,8 @@ from backend.perception.stream import (
 from backend.project_paths import resolve_project_path
 
 DEFAULT_PERSON_MODEL = "yolov8n.pt"
-DEFAULT_CAMERA_SOURCE = "camera"
+DEFAULT_CAMERA_SOURCE = "0"
 VIDEO_TRACK_FPS = 8.0
-CAMERA_SOURCE_ALIASES = frozenset({"camera", "builtin-camera", "default-camera"})
-PREFERRED_CAMERA_NAME_HINTS = ("built-in", "facetime", "integrated", "internal")
-DEPRIORITIZED_CAMERA_NAME_HINTS = (
-    "demo",
-    "virtual",
-    "obs",
-    "camo",
-    "continuity",
-    "iphone",
-    "desk view",
-)
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,8 +47,8 @@ def parse_args() -> argparse.Namespace:
         "--source",
         default=DEFAULT_CAMERA_SOURCE,
         help=(
-            "Video file path, camera index such as 0, or 'camera'. Defaults to the local "
-            "computer camera and avoids demo/virtual devices when detectable."
+            "Video file path or explicit camera index such as 0. "
+            "Defaults to camera index 0."
         ),
     )
     parser.add_argument(
@@ -177,68 +163,6 @@ def _load_cv2():
         ) from exc
     return cv2
 
-
-def _is_default_camera_source(raw_source: str) -> bool:
-    return str(raw_source or "").strip().lower() in CAMERA_SOURCE_ALIASES
-
-
-def _avfoundation_video_devices() -> List[tuple[int, str]]:
-    if sys.platform != "darwin":
-        return []
-    try:
-        completed = subprocess.run(
-            ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError:
-        return []
-
-    output = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
-    devices: List[tuple[int, str]] = []
-    in_video_section = False
-    for raw_line in output.splitlines():
-        line = raw_line.strip()
-        if "AVFoundation video devices:" in line:
-            in_video_section = True
-            continue
-        if "AVFoundation audio devices:" in line:
-            in_video_section = False
-            continue
-        if not in_video_section:
-            continue
-        match = re.search(r"\[(\d+)\]\s+(.+)$", line)
-        if match is None:
-            continue
-        devices.append((int(match.group(1)), match.group(2).strip()))
-    return devices
-
-
-def _preferred_camera_index() -> int:
-    devices = _avfoundation_video_devices()
-    if not devices:
-        return 0
-
-    def _name_score(name: str) -> int:
-        lowered = name.lower()
-        if any(token in lowered for token in DEPRIORITIZED_CAMERA_NAME_HINTS):
-            return 2
-        if any(token in lowered for token in PREFERRED_CAMERA_NAME_HINTS):
-            return 0
-        return 1
-
-    ranked = sorted(devices, key=lambda item: (_name_score(item[1]), item[0]))
-    return ranked[0][0]
-
-
-def _resolve_source(raw_source: str) -> Any:
-    cleaned = str(raw_source or "").strip()
-    if _is_default_camera_source(cleaned):
-        return _preferred_camera_index()
-    return normalize_source(cleaned)
-
-
 def _normalize_xyxy_bbox(bbox: List[int]) -> List[int]:
     x1, y1, x2, y2 = [int(value) for value in bbox]
     left, right = sorted((x1, x2))
@@ -305,21 +229,6 @@ def _should_emit_video_sample(
     if frame_index % sample_every != 0:
         return False
     return video_timestamp_seconds(frame_index, fps) >= next_video_emit_at
-
-
-def _configure_device_runtime(device: str | None) -> None:
-    normalized = (device or "").strip().lower()
-    if normalized != "mps":
-        return
-    if os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK"):
-        return
-    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-    print(
-        "Enabled PYTORCH_ENABLE_MPS_FALLBACK=1 for MPS unsupported ops such as torchvision NMS.",
-        file=sys.stderr,
-        flush=True,
-    )
-
 
 def _video_frame_step(fps: float, vid_stride: int) -> int:
     base_step = max(1, round(fps / VIDEO_TRACK_FPS))
@@ -568,23 +477,10 @@ async def _async_main() -> int:
         fresh_session=bool(args.fresh_session or args.session_id in (None, "")),
     )
 
-    _configure_device_runtime(args.device)
     YOLO = _load_yolo()
     model = YOLO(args.model)
 
-    source = _resolve_source(args.source)
-    if _is_default_camera_source(args.source):
-        print(
-            json.dumps(
-                {
-                    "status": "camera_source_selected",
-                    "requested_source": str(args.source),
-                    "resolved_source": source,
-                },
-                ensure_ascii=True,
-            ),
-            flush=True,
-        )
+    source = normalize_source(str(args.source).strip())
     if isinstance(source, str):
         source = str(resolve_project_path(source))
     source_is_camera = is_camera_source(source)

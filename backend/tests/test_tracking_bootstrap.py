@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import skills.tracking.bootstrap as bootstrap
+import backend.tracking.bootstrap as bootstrap
 
 
 def test_float_env_value_uses_default_for_blank_and_invalid_values() -> None:
@@ -43,6 +43,7 @@ def test_build_tracking_chat_command_targets_backend_cli_chat() -> None:
     assert command[-2:] == ["--skill", "tracking"]
     assert "--session-id" in command
     assert "sess_001" in command
+    assert "--pi-binary" in command
 
 
 def test_wait_for_first_tracking_frame_returns_resolved_session(monkeypatch, tmp_path: Path) -> None:

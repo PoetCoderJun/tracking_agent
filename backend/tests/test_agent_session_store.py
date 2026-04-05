@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.agent import AgentSessionStore
+from agent import AgentSessionStore
 
 
 def test_agent_session_store_merges_preferences_and_environment(tmp_path: Path) -> None:

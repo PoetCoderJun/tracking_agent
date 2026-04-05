@@ -3,9 +3,6 @@ from scripts.run_tracking_perception import (
     DEFAULT_PERSON_MODEL,
     VIDEO_TRACK_FPS,
     _prepare_perception_session,
-    _preferred_camera_index,
-    _resolve_source,
-    _configure_device_runtime,
     _extract_person_detections,
     _normalize_xyxy_bbox,
     _should_emit_event,
@@ -94,20 +91,6 @@ def test_parse_args_accepts_local_runtime_paths(monkeypatch) -> None:
     assert args.output_dir == "./.runtime/custom-perception"
     assert args.max_event_log_lines == 120
 
-
-def test_configure_device_runtime_enables_mps_fallback(monkeypatch, capsys) -> None:
-    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
-    _configure_device_runtime("mps")
-    assert __import__("os").environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "1"
-    assert capsys.readouterr().err
-
-
-def test_configure_device_runtime_ignores_non_mps(monkeypatch, capsys) -> None:
-    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
-    _configure_device_runtime("cpu")
-    assert not capsys.readouterr().err
-
-
 def test_normalize_xyxy_bbox_sorts_reversed_coordinates() -> None:
     assert _normalize_xyxy_bbox([384, 101, 305, 384]) == [305, 101, 384, 384]
 
@@ -174,27 +157,8 @@ def test_track_kwargs_omits_imgsz_when_not_set(monkeypatch) -> None:
 
     assert "imgsz" not in kwargs
 
-
-def test_resolve_source_prefers_builtin_camera_alias(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "scripts.run_tracking_perception._avfoundation_video_devices",
-        lambda: [(0, "Demo Video"), (1, "FaceTime HD Camera")],
-    )
-
-    assert _resolve_source("camera") == 1
-
-
-def test_preferred_camera_index_falls_back_to_zero_when_no_devices(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "scripts.run_tracking_perception._avfoundation_video_devices",
-        lambda: [],
-    )
-
-    assert _preferred_camera_index() == 0
-
-
 def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_path) -> None:
-    from backend.agent.session_store import AgentSessionStore
+    from agent.session_store import AgentSessionStore
     from backend.perception import LocalPerceptionService
 
     state_root = tmp_path / "state"
@@ -215,7 +179,7 @@ def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_pa
 
 
 def test_prepare_perception_session_resets_existing_session_when_requested(tmp_path) -> None:
-    from backend.agent.session_store import AgentSessionStore
+    from agent.session_store import AgentSessionStore
     from backend.perception import LocalPerceptionService
 
     state_root = tmp_path / "state"

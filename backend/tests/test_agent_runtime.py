@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from backend.agent import AgentSessionStore
+from agent import AgentSessionStore
 from backend.perception import (
     LocalPerceptionService,
     RobotDetection,

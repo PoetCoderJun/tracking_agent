@@ -36,6 +36,7 @@ logs/
 sessions/
 runtime/
 .runtime/
+claw/target/
 *.pt
 
 # Generated weekly deck artifacts and local media scratch files.

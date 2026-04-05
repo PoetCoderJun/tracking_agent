@@ -1,4 +1,4 @@
-from scripts.run_tracking_viewer_stream import parse_args
+from viewer.stream import parse_args
 
 
 def test_parse_args_viewer_stream(monkeypatch) -> None:
