@@ -1,5 +1,7 @@
 from backend.tracking.loop import (
     _bound_status_signature,
+    _should_allow_bound_rewrite,
+    _should_review_bound_target,
     _non_target_track_ids,
     _has_active_target,
     _next_dispatch_deadline,
@@ -158,3 +160,42 @@ def test_should_request_track_only_for_new_frames() -> None:
     assert _should_request_track_for_frame(latest_frame_id="frame_000010", last_track_frame_id="frame_000009") is True
     assert _should_request_track_for_frame(latest_frame_id="frame_000010", last_track_frame_id="frame_000010") is False
     assert _should_request_track_for_frame(latest_frame_id=None, last_track_frame_id="frame_000010") is False
+
+
+def test_should_review_bound_target_reviews_dense_then_sparse() -> None:
+    assert _should_review_bound_target(
+        has_competing_detections=True,
+        stable_bound_frames=1,
+        latest_frame_id="frame_000001",
+        last_review_frame_id=None,
+    ) is True
+    assert _should_review_bound_target(
+        has_competing_detections=True,
+        stable_bound_frames=2,
+        latest_frame_id="frame_000002",
+        last_review_frame_id="frame_000001",
+    ) is True
+    assert _should_review_bound_target(
+        has_competing_detections=True,
+        stable_bound_frames=4,
+        latest_frame_id="frame_000004",
+        last_review_frame_id="frame_000003",
+    ) is False
+    assert _should_review_bound_target(
+        has_competing_detections=True,
+        stable_bound_frames=11,
+        latest_frame_id="frame_000011",
+        last_review_frame_id="frame_000010",
+    ) is True
+    assert _should_review_bound_target(
+        has_competing_detections=False,
+        stable_bound_frames=1,
+        latest_frame_id="frame_000001",
+        last_review_frame_id=None,
+    ) is False
+
+
+def test_should_allow_bound_rewrite_requires_confirmed_stability() -> None:
+    assert _should_allow_bound_rewrite(review_confirmed=False, stable_bound_frames=10) is False
+    assert _should_allow_bound_rewrite(review_confirmed=True, stable_bound_frames=1) is False
+    assert _should_allow_bound_rewrite(review_confirmed=True, stable_bound_frames=3) is True

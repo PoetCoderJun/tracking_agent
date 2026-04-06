@@ -4,6 +4,6 @@
   "session_counts": {},
   "recent_keys": {},
   "last_injection_ts": 0,
-  "last_reason": "mode_not_allowed",
-  "last_event_at": "2026-04-02T08:27:11.073Z"
+  "last_reason": "invalid_config",
+  "last_event_at": "2026-04-06T15:03:45.836Z"
 }

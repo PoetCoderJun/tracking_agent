@@ -25,8 +25,10 @@ from backend.project_paths import PROJECT_ROOT, resolve_project_path
 from backend.tracking.context import tracking_state_snapshot
 from backend.tracking.deterministic import (
     apply_tracking_rewrite_output,
+    run_bound_tracking_memory_rewrite_sync,
     process_tracking_init_direct,
     process_tracking_request_direct,
+    tracking_missing_reference_views,
 )
 from backend.tracking.rewrite_memory import execute_rewrite_memory_tool
 
@@ -36,8 +38,11 @@ DEFAULT_TRACKER = "bytetrack.yaml"
 DEFAULT_DISTANCE_THRESHOLD_PX = 50.0
 DEFAULT_PIPELINE = "paper_stream"
 DEFAULT_TRACKER_FPS = 8.0
-DEFAULT_REBIND_AFTER_MISSED_FRAMES = 2
+DEFAULT_REBIND_AFTER_MISSED_FRAMES = 1
 DEFAULT_OBSERVATION_INTERVAL_SECONDS = 1.0
+BOUND_REVIEW_FAST_WINDOW_FRAMES = 3
+BOUND_REVIEW_SLOW_INTERVAL_FRAMES = 8
+BOUND_REWRITE_MIN_STABLE_FRAMES = 3
 VIDEO_FILENAME = "raw_video.mp4"
 LABELS_FILENAME = "labels.txt"
 
@@ -588,42 +593,68 @@ def _all_track_ids_from_detections(detections: Sequence[RobotDetection]) -> set[
     return {int(detection.track_id) for detection in detections}
 
 
-def _sequence_result_from_nullable_gt(
+def _should_review_bound_target_benchmark(
+    *,
+    has_competing_detections: bool,
+    stable_bound_frames: int,
+) -> bool:
+    if not has_competing_detections:
+        return False
+    if stable_bound_frames <= BOUND_REVIEW_FAST_WINDOW_FRAMES:
+        return True
+    return (stable_bound_frames - BOUND_REVIEW_FAST_WINDOW_FRAMES) % BOUND_REVIEW_SLOW_INTERVAL_FRAMES == 0
+
+
+def _should_allow_bound_rewrite_benchmark(
+    *,
+    review_confirmed: bool,
+    stable_bound_frames: int,
+) -> bool:
+    return review_confirmed and stable_bound_frames >= BOUND_REWRITE_MIN_STABLE_FRAMES
+
+
+def _visible_ground_truth_subset_from_label_map(
+    *,
+    label_map: Mapping[int, Sequence[int] | None],
+    allowed_frame_indices: Sequence[int],
+) -> Dict[int, List[int]]:
+    allowed = {int(frame_index) for frame_index in allowed_frame_indices}
+    filtered = {
+        int(frame_index): [int(value) for value in bbox]
+        for frame_index, bbox in label_map.items()
+        if int(frame_index) in allowed and bbox is not None
+    }
+    if not filtered:
+        raise ValueError("No visible ground-truth boxes remain after applying the tracker-frame schedule")
+    return filtered
+
+
+def _evaluate_bound_detections_visible_only(
     *,
     sequence_name: str,
-    label_map: Mapping[int, Sequence[int] | None],
+    ground_truth_by_frame: Mapping[int, Sequence[int]],
     detections_by_frame: Mapping[int, Sequence[RobotDetection]],
-    evaluated_frame_indices: Sequence[int],
-    initial_target_track_id: int | None,
-    initial_match_iou: float,
     distance_threshold_px: float,
 ) -> SequenceBenchmarkResult:
     predicted_frames = 0
     success_frames = 0
     center_distances: List[float] = []
 
-    for frame_index in list(evaluated_frame_indices):
-        gt_bbox = label_map.get(int(frame_index))
-        matching_detection = next(
-            (
-                detection
-                for detection in list(detections_by_frame.get(int(frame_index)) or [])
-            ),
-            None,
-        )
+    for frame_index in sorted(ground_truth_by_frame):
+        gt_bbox = list(ground_truth_by_frame[frame_index])
+        matching_detection = next(iter(list(detections_by_frame.get(int(frame_index)) or [])), None)
         if matching_detection is None:
             continue
         predicted_frames += 1
-        if gt_bbox is None:
-            continue
         distance = bbox_center_distance_pixels(matching_detection.bbox, gt_bbox)
         center_distances.append(distance)
         if distance < distance_threshold_px:
             success_frames += 1
 
-    evaluated_frames = len(list(evaluated_frame_indices))
+    evaluated_frames = len(list(ground_truth_by_frame))
     success_rate = 0.0 if evaluated_frames == 0 else success_frames / evaluated_frames
     mean_center_distance = None if not center_distances else sum(center_distances) / len(center_distances)
+    first_labeled_frame = min(int(frame_index) for frame_index in ground_truth_by_frame)
     return SequenceBenchmarkResult(
         name=sequence_name,
         evaluated_frames=evaluated_frames,
@@ -632,11 +663,11 @@ def _sequence_result_from_nullable_gt(
         success_rate=success_rate,
         success_rate_percent=success_rate * 100.0,
         mean_center_distance_px=mean_center_distance,
-        target_track_id=initial_target_track_id,
-        initial_match_iou=initial_match_iou,
+        target_track_id=None,
+        initial_match_iou=0.0,
         distance_threshold_px=float(distance_threshold_px),
         frame_step=1,
-        first_labeled_frame=_first_visible_frame_index(label_map),
+        first_labeled_frame=first_labeled_frame,
     )
 
 
@@ -1114,12 +1145,13 @@ def run_sequence_benchmark_rebind_fsm(
 
     detections_by_frame: Dict[int, List[RobotDetection]] = {}
     processed_frame_indices: List[int] = []
-    excluded_track_ids: set[int] = set()
     initialized = False
     recovery_mode = False
     consecutive_missed_frames = 0
-    initial_target_track_id: int | None = None
-    initial_match_iou = 0.0
+    trace_entries: List[Dict[str, object]] = []
+    last_bound_rewrite_event_index: int | None = None
+    last_bound_target_id: int | None = None
+    stable_bound_frames = 0
 
     result_stream = _results_for_video_file_at_target_fps(
         model=model,
@@ -1160,26 +1192,35 @@ def run_sequence_benchmark_rebind_fsm(
                 request_function="observation",
             )
             processed_frame_indices.append(frame_index)
+            gt_bbox = label_map.get(frame_index)
 
             if not initialized:
-                gt_bbox = label_map.get(frame_index)
                 if gt_bbox is None or frame_index < first_visible_frame:
                     detections_by_frame[frame_index] = []
+                    trace_entries.append(
+                        {
+                            "event_index": len(processed_frame_indices) - 1,
+                            "raw_frame_index": frame_index,
+                            "gt_visible": False,
+                            "candidate_track_ids": [int(d.track_id) for d in frame_detections],
+                            "current_target_id_before": None,
+                            "current_target_id_after": None,
+                            "recovery_mode_before": recovery_mode,
+                            "recovery_mode_after": recovery_mode,
+                            "consecutive_missed_before": consecutive_missed_frames,
+                            "consecutive_missed_after": consecutive_missed_frames,
+                            "track_attempted": False,
+                            "decision_after": None,
+                            "found_after": False,
+                            "distance_to_gt_after": None,
+                        }
+                    )
                     continue
                 target_track_id, _ = select_initial_target_track_id(
                     frame_detections,
                     gt_bbox,
                 )
                 if target_track_id is not None:
-                    initial_target_track_id = int(target_track_id)
-                    initial_match_iou = bbox_iou(
-                        next(
-                            detection.bbox
-                            for detection in frame_detections
-                            if int(detection.track_id) == int(target_track_id)
-                        ),
-                        gt_bbox,
-                    )
                     process_tracking_init_direct(
                         sessions=sessions,
                         session_id=session_id,
@@ -1200,12 +1241,17 @@ def run_sequence_benchmark_rebind_fsm(
             session = sessions.load(session_id, device_id=device_id)
             tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
             current_target_id = tracking_state.get("latest_target_id")
+            current_target_id_before = current_target_id
             bound_detection = _bound_detection_for_target(
                 detections=frame_detections,
                 target_id=current_target_id,
             )
+            bound_before = bound_detection is not None
+            recovery_mode_before = recovery_mode
+            consecutive_missed_before = consecutive_missed_frames
 
             track_attempted = False
+            review_attempted = False
             if initialized:
                 if recovery_mode:
                     if bound_detection is not None:
@@ -1231,7 +1277,6 @@ def run_sequence_benchmark_rebind_fsm(
                         request_id=generate_request_id(prefix="bench_track"),
                         env_file=env_file,
                         artifacts_root=artifacts_root,
-                        excluded_track_ids=sorted(excluded_track_ids),
                         append_chat_request=False,
                         apply_processed_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_with_sync_rewrite(
                             sessions=sessions,
@@ -1251,30 +1296,137 @@ def run_sequence_benchmark_rebind_fsm(
                         recovery_mode = False
                         consecutive_missed_frames = 0
 
+            review_confirmed = bound_detection is not None and not _non_target_track_ids_from_detections(
+                detections=frame_detections,
+                target_id=current_target_id,
+            )
+            if initialized and bound_detection is not None:
+                if current_target_id != last_bound_target_id:
+                    stable_bound_frames = 0
+                    last_bound_target_id = current_target_id
+                stable_bound_frames += 1
+            else:
+                stable_bound_frames = 0
+                last_bound_target_id = None
+
+            if initialized and bound_detection is not None and _should_review_bound_target_benchmark(
+                has_competing_detections=not review_confirmed,
+                stable_bound_frames=stable_bound_frames,
+            ):
+                review_attempted = True
+                process_tracking_request_direct(
+                    sessions=sessions,
+                    session_id=session_id,
+                    device_id=device_id,
+                    text=continue_text,
+                    request_id=generate_request_id(prefix="bench_review"),
+                    env_file=env_file,
+                    artifacts_root=artifacts_root,
+                    append_chat_request=False,
+                    apply_processed_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_with_sync_rewrite(
+                        sessions=sessions,
+                        session_id=session_id,
+                        pi_payload=pi_payload,
+                        env_file=env_file,
+                    ),
+                )
+                session = sessions.load(session_id, device_id=device_id)
+                tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
+                current_target_id = tracking_state.get("latest_target_id")
+                bound_detection = _bound_detection_for_target(
+                    detections=frame_detections,
+                    target_id=current_target_id,
+                )
+                review_confirmed = (
+                    (session.latest_result or {}).get("target_id") not in (None, "", [])
+                    and bound_detection is not None
+                )
+
+            if initialized and bound_detection is not None:
+                missing_views = tracking_missing_reference_views(tracking_state)
+                rewrite_gap_frames = max(1, round(tracker_fps if missing_views else tracker_fps * 2))
+                if _should_allow_bound_rewrite_benchmark(
+                    review_confirmed=review_confirmed,
+                    stable_bound_frames=stable_bound_frames,
+                ) and (last_bound_rewrite_event_index is None or (event_index - last_bound_rewrite_event_index) >= rewrite_gap_frames):
+                    if run_bound_tracking_memory_rewrite_sync(
+                        sessions=sessions,
+                        session_id=session_id,
+                        tracking_state=tracking_state,
+                        frame={
+                            "frame_id": frame_id,
+                            "image_path": str(frame_path),
+                        },
+                        detection={"bbox": list(bound_detection.bbox)},
+                        env_file=env_file,
+                        artifacts_root=artifacts_root,
+                    ):
+                        last_bound_rewrite_event_index = event_index
+                        session = sessions.load(session_id, device_id=device_id)
+                        tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
+                        current_target_id = tracking_state.get("latest_target_id")
+                        bound_detection = _bound_detection_for_target(
+                            detections=frame_detections,
+                            target_id=current_target_id,
+                        )
+
+            latest_result = (sessions.load(session_id, device_id=device_id).latest_result or {})
             if bound_detection is not None:
                 detections_by_frame[frame_index] = [bound_detection]
-                excluded_track_ids.update(
-                    _non_target_track_ids_from_detections(
-                        detections=frame_detections,
-                        target_id=current_target_id,
-                    )
-                )
             else:
                 detections_by_frame[frame_index] = []
-                if track_attempted:
-                    excluded_track_ids.update(_all_track_ids_from_detections(frame_detections))
+
+            distance_to_gt_after = None
+            if gt_bbox is not None and bound_detection is not None:
+                distance_to_gt_after = bbox_center_distance_pixels(bound_detection.bbox, gt_bbox)
+
+            trace_entries.append(
+                {
+                    "event_index": len(processed_frame_indices) - 1,
+                    "raw_frame_index": frame_index,
+                    "gt_visible": gt_bbox is not None,
+                    "gt_bbox": None if gt_bbox is None else [int(value) for value in gt_bbox],
+                    "candidate_track_ids": [int(d.track_id) for d in frame_detections],
+                    "candidate_bboxes": [
+                        {"track_id": int(d.track_id), "bbox": [int(value) for value in d.bbox]}
+                        for d in frame_detections
+                    ],
+                    "current_target_id_before": current_target_id_before,
+                    "current_target_id_after": current_target_id,
+                    "bound_before": bound_before,
+                    "bound_after": bound_detection is not None,
+                    "recovery_mode_before": recovery_mode_before,
+                    "recovery_mode_after": recovery_mode,
+                    "consecutive_missed_before": consecutive_missed_before,
+                    "consecutive_missed_after": consecutive_missed_frames,
+                    "track_attempted": track_attempted,
+                    "review_attempted": review_attempted,
+                    "decision_after": latest_result.get("decision"),
+                    "found_after": latest_result.get("found"),
+                    "latest_result_target_id": latest_result.get("target_id"),
+                    "distance_to_gt_after": distance_to_gt_after,
+                    "reason_after": str(latest_result.get("reason", "") or ""),
+                    "text_after": str(latest_result.get("text", "") or ""),
+                }
+            )
     finally:
         close = getattr(result_stream, "close", None)
         if callable(close):
             close()
 
-    return _sequence_result_from_nullable_gt(
-        sequence_name=sequence.name,
+    (run_root / "recovery_trace.json").write_text(
+        json.dumps(trace_entries, indent=2, ensure_ascii=True),
+        encoding="utf-8",
+    )
+
+    visible_ground_truth = _visible_ground_truth_subset_from_label_map(
         label_map=label_map,
+        allowed_frame_indices=processed_frame_indices,
+    )
+    return _evaluate_bound_detections_visible_only(
+        sequence_name=sequence.name,
+        ground_truth_by_frame=visible_ground_truth,
         detections_by_frame=detections_by_frame,
-        evaluated_frame_indices=processed_frame_indices,
-        initial_target_track_id=initial_target_track_id,
-        initial_match_iou=initial_match_iou,
         distance_threshold_px=distance_threshold_px,
     )
 

@@ -260,6 +260,7 @@ def build_rewrite_memory_input(
     target_id: int,
     confirmation_reason: str | None = None,
     candidate_checks: List[Dict[str, Any]] | None = None,
+    desired_reference_view: str | None = None,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "task": "init" if behavior == "init" else "update",
@@ -273,6 +274,9 @@ def build_rewrite_memory_input(
         payload["confirmation_reason"] = reason
     if candidate_checks:
         payload["candidate_checks"] = list(candidate_checks)
+    desired_view = optional_text(desired_reference_view)
+    if desired_view is not None:
+        payload["desired_reference_view"] = desired_view
     return payload
 
 
@@ -316,14 +320,12 @@ def detection_records(detections: List[Dict[str, Any]]) -> List[DetectionRecord]
 
 
 def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
-    found = bool(result.get("found", False))
+    raw_found = bool(result.get("found", False))
     target_id = result.get("bounding_box_id")
     if target_id is None:
         target_id = result.get("target_id")
     if target_id is not None:
         target_id = int(target_id)
-    if found and target_id is None:
-        raise ValueError("found=true requires bounding_box_id")
 
     needs_clarification = bool(result.get("needs_clarification", False))
     clarification_question = optional_text(result.get("clarification_question"))
@@ -337,12 +339,27 @@ def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
     text = optional_text(result.get("text"))
     if text is None:
         raise ValueError("text is required")
+
     reason = optional_text(result.get("reason"))
+    reject_reason = optional_text(result.get("reject_reason")) or ""
+
+    if decision == "track":
+        if target_id is None:
+            raise ValueError("track decision requires bounding_box_id")
+        found = True
+    else:
+        found = False
+        target_id = None
+        if decision == "wait":
+            if reason is None and reject_reason:
+                reason = reject_reason
+            if not reject_reason and reason is not None:
+                reject_reason = reason
+        if decision == "ask":
+            reject_reason = ""
+
     if reason is None:
         raise ValueError("reason is required")
-    reject_reason = optional_text(result.get("reject_reason")) or ""
-    if decision == "wait" and not reject_reason:
-        raise ValueError("wait decision requires reject_reason")
 
     return {
         "found": found and target_id is not None,
@@ -356,6 +373,33 @@ def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
         "decision": decision,
         "candidate_checks": list(result.get("candidate_checks") or []),
     }
+
+
+def _unique_matched_candidate_id(
+    *,
+    candidate_checks: List[Dict[str, Any]],
+    detections: List[DetectionRecord],
+) -> Optional[int]:
+    matched_ids: List[int] = []
+    seen: set[int] = set()
+    for item in list(candidate_checks or []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status", "")).strip() != "match":
+            continue
+        candidate_id = item.get("bounding_box_id")
+        if candidate_id in (None, ""):
+            continue
+        resolved_id = int(candidate_id)
+        if select_detection_by_track_id(detections, resolved_id) is None:
+            continue
+        if resolved_id in seen:
+            continue
+        seen.add(resolved_id)
+        matched_ids.append(resolved_id)
+    if len(matched_ids) != 1:
+        return None
+    return matched_ids[0]
 
 
 def explicit_target_result(*, target_id: int, matched: Optional[DetectionRecord], behavior: str) -> Dict[str, Any]:
@@ -401,6 +445,29 @@ def normalize_invalid_model_selection(
         return normalized
     if select_detection_by_track_id(detections, int(target_id)) is not None:
         return normalized
+
+    rescued_target_id = _unique_matched_candidate_id(
+        candidate_checks=list(normalized.get("candidate_checks") or []),
+        detections=detections,
+    )
+    if rescued_target_id is not None:
+        rescue_reason = (
+            f"模型输出的 ID {int(target_id)} 不在当前候选列表中，"
+            f"已改用 candidate_checks 中唯一 match 的当前候选 ID {rescued_target_id}。"
+        )
+        base_reason = str(normalized.get("reason", "")).strip()
+        return {
+            **normalized,
+            "found": True,
+            "target_id": rescued_target_id,
+            "bounding_box_id": rescued_target_id,
+            "decision": "track",
+            "text": "已确认继续跟踪该目标。" if behavior == "track" else "已确认目标。",
+            "reason": f"{base_reason} {rescue_reason}".strip() if base_reason else rescue_reason,
+            "reject_reason": "",
+            "needs_clarification": False,
+            "clarification_question": None,
+        }
 
     invalid_reason = f"模型返回的目标 ID {int(target_id)} 不在当前候选列表中，不能直接绑定。"
     base_reason = str(normalized.get("reason", "")).strip()
@@ -450,18 +517,10 @@ def reference_crop_assets(context: Dict[str, Any]) -> List[Dict[str, Any]]:
             seen.add(path)
         return assets
 
-    view_specific_assets = collect(
+    return collect(
         (
             ("latest_front_target_crop", "最近保存的目标正面 crop"),
             ("latest_back_target_crop", "最近保存的目标背面 crop"),
-        )
-    )
-    if view_specific_assets:
-        return view_specific_assets
-    return collect(
-        (
-            ("identity_target_crop", "身份基准 crop"),
-            ("latest_target_crop", "最近一次确认的目标 crop"),
         )
     )
 
@@ -484,7 +543,7 @@ def should_reset_reference_crops(
 
 def reference_crops_note(reference_assets: List[Dict[str, Any]]) -> str:
     if not reference_assets:
-        return "无额外历史正面/背面参考 crop。"
+        return "无可用的正面/背面参考 crop。"
     return "\n".join(f"- 第{index}张图：{asset['label']}" for index, asset in enumerate(reference_assets, start=2))
 
 
@@ -611,12 +670,8 @@ def execute_select_tool(
             reference_paths = [Path(asset["path"]) for asset in reference_assets]
             instruction = str(config["prompts"]["track_skill_prompt"]).format(
                 memory=tracking_memory_flash_prompt_text(context.get("memory", "")),
-                latest_target_id=context.get("latest_target_id"),
                 reference_crops_note=reference_crops_note(reference_assets),
                 candidates=candidate_summary(frame.get("detections", [])),
-                user_text=str(arguments.get("user_text", "")).strip() or "(无)",
-                recent_dialogue=recent_dialogue_text(list(context.get("chat_history") or [])),
-                track_note=track_note(context),
             )
             normalized, elapsed_seconds = _select_with_model(
                 settings=settings,

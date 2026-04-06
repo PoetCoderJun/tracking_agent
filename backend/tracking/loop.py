@@ -12,6 +12,7 @@ from backend.tracking.deterministic import (
     apply_processed_tracking_payload,
     process_tracking_request_direct,
     schedule_bound_tracking_memory_rewrite as _schedule_bound_tracking_memory_rewrite,
+    tracking_missing_reference_views,
 )
 from backend.perception.service import LocalPerceptionService
 from backend.perception.stream import generate_request_id
@@ -20,6 +21,9 @@ from backend.project_paths import resolve_project_path
 from backend.tracking.context import tracking_state_snapshot
 
 TRACKING_SKILL_NAME = "tracking"
+BOUND_REVIEW_FAST_WINDOW_FRAMES = 3
+BOUND_REVIEW_SLOW_INTERVAL_FRAMES = 8
+BOUND_REWRITE_MIN_STABLE_FRAMES = 3
 
 
 def parse_args() -> argparse.Namespace:
@@ -173,6 +177,29 @@ def _non_target_track_ids(frame: Dict[str, Any], target_id: int | None) -> set[i
     return track_ids
 
 
+def _has_competing_detections(frame: Dict[str, Any], target_id: int | None) -> bool:
+    return bool(_non_target_track_ids(frame, target_id))
+
+
+def _should_review_bound_target(
+    *,
+    has_competing_detections: bool,
+    stable_bound_frames: int,
+    latest_frame_id: str | None,
+    last_review_frame_id: str | None,
+) -> bool:
+    if not has_competing_detections:
+        return False
+    if not _should_request_track_for_frame(
+        latest_frame_id=latest_frame_id,
+        last_track_frame_id=last_review_frame_id,
+    ):
+        return False
+    if stable_bound_frames <= BOUND_REVIEW_FAST_WINDOW_FRAMES:
+        return True
+    return (stable_bound_frames - BOUND_REVIEW_FAST_WINDOW_FRAMES) % BOUND_REVIEW_SLOW_INTERVAL_FRAMES == 0
+
+
 def _next_dispatch_deadline(
     current_deadline: float | None,
     *,
@@ -202,6 +229,24 @@ def _should_schedule_rewrite(
     if next_rewrite_at is None:
         return True
     return now >= next_rewrite_at
+
+
+def _next_rewrite_delay_seconds(
+    *,
+    rewrite_interval_seconds: float,
+    tracking_state: Dict[str, Any],
+) -> float:
+    if tracking_missing_reference_views(tracking_state):
+        return min(rewrite_interval_seconds, 1.0)
+    return rewrite_interval_seconds
+
+
+def _should_allow_bound_rewrite(
+    *,
+    review_confirmed: bool,
+    stable_bound_frames: int,
+) -> bool:
+    return review_confirmed and stable_bound_frames >= BOUND_REWRITE_MIN_STABLE_FRAMES
 
 
 def _stream_completed(stream_status: Dict[str, Any]) -> bool:
@@ -255,9 +300,11 @@ def main() -> int:
     next_dispatch_at: float | None = None
     next_rewrite_at: float | None = None
     missing_target_id_for_track: int | None = None
-    excluded_track_ids: set[int] = set()
     last_bound_signature: tuple[str | None, int | None] | None = None
     last_track_frame_id: str | None = None
+    last_review_frame_id: str | None = None
+    last_bound_target_id: int | None = None
+    stable_bound_frames = 0
 
     while True:
         if _stop_requested(args.stop_file):
@@ -289,9 +336,11 @@ def main() -> int:
             next_dispatch_at = None
             next_rewrite_at = None
             missing_target_id_for_track = None
-            excluded_track_ids.clear()
             last_bound_signature = None
             last_track_frame_id = None
+            last_review_frame_id = None
+            last_bound_target_id = None
+            stable_bound_frames = 0
             print(
                 json.dumps(
                     {
@@ -310,9 +359,11 @@ def main() -> int:
             next_dispatch_at = None
             next_rewrite_at = None
             missing_target_id_for_track = None
-            excluded_track_ids.clear()
             last_bound_signature = None
             last_track_frame_id = None
+            last_review_frame_id = None
+            last_bound_target_id = None
+            stable_bound_frames = 0
             print(
                 json.dumps(
                     {
@@ -334,7 +385,60 @@ def main() -> int:
             next_dispatch_at = None
             missing_target_id_for_track = None
             last_track_frame_id = None
-            excluded_track_ids.update(_non_target_track_ids(latest_frame, current_target_id))
+            if current_target_id != last_bound_target_id:
+                stable_bound_frames = 0
+                last_review_frame_id = None
+                last_bound_target_id = current_target_id
+            stable_bound_frames += 1
+            review_confirmed = not _has_competing_detections(latest_frame, current_target_id)
+            latest_frame_id = str(latest_frame.get("frame_id", "")).strip() or None
+            if _should_review_bound_target(
+                has_competing_detections=not review_confirmed,
+                stable_bound_frames=stable_bound_frames,
+                latest_frame_id=latest_frame_id,
+                last_review_frame_id=last_review_frame_id,
+            ):
+                request_id = generate_request_id(prefix="track_review")
+                payload = process_tracking_request_direct(
+                    sessions=sessions,
+                    session_id=session_id,
+                    device_id=args.device_id,
+                    text=args.continue_text,
+                    request_id=request_id,
+                    env_file=env_file,
+                    artifacts_root=artifacts_root,
+                    append_chat_request=False,
+                    apply_processed_payload=lambda *, session_id, pi_payload, env_file: apply_processed_tracking_payload(
+                        sessions=sessions,
+                        session_id=session_id,
+                        pi_payload=pi_payload,
+                        env_file=env_file,
+                    ),
+                )
+                last_review_frame_id = latest_frame_id
+                context = sessions.load(session_id, device_id=args.device_id)
+                tracking_state = _tracking_state(context)
+                current_target_id = _latest_target_id(tracking_state)
+                latest_frame = _latest_frame(context)
+                bound_detection = _bound_detection(latest_frame, current_target_id)
+                review_confirmed = (
+                    dict(payload.get("session_result") or {}).get("target_id") not in (None, "", [])
+                    and bound_detection is not None
+                )
+                print(
+                    json.dumps(
+                        {
+                            "session_id": session_id,
+                            "request_id": request_id,
+                            "status": payload.get("status"),
+                            "skill_name": payload.get("skill_name"),
+                            "tool": payload.get("tool"),
+                            "robot_response": payload.get("robot_response"),
+                        },
+                        ensure_ascii=True,
+                    ),
+                    flush=True,
+                )
             current_signature = _bound_status_signature(latest_frame, current_target_id)
             if current_signature != last_bound_signature:
                 print(
@@ -369,7 +473,10 @@ def main() -> int:
                 next_rewrite_at=next_rewrite_at,
                 now=now,
             ):
-                if _schedule_bound_memory_rewrite(
+                if _should_allow_bound_rewrite(
+                    review_confirmed=review_confirmed,
+                    stable_bound_frames=stable_bound_frames,
+                ) and _schedule_bound_memory_rewrite(
                     sessions=sessions,
                     session_id=session_id,
                     tracking_state=tracking_state,
@@ -378,13 +485,19 @@ def main() -> int:
                     env_file=env_file,
                     artifacts_root=artifacts_root,
                 ):
-                    next_rewrite_at = now + args.rewrite_interval_seconds
+                    next_rewrite_at = now + _next_rewrite_delay_seconds(
+                        rewrite_interval_seconds=args.rewrite_interval_seconds,
+                        tracking_state=tracking_state,
+                    )
             time.sleep(min(args.idle_sleep_seconds, args.presence_check_seconds))
             continue
 
         now = time.monotonic()
         last_bound_signature = None
         next_rewrite_at = None
+        last_review_frame_id = None
+        last_bound_target_id = None
+        stable_bound_frames = 0
         latest_frame_id = str(latest_frame.get("frame_id", "")).strip() or None
         stream_completed = _stream_completed(stream_status)
         if stream_completed and latest_frame_id is not None and latest_frame_id == last_track_frame_id:
@@ -443,7 +556,6 @@ def main() -> int:
             request_id=request_id,
             env_file=env_file,
             artifacts_root=artifacts_root,
-            excluded_track_ids=sorted(excluded_track_ids),
             apply_processed_payload=lambda *, session_id, pi_payload, env_file: apply_processed_tracking_payload(
                 sessions=sessions,
                 session_id=session_id,
@@ -451,12 +563,6 @@ def main() -> int:
                 env_file=env_file,
             ),
         )
-        session_result = dict(payload.get("session_result") or {})
-        selected_target_id = session_result.get("target_id")
-        if selected_target_id not in (None, "", []):
-            excluded_track_ids.update(_non_target_track_ids(latest_frame, int(selected_target_id)))
-        else:
-            excluded_track_ids.update(_frame_track_ids(latest_frame))
         print(
             json.dumps(
                 {

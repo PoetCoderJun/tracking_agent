@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tracking Skill：一个 embodied cognition 的能力样例</title>
+    <title>Tracking Agent：设计思路、方法框架与下一步方向</title>
     <style>
       :root {
         --paper: #fdfcfa;
@@ -36,7 +36,7 @@
       }
 
       .page {
-        width: min(1000px, calc(100vw - 40px));
+        width: min(1080px, calc(100vw - 40px));
         min-height: calc(100vh - 32px);
         margin: 16px auto;
         padding: 56px 64px 48px;
@@ -71,31 +71,32 @@
         display: none;
       }
 
-      h1, h2, h3 {
+      h1, h2, h3, h4 {
         font-family: var(--font-display);
         font-weight: 600;
         margin: 0;
-        line-height: 1.25;
+        line-height: 1.2;
       }
 
       h1 {
-        font-size: 3.2rem;
-        letter-spacing: -0.02em;
-        color: var(--ink);
+        font-size: 3.3rem;
+        letter-spacing: -0.03em;
       }
 
       h2 {
-        font-size: 2rem;
-        margin-bottom: 0.6em;
-        color: var(--ink);
+        font-size: 2.15rem;
+        margin-bottom: 0.4em;
       }
 
       h3 {
-        font-size: 1.15rem;
-        margin-bottom: 0.5em;
+        font-size: 1.12rem;
         color: var(--accent-forest);
-        font-family: var(--font-body);
-        font-weight: 600;
+        margin-bottom: 0.45em;
+      }
+
+      h4 {
+        font-size: 1rem;
+        color: var(--ink);
       }
 
       p {
@@ -118,8 +119,8 @@
       }
 
       .lead {
-        font-size: 1.25rem;
-        line-height: 1.65;
+        font-size: 1.24rem;
+        line-height: 1.68;
         color: var(--ink-light);
         font-family: var(--font-display);
       }
@@ -129,35 +130,32 @@
       }
 
       .cover-content {
-        max-width: 720px;
-      }
-
-      .cover h1 {
-        margin-bottom: 0.4em;
+        max-width: 800px;
       }
 
       .cover-subtitle {
         font-size: 1.35rem;
-        line-height: 1.6;
+        line-height: 1.62;
         color: var(--ink-light);
-        margin-bottom: 2.5em;
-        max-width: 26em;
+        margin: 0 0 2.4em;
+        max-width: 28em;
       }
 
       .cover-meta {
-        display: flex;
-        gap: 40px;
-        font-size: 0.9rem;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 28px;
         color: var(--ink-muted);
+        font-size: 0.92rem;
       }
 
-      .cover-meta-item strong {
+      .cover-meta strong {
         display: block;
-        font-size: 0.75rem;
+        font-size: 0.76rem;
         text-transform: uppercase;
         letter-spacing: 0.1em;
         color: var(--accent);
-        margin-bottom: 4px;
+        margin-bottom: 6px;
       }
 
       .page-body {
@@ -168,8 +166,8 @@
       }
 
       .section-header {
-        margin-bottom: 2.5em;
-        max-width: 640px;
+        margin-bottom: 2.1em;
+        max-width: 760px;
       }
 
       .section-header .kicker {
@@ -178,36 +176,36 @@
 
       .two-col {
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 48px;
+        grid-template-columns: 1.04fr 0.96fr;
+        gap: 34px;
         align-items: start;
       }
 
       .three-col {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 32px;
+        gap: 20px;
       }
 
       .card {
         background: var(--highlight);
         border: 1px solid var(--line);
-        padding: 24px;
         border-radius: 4px;
+        padding: 22px;
       }
 
       .card strong {
         display: block;
+        margin-bottom: 10px;
         font-size: 0.8rem;
         text-transform: uppercase;
         letter-spacing: 0.08em;
         color: var(--accent);
-        margin-bottom: 10px;
       }
 
       .card p {
-        font-size: 0.95rem;
-        line-height: 1.7;
+        font-size: 0.94rem;
+        line-height: 1.68;
       }
 
       .card-border-top {
@@ -218,14 +216,22 @@
         border-top: 3px solid var(--accent-gold);
       }
 
-      .pull-quote {
+      .message-line {
         font-family: var(--font-display);
-        font-size: 1.5rem;
+        font-size: 1.72rem;
         line-height: 1.5;
         color: var(--ink);
-        padding-left: 24px;
+        max-width: 15em;
+      }
+
+      .pull-quote {
+        font-family: var(--font-display);
+        font-size: 1.46rem;
+        line-height: 1.52;
+        color: var(--ink);
+        padding-left: 22px;
         border-left: 3px solid var(--accent-soft);
-        margin: 1.5em 0;
+        margin: 1.3em 0 0;
       }
 
       .bullet-list {
@@ -236,8 +242,8 @@
 
       .bullet-list li {
         position: relative;
-        padding-left: 1.4em;
-        margin-bottom: 0.8em;
+        padding-left: 1.3em;
+        margin-bottom: 0.7em;
         color: var(--ink-light);
       }
 
@@ -248,35 +254,252 @@
         color: var(--accent);
       }
 
-      .compare-item {
-        padding: 20px;
-        border: 1px solid var(--line);
-        border-radius: 3px;
+      .signal-list {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 18px;
       }
 
-      .compare-item.good {
-        border-top: 3px solid var(--accent-forest);
+      .signal-item {
+        background: var(--highlight);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 14px;
+      }
+
+      .signal-item strong {
+        display: block;
+        font-size: 0.77rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        margin-bottom: 6px;
+      }
+
+      .signal-item p {
+        margin: 0;
+        font-size: 0.88rem;
+        line-height: 1.58;
+      }
+
+      .pipeline {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 14px;
+        margin: 1.3em 0 1.2em;
+      }
+
+      .pipeline-stage {
+        background: linear-gradient(180deg, #fbf8f3, #f5efe6);
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        padding: 18px 16px;
+        position: relative;
+        min-height: 212px;
+      }
+
+      .pipeline-stage::after {
+        content: "→";
+        position: absolute;
+        top: 50%;
+        right: -12px;
+        transform: translateY(-50%);
+        color: var(--accent-soft);
+        font-size: 20px;
+      }
+
+      .pipeline-stage:last-child::after {
+        content: none;
+      }
+
+      .stage-kicker {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        color: var(--accent);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+      }
+
+      .pipeline-stage p {
+        font-size: 0.86rem;
+        line-height: 1.6;
+        margin-bottom: 0.85em;
+      }
+
+      .stage-output {
+        border-top: 1px dashed var(--line-strong);
+        padding-top: 10px;
+      }
+
+      .stage-output strong {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        color: var(--accent-forest);
+        text-transform: uppercase;
+      }
+
+      .stage-output span {
+        display: block;
+        font-size: 0.8rem;
+        color: var(--ink-muted);
+        line-height: 1.55;
+      }
+
+      .visual-panel {
+        background: linear-gradient(180deg, #faf6ef, #f4eee4);
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        padding: 18px;
+      }
+
+      .visual-panel strong {
+        display: block;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        margin-bottom: 12px;
+      }
+
+      .mock-frame {
+        height: 228px;
+        border-radius: 4px;
+        border: 1px solid rgba(0,0,0,0.08);
+        background: linear-gradient(135deg, #e6ddcf, #d4c5ad);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .mock-person {
+        position: absolute;
+        border: 2px solid var(--accent-forest);
+        background: rgba(61,90,64,0.08);
+      }
+
+      .mock-person.alt {
+        border-color: var(--accent);
+        background: rgba(143,76,50,0.08);
+      }
+
+      .mock-tag {
+        position: absolute;
+        top: -22px;
+        left: 0;
+        font-size: 11px;
+        color: #fff;
+        background: var(--accent-forest);
+        padding: 2px 7px;
+        border-radius: 999px;
+      }
+
+      .mock-person.alt .mock-tag {
+        background: var(--accent);
+      }
+
+      .memory-strip {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .memory-shot {
+        height: 118px;
+        border-radius: 4px;
+        border: 1px solid rgba(0,0,0,0.08);
+        background: linear-gradient(135deg, #d5c8b6, #bda78e);
+        position: relative;
+      }
+
+      .memory-shot span {
+        position: absolute;
+        left: 10px;
+        bottom: 10px;
+        font-size: 11px;
+        color: #fff;
+        background: rgba(26,26,26,0.65);
+        padding: 3px 8px;
+        border-radius: 999px;
+        letter-spacing: 0.06em;
+      }
+
+      .real-image {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+
+      .memory-image {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+
+      .memory-placeholder {
+        height: 118px;
+        border-radius: 4px;
+        border: 1px dashed var(--line-strong);
+        background: linear-gradient(135deg, #f2ede4, #e5dccd);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 12px;
+        color: var(--ink-muted);
+        font-size: 0.84rem;
+        line-height: 1.55;
+      }
+
+      .memory-text {
+        margin-top: 12px;
+        border: 1px dashed var(--line-strong);
+        border-radius: 4px;
+        background: rgba(255,255,255,0.6);
+        padding: 12px 14px;
+        font-size: 0.9rem;
+        line-height: 1.66;
+        color: var(--ink-light);
+      }
+
+      .compare-item {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 20px;
       }
 
       .compare-item.bad {
         border-top: 3px solid var(--accent);
       }
 
+      .compare-item.good {
+        border-top: 3px solid var(--accent-forest);
+      }
+
       .compare-item strong {
         display: block;
+        margin-bottom: 8px;
         font-size: 0.8rem;
         text-transform: uppercase;
         letter-spacing: 0.08em;
-        margin-bottom: 8px;
       }
 
-      .compare-item.good strong { color: var(--accent-forest); }
-      .compare-item.bad strong { color: var(--accent); }
+      .compare-item.bad strong {
+        color: var(--accent);
+      }
+
+      .compare-item.good strong {
+        color: var(--accent-forest);
+      }
 
       .compare-item p {
-        font-size: 0.92rem;
-        line-height: 1.65;
         margin: 0;
+        font-size: 0.92rem;
+        line-height: 1.64;
       }
 
       .closing {
@@ -285,62 +508,13 @@
       }
 
       .closing-content {
-        max-width: 680px;
+        max-width: 860px;
         margin: 0 auto;
       }
 
       .closing .lead {
-        font-size: 1.4rem;
+        font-size: 1.36rem;
         color: var(--ink-light);
-      }
-
-      .flow-row {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 12px;
-        margin-top: 1.5em;
-      }
-
-      .flow-step {
-        background: var(--highlight);
-        border: 1px solid var(--line);
-        padding: 16px;
-        position: relative;
-      }
-
-      .flow-step::after {
-        content: "→";
-        position: absolute;
-        top: 50%;
-        right: -10px;
-        transform: translateY(-50%);
-        color: var(--line-strong);
-        font-size: 18px;
-      }
-
-      .flow-step:last-child::after {
-        content: none;
-      }
-
-      .flow-step .step-num {
-        font-family: var(--font-mono);
-        font-size: 11px;
-        color: var(--accent);
-        letter-spacing: 0.1em;
-        margin-bottom: 6px;
-      }
-
-      .flow-step h4 {
-        font-size: 0.95rem;
-        margin: 0 0 6px;
-        color: var(--ink);
-      }
-
-      .flow-step p {
-        font-size: 0.8rem;
-        line-height: 1.6;
-        color: var(--ink-muted);
-        margin: 0;
       }
 
       @media print {
@@ -354,22 +528,27 @@
         }
       }
 
-      @media (max-width: 900px) {
+      @media (max-width: 980px) {
         .page {
           width: calc(100vw - 24px);
           padding: 36px 28px 32px;
         }
-        h1 { font-size: 2.2rem; }
-        h2 { font-size: 1.5rem; }
-        .two-col, .three-col, .flow-row {
+        h1 { font-size: 2.35rem; }
+        h2 { font-size: 1.62rem; }
+        .cover-meta,
+        .two-col,
+        .three-col,
+        .pipeline,
+        .signal-list,
+        .memory-strip {
           grid-template-columns: 1fr;
         }
-        .flow-step::after {
+        .pipeline-stage::after {
           content: "↓";
           right: auto;
           left: 50%;
-          bottom: -14px;
           top: auto;
+          bottom: -14px;
           transform: translateX(-50%);
         }
       }
@@ -377,417 +556,251 @@
   </head>
   <body>
 
-    <!-- Page 1: Cover -->
     <section class="page cover">
       <div class="cover-content">
-        <div class="kicker">Capability Report</div>
-        <h1>Tracking Skill</h1>
+        <div class="kicker">Tracking Agent Presentation</div>
+        <h1>Tracking Agent</h1>
         <p class="cover-subtitle">
-          一个 embodied cognition 的能力样例：<br/>
-          看 System 2 如何在连续变化的物理世界中，完成"理解—绑定—跟踪—验证"的完整闭环。
+          一个把“看得快”和“想得清”接在一起的目标跟踪方案：<br/>
+          前面用高频视觉链路持续看人，后面用 Tracking Agent 负责目标理解、恢复判断和记忆延续。
         </p>
         <div class="cover-meta">
-          <div class="cover-meta-item">
-            <strong>核心挑战</strong>
-            语言必须落地到物理对象，并在时间上维持同一性
+          <div>
+            <strong>核心结论</strong>
+            跟踪难点不在看见人，而在持续确认“是不是同一个人”
           </div>
-          <div class="cover-meta-item">
-            <strong>System 2 考验</strong>
-            拆解、推理、调用工具、验证闭环
+          <div>
+            <strong>方法特点</strong>
+            高频链路负责稳定，慢思考只在关键时刻介入
           </div>
-          <div class="cover-meta-item">
-            <strong>当前形态</strong>
-            init / track / reply / wait 四种回合类型
+          <div>
+            <strong>最终目标</strong>
+            让目标跟踪真正服务于智能跟随等机器人场景
           </div>
         </div>
       </div>
       <div class="page-number">00</div>
     </section>
 
-    <!-- Page 2: Why tracking is the anchor -->
     <section class="page">
       <div class="page-body">
         <div class="section-header">
-          <div class="kicker">01 / 为什么是 Tracking</div>
-          <h2>Tracking 是 embodied cognition 的试金石</h2>
+          <div class="kicker">01 / 核心问题</div>
+          <h2>核心 message：目标跟踪真正难的不是检测，而是目标同一性</h2>
         </div>
 
-        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
-          在数字世界里，agent 验证结果的方式很简单：刷新页面，看 API 返回值，检查数据库状态。但在物理世界里，验证要困难得多——因为世界在持续流动，目标会移动、会遮挡、会消失。
-        </p>
-
-        <div class="two-col" style="margin-bottom: 32px;">
+        <div class="two-col" style="align-items: center;">
           <div>
-            <h3>Tracking 逼迫 System 2 解决真正的问题</h3>
-            <p>
-              用户说"跟踪穿黑衣服的人"，这句话对聊天机器人来说只需要一个礼貌的确认回复；但对 embodied agent 来说，它意味着一连串必须在物理世界里被回答的问题：画面里有没有这样的人？如果有，是哪<strong>一个</strong>？如何在整个视频流里<strong>持续确认是同一个人</strong>？如果他暂时被柱子挡住了，System 2 应该<strong>等待、搜索还是放弃</strong>？
+            <p class="message-line" style="margin-bottom: 1.1em;">
+              机器人真正要回答的，不是“这一帧里有谁”，而是“用户说的那个人，现在还是不是同一个人”。
             </p>
-            <p>
-              这些问题没有一个能被硬编码的状态机完美覆盖，因为真实场景的变化是无限的。这正是为什么 tracking 如此适合作为 System 2 的能力样例：它把大模型的<strong>拆解、推理、调用、验证</strong>能力全部逼到了台前。
+            <div class="signal-list">
+              <div class="signal-item">
+                <strong>真实难点</strong>
+                <p>遮挡、交叉、转身、短时离场后，身份很容易断掉。</p>
+              </div>
+              <div class="signal-item">
+                <strong>业务后果</strong>
+                <p>一旦认错人，后续跟随、导航和交互都会建立在错误目标上。</p>
+              </div>
+              <div class="signal-item">
+                <strong>为什么单靠视觉不够</strong>
+                <p>视觉会告诉你“像不像”，但不会告诉你“用户最初说的是谁”。</p>
+              </div>
+              <div class="signal-item">
+                <strong>为什么需要智能体</strong>
+                <p>必须把自然语言、历史记忆和当前画面一起放进判断里。</p>
+              </div>
+            </div>
+          </div>
+          <div class="visual-panel">
+            <strong>这一页只讲一个结论</strong>
+            <p style="font-size: 1.04rem; line-height: 1.76; color: var(--ink); margin-bottom: 0;">
+              对真实机器人来说，目标跟踪不是一个“把框画准”的问题，而是一个“能不能持续跟住用户真正指定的那个人”的问题。<br/><br/>
+              所以它天然需要三样东西一起工作：
             </p>
+            <ul class="bullet-list" style="margin-top: 14px;">
+              <li>高频视觉链路，保证系统一直看得见世界。</li>
+              <li>轻量身份证据，帮助判断是否还是同一个人。</li>
+              <li>Tracking Agent，负责在关键时刻做更高层的判断。</li>
+            </ul>
           </div>
-          <div>
-            <div class="compare-item bad" style="margin-bottom: 16px;">
-              <strong>数字 Agent 的验证</strong>
-              <p>环境状态可随时重新拉取。结果是离散的、确定的、可回退的。验证成本极低。</p>
-            </div>
-            <div class="compare-item good">
-              <strong>Tracking 的验证</strong>
-              <p>目标在连续运动，每一帧都是新的。验证必须依赖感知的持续记录和 System 2 对因果链的追踪。错误不可撤销。</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="pull-quote" style="margin: 0;">
-          "如果一个 embodied agent 做不好 tracking，那说明它从未真正在物理世界里'理解'过用户的话。"
         </div>
       </div>
       <div class="page-number">01</div>
     </section>
 
-    <!-- Page 3: Referential grounding -->
     <section class="page">
       <div class="page-body">
         <div class="section-header">
-          <div class="kicker">02 / 核心张力</div>
-          <h2>指称接地：从语言到物理对象的绑定</h2>
+          <div class="kicker">02 / 方法框架</div>
+          <h2>核心 message：方法不是单点模型，而是一条“看见 → 保持 → 判断 → 记住”的完整链路</h2>
         </div>
 
-        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
-          聊天机器人和 embodied agent 的根本分野，不在于有没有摄像头，而在于<strong>语言是否能落地到物理世界中的具体对象</strong>。用户说"穿黑衣服的人"，System 2 必须把这个语言描述绑定到画面中的某个具体个体上——这就是指称接地（referential grounding）。
-        </p>
-
-        <div class="two-col" style="margin-bottom: 32px;">
-          <div>
-            <h3>接地不是识别，而是绑定</h3>
-            <p>
-              画面里可能同时有三个人穿着深色衣服。System 2 要做的不是"识别出所有穿黑衣服的人"，而是<strong>根据用户意图和上下文，选择其中一个作为跟踪目标并绑定它的身份</strong>。这个选择可能是基于位置的（"最靠近门的那个人"）、基于时序的（"最开始出现的那个人"），或者基于用户指明的（"ID 为 3 的那个人"）。
-            </p>
-            <p>
-              一旦绑定完成，System 2 就必须在后续所有帧中维持这个绑定关系。即使目标转身、被遮挡、光线变化，System 2 都要能够基于共享状态和新的感知快照，判断"我跟踪的还是不是同一个人"。
-            </p>
+        <div class="pipeline">
+          <div class="pipeline-stage">
+            <div class="stage-kicker">01</div>
+            <h4>目标检测<br/>YOLO</h4>
+            <p>先把每一帧画面里的候选人找出来，为后续链路提供稳定输入。</p>
+            <div class="stage-output">
+              <strong>产出</strong>
+              <span>当前画面中的人框与候选列表</span>
+            </div>
           </div>
-          <div class="card" style="border-top: 3px solid var(--accent-gold);">
-            <strong>接地的三个层次</strong>
-            <ul class="bullet-list">
-              <li><strong>语义匹配：</strong>画面里有没有符合描述的候选对象？</li>
-              <li><strong>身份绑定：</strong>在众多候选中，哪一个才是用户指的那个？</li>
-              <li><strong>时序维持：</strong>在连续的视频流中，如何确认身份没有交换？</li>
-            </ul>
+          <div class="pipeline-stage">
+            <div class="stage-kicker">02</div>
+            <h4>短时跟踪<br/>ByteTrack</h4>
+            <p>把相邻画面串起来，为每个候选人保持短时间内的连续身份。</p>
+            <div class="stage-output">
+              <strong>产出</strong>
+              <span>连续轨迹、候选编号、短时位置变化</span>
+            </div>
+          </div>
+          <div class="pipeline-stage">
+            <div class="stage-kicker">03</div>
+            <h4>轻量身份辅助<br/>端侧 ReID</h4>
+            <p>在端侧补充身份线索，帮助系统在相似人之间判断“像不像同一个人”。</p>
+            <div class="stage-output">
+              <strong>产出</strong>
+              <span>相似度证据、前后视角的身份辅助线索</span>
+            </div>
+          </div>
+          <div class="pipeline-stage">
+            <div class="stage-kicker">04</div>
+            <h4>Tracking Agent<br/>高层判断</h4>
+            <p>结合用户的话、当前画面和历史记忆，决定是继续跟、等待恢复还是重新确认。</p>
+            <div class="stage-output">
+              <strong>产出</strong>
+              <span>目标判断、恢复决策、异常处理策略</span>
+            </div>
+          </div>
+          <div class="pipeline-stage">
+            <div class="stage-kicker">05</div>
+            <h4>记忆更新<br/>持续服务下一轮</h4>
+            <p>把本轮确认过的图像证据和文字记忆留下来，服务后续判断。</p>
+            <div class="stage-output">
+              <strong>产出</strong>
+              <span>目标正面图、背面图、文字摘要、历史判断</span>
+            </div>
           </div>
         </div>
 
         <div class="card" style="background: transparent; border-style: dashed;">
-          <strong>为什么接地必须发生在 System 2 里</strong>
+          <strong>这页只讲一个结论</strong>
           <p style="margin-bottom: 0;">
-            纯视觉模型可以给出"画面里有三个人"这样的检测结果，但它无法回答"用户说的'那个人'到底是指谁"。这个问题必须结合语言理解、对话上下文、空间推理和用户偏好来综合判断。这正是 System 2 的慢思考所擅长，而硬编码框架难以穷举的。
+            这套方法的价值，不在于某一个模块更强，而在于它把“高频视觉稳定性”和“高层目标判断”接成了同一条链，因此既能跑得动，又能在关键时刻做出更像人的判断。
           </p>
         </div>
       </div>
       <div class="page-number">02</div>
     </section>
 
-    <!-- Page 4: Task decomposition -->
     <section class="page">
       <div class="page-body">
         <div class="section-header">
-          <div class="kicker">03 / 任务拆解</div>
-          <h2>System 2 如何把"跟踪"拆成可验证的步骤</h2>
+          <div class="kicker">03 / 模型看到什么</div>
+          <h2>核心 message：Tracking Agent 不只看当前画面，还会带着目标记忆一起判断</h2>
         </div>
 
-        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
-          "跟踪"听起来是一个动作，但在 embodied 场景中，它实际上是由多个语义阶段构成的连续任务。System 2 必须能够自主地把用户的高层指令拆解成这些阶段，并在每一阶段完成后验证进度。
+        <p class="lead" style="max-width: 780px; margin-bottom: 1.6em;">
+          这里最大的不同是：Tracking Agent 不是只看一张当前图，而是把“用户最初说的话”“当前画面上的候选人”“目标之前长什么样”“最近几轮发生了什么”一起放进判断里。所以它更像是在“理解一个目标”，而不是在“做一次图片分类”。
         </p>
 
-        <div class="flow-row" style="margin-bottom: 32px;">
-          <div class="flow-step">
-            <div class="step-num">STEP 01</div>
-            <h4>理解意图</h4>
-            <p>解析用户描述，确定目标特征、空间约束或候选 ID。</p>
+        <div class="two-col" style="margin-bottom: 24px;">
+          <div class="visual-panel">
+            <strong>输入一：当前工作画面</strong>
+            <img
+              class="real-image"
+              src="../.runtime/report-viewer/artifacts/viewer_stage_frame_000019.png"
+              alt="viewer 真实工作画面"
+            />
+            <div class="memory-text">
+              这里直接展示的是 viewer 的真实工作画面。可以清楚看到：在多人、易混淆的场景里，系统最终锁定的是前景中背对镜头的 `14` 号候选目标。
+            </div>
           </div>
-          <div class="flow-step">
-            <div class="step-num">STEP 02</div>
-            <h4>搜索候选</h4>
-            <p>观察当前感知快照，在画面中寻找匹配描述的候选对象。</p>
-          </div>
-          <div class="flow-step">
-            <div class="step-num">STEP 03</div>
-            <h4>确认绑定</h4>
-            <p>在多个候选中选定唯一目标，建立跟踪身份并写入状态。</p>
-          </div>
-          <div class="flow-step">
-            <div class="step-num">STEP 04</div>
-            <h4>持续跟踪</h4>
-            <p>在多轮对话或事件驱动中持续观察目标位置和运动。</p>
-          </div>
-          <div class="flow-step">
-            <div class="step-num">STEP 05</div>
-            <h4>验证闭环</h4>
-            <p>每轮结束后确认目标是否仍在、是否跟丢、是否需要修正。</p>
+
+          <div class="visual-panel">
+            <strong>输入二：目标记忆</strong>
+            <div class="memory-strip">
+              <div style="position: relative;">
+                <img
+                  class="memory-image"
+                  src="../.runtime/report-viewer/artifacts/sessions/report_viewer/reference_crops/frame_000019_id_14.jpg"
+                  alt="真实目标背身图像记忆"
+                />
+              </div>
+              <div style="position: relative;">
+                <img
+                  class="memory-image"
+                  src="../.runtime/report-viewer/artifacts/sessions/report_viewer/reference_crops/frame_000029_id_6.jpg"
+                  alt="真实目标正面图像记忆"
+                />
+              </div>
+            </div>
+            <div class="memory-text">
+              真实文字记忆摘录：<br/>
+              男性，戴眼镜，穿黑色圆领短袖T恤与卡其色运动短裤，脚穿白色运动鞋和白色中筒袜；正面可见胸前白色小标识。与相似人的关键区别是短裤颜色与长度，以及上衣前胸的小标识。<br/><br/>
+              这组前后图来自同一条真实会话：左图是多人场景里第一次锁定目标时的背身视角，右图是后续继续跟踪后重新确认到的正面视角。
+            </div>
           </div>
         </div>
 
-        <div class="two-col">
-          <div class="card card-border-top">
-            <strong>硬编码框架的问题</strong>
-            <p style="margin-bottom: 0;">
-              传统方式会把上述五步写成一个固定状态机。但当用户说"切换到另一个人"或"先找到他再跟着"时，状态机就会出现未定义的跳转。System 2 的优势在于，大模型可以根据语言理解灵活地跳过、重复或重排这些步骤。
-            </p>
+        <div class="signal-list">
+          <div class="signal-item">
+            <strong>语言输入</strong>
+            <p>用户最初怎么描述这个人，例如“穿黑衣服的人”“刚进门的那个人”。</p>
           </div>
-          <div class="card card-border-gold">
-            <strong>System 2 的优势</strong>
-            <p style="margin-bottom: 0;">
-              大模型自主判断当前处于哪个阶段、下一步该做什么。它可以在 init 之后直接 track，也可以在用户提问时切换到 reply，还可以在不确定时选择 wait。拆解的灵活性来自语言理解，而不是框架预设的跳转表。
-            </p>
+          <div class="signal-item">
+            <strong>视觉输入</strong>
+            <p>当前画面中有哪些候选人，每个候选人在哪里、看起来像谁。</p>
+          </div>
+          <div class="signal-item">
+            <strong>图像记忆</strong>
+            <p>此前已经确认过的目标正面和背面证据，用于后续比对。</p>
+          </div>
+          <div class="signal-item">
+            <strong>文字记忆</strong>
+            <p>目标特征、最近位置变化、最近几轮判断结果和关键线索。</p>
           </div>
         </div>
       </div>
       <div class="page-number">03</div>
     </section>
 
-    <!-- Page 5: Init turn -->
-    <section class="page">
-      <div class="page-body">
-        <div class="section-header">
-          <div class="kicker">04 / Init 回合</div>
-          <h2>从自然语言到物理对象的首次绑定</h2>
-        </div>
-
-        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
-          <code>init</code> 回合是 tracking 中最关键的一步。它不是"开始运行某个跟踪程序"，而是<strong>System 2 在物理世界里完成第一次指称接地</strong>：把用户说的"穿黑衣服的人"，绑定到画面中的某个具体 track_id 上。
-        </p>
-
-        <div class="two-col" style="margin-bottom: 32px;">
-          <div>
-            <h3>Init 的本质是决策，不是启动</h3>
-            <p>
-              很多系统把"init"理解为一个简单的启动信号：用户说开始跟踪，系统就打开跟踪器。但在我们的设计里，init 是一个<strong>认知动作</strong>。System 2 必须读取当前感知快照，结合用户的语言描述，在众多检测候选中做出选择，然后把选定的目标身份写入共享状态。
-            </p>
-            <p>
-              这个决策不能交给一个硬编码的匹配规则来完成，因为用户的描述可能是模糊的（"那个高的人"）、时序依赖的（"刚刚走进来的那个人"）、或需要对话上下文来消歧的。这些都需要 System 2 的慢思考。
-            </p>
-          </div>
-          <div>
-            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-gold);">
-              <strong>Init 回合的输出</strong>
-              <ul class="bullet-list">
-                <li>选定的目标 track_id</li>
-                <li>目标的语言描述（供后续验证使用）</li>
-                <li>确认帧和截图（作为绑定的视觉证据）</li>
-                <li>写入共享状态的跟踪记忆</li>
-              </ul>
-            </div>
-            <div class="pull-quote" style="margin: 0; font-size: 1.25rem;">
-              "init 不是打开开关，而是在物理世界里写下'我决定跟踪谁'。"
-            </div>
-          </div>
-        </div>
-
-        <div class="card" style="background: transparent; border-style: dashed;">
-          <strong>为什么 init 不能交给纯视觉模型独立完成</strong>
-          <p style="margin-bottom: 0;">
-            视觉模型可以检测画面中的所有人，但它无法判断"用户想要的是哪一个"。这个判断必须依赖语言理解、对话历史和用户偏好——这正是大模型在 System 2 里承担的职责。所以 init 回合的设计是：System 2 做选择决策，确定性脚本执行绑定和状态写入，两者分工明确。
-          </p>
-        </div>
-      </div>
-      <div class="page-number">04</div>
-    </section>
-
-    <!-- Page 6: Track turn -->
-    <section class="page">
-      <div class="page-body">
-        <div class="section-header">
-          <div class="kicker">05 / Track 回合</div>
-          <h2>持续跟踪是不断验证的循环</h2>
-        </div>
-
-        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
-          当目标已经绑定后，用户可能会说"继续跟踪"。这不是一个新的决策，而是要求 System 2 进入<strong>验证循环</strong>：确认之前绑定的目标是否还在画面中、位置是否合理、身份是否没有交换。
-        </p>
-
-        <div class="two-col" style="margin-bottom: 32px;">
-          <div>
-            <h3>Track 回合的核心问题是验证</h3>
-            <p>
-              在 track 回合中，System 2 读取最新的感知快照和跟踪状态，判断目标是否仍然可识别。如果目标清晰可见，它更新位置信息并继续跟踪；如果目标被遮挡或短暂离开画面，它可能需要基于历史轨迹做预测；如果目标完全丢失或身份发生混淆，它则需要进入恢复或等待状态。
-            </p>
-            <p>
-              每一轮 track 都不是盲目的重复，而是<strong>带验证条件的观察</strong>。System 2 必须在每一轮结束时给出一个明确的判断：found / not found / uncertain。这个判断将成为下一轮决策的基础，也可能触发语音反馈给用户。
-            </p>
-          </div>
-          <div>
-            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-forest);">
-              <strong>Track 回合的判断空间</strong>
-              <ul class="bullet-list">
-                <li><strong>继续跟踪：</strong>目标清晰可见，更新位置，保持跟踪。</li>
-                <li><strong>等待恢复：</strong>目标暂时丢失，但可能重现，保持记忆等待。</li>
-                <li><strong>请求澄清：</strong>画面中出现多个相似目标，System 2 不确定跟谁。</li>
-              </ul>
-            </div>
-            <div class="pull-quote" style="margin: 0; font-size: 1.25rem;">
-              "每一轮 track，System 2 都在回答同一个问题：我绑定的那个对象，现在还在不在？"
-            </div>
-          </div>
-        </div>
-
-        <div class="card" style="background: transparent; border-style: dashed;">
-          <strong>持续跟踪考验的是状态一致性</strong>
-          <p style="margin-bottom: 0;">
-            track 回合的有效性完全依赖于共享状态里的绑定信息。如果 init 回合没有正确写入目标 ID、确认帧和描述，track 回合就会变成无头苍蝇。反过来，这也说明了为什么状态外化如此重要：System 2 的工作记忆（上下文窗口）会刷新，但外部记忆里的绑定关系是持续的、可靠的。
-          </p>
-        </div>
-      </div>
-      <div class="page-number">05</div>
-    </section>
-
-    <!-- Page 7: Recovery & uncertainty -->
-    <section class="page">
-      <div class="page-body">
-        <div class="section-header">
-          <div class="kicker">06 / 异常处理</div>
-          <h2>当目标丢失时，System 2 该做什么</h2>
-        </div>
-
-        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
-          在真实环境中，跟踪失败是常态而非例外。目标可能被障碍物遮挡，可能走出视野，也可能因为光线变化导致检测器漏检。System 2 不能简单地报错退出，它必须像人类一样做出合理的推断和应对。
-        </p>
-
-        <div class="two-col" style="margin-bottom: 32px;">
-          <div>
-            <h3>Wait 不是放弃，而是有根据的暂停</h3>
-            <p>
-              当 System 2 发现目标暂时不在画面中时，它面临几种选择：立刻宣布跟丢、盲目地搜索画面、或者基于历史信息判断"目标可能很快会重新出现"。在我们的设计中，<code>wait</code> 回合代表第三种选择：System 2 选择保持当前跟踪记忆，等待感知层在后续帧中重新发现目标。
-            </p>
-            <p>
-              这个决策需要推理：目标之前是向画面边缘移动的吗？它消失的位置附近有没有障碍物？当前的场景是否支持目标很快重现？这些判断无法被硬编码规则穷尽，但可以通过大模型对共享状态和感知快照的综合阅读来完成。
-            </p>
-          </div>
-          <div>
-            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent);">
-              <strong>System 2 的三种异常应对</strong>
-              <ul class="bullet-list">
-                <li><strong>Wait：</strong>基于历史轨迹判断目标可能重现，保持记忆等待。</li>
-                <li><strong>Ask：</strong>画面中出现多个候选，向用户请求澄清以重新绑定。</li>
-                <li><strong>Fail：</strong>目标长时间丢失且无可信恢复路径，向用户报告失败。</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        <div class="card" style="background: transparent; border-style: dashed;">
-          <strong>异常处理体现的是信念维持能力</strong>
-          <p style="margin-bottom: 0;">
-            硬编码系统在遇到未定义状态时通常会崩溃或陷入循环。而 System 2 的优势在于，它可以在不确定的环境中<strong>维持信念、评估置信度、并在信息不足时选择最小伤害的应对策略</strong>。wait 不是无能，而是对物理世界不确定性的合理尊重。
-          </p>
-        </div>
-      </div>
-      <div class="page-number">06</div>
-    </section>
-
-    <!-- Page 8: State design -->
-    <section class="page">
-      <div class="page-body">
-        <div class="section-header">
-          <div class="kicker">07 / 状态设计</div>
-          <h2>Tracking 为什么需要外部记忆</h2>
-        </div>
-
-        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
-          Tracking 是一个跨越多个 turn 的连续任务。用户可能在第 1 轮说"跟踪那个人"，在第 5 轮说"继续跟踪"，在第 12 轮问"他还在吗？"如果每一轮都从零开始重新理解任务，System 2 就无法建立起任何连续性。
-        </p>
-
-        <div class="two-col" style="margin-bottom: 32px;">
-          <div>
-            <h3>跟踪状态是 System 2 的笔记本</h3>
-            <p>
-              在 tracking 的共享状态中，有几个关键信息必须被显式保存：当前绑定的目标 ID、用于确认身份的参考帧和截图、用户最初的语言描述、以及最新的跟踪记忆。这些信息构成了 System 2 对"我正在跟踪谁"这一信念的外部支撑。
-            </p>
-            <p>
-              当 System 2 进程重启、超时重试，或者被新的对话事件触发时，它不需要重新猜测用户的意图。它只需要从共享状态中读取这本笔记，就能立即恢复对当前任务的理解。这让它能够像人类一样，在被打断后继续未完成的工作。
-            </p>
-          </div>
-          <div>
-            <div class="card" style="border-top: 3px solid var(--accent-forest);">
-              <strong>Tracking 状态的关键切片</strong>
-              <ul class="bullet-list">
-                <li><strong>latest_target_id：</strong>当前绑定目标的唯一标识。</li>
-                <li><strong>target_description：</strong>用户最初的语言描述，供后续验证使用。</li>
-                <li><strong>latest_confirmed_frame / crop：</strong>绑定目标的视觉证据。</li>
-                <li><strong>latest_memory：</strong>跟踪历史的文本摘要，供大模型快速恢复上下文。</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        <div class="pull-quote" style="margin: 0;">
-          "没有外部记忆的 tracking，就像让人在每次眨眼后都重新辨认自己的朋友。"
-        </div>
-      </div>
-      <div class="page-number">07</div>
-    </section>
-
-    <!-- Page 9: Relationship to kernel -->
-    <section class="page">
-      <div class="page-body">
-        <div class="section-header">
-          <div class="kicker">08 / 与内核的关系</div>
-          <h2>Tracking 是一个 tool，不是框架的一部分</h2>
-        </div>
-
-        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
-          这是理解整个设计最关键的一点：tracking 的实现并没有被编织进 runner 或内核的框架逻辑里。它是一个独立的 skill，通过标准 CLI 暴露给 System 2 调用。runner 不知道 tracking 内部是如何工作的，它只知道 System 2 在某一轮决定调用 tracking tool，并且这个 tool 返回了结构化的结果。
-        </p>
-
-        <div class="two-col" style="margin-bottom: 32px;">
-          <div>
-            <h3>Tool 与框架的解耦</h3>
-            <p>
-              在传统的 embodied agent 系统中，tracking 常常被当作框架的内置能力：框架负责启动感知、启动跟踪器、维护跟踪状态、并在适当时机把结果塞给大模型。这样做的结果是框架越来越重，tracking 的边界也越来越模糊。
-            </p>
-            <p>
-              在我们的设计里，这个过程被颠倒了：<strong>System 2 决定何时调用 tracking tool</strong>，tracking tool 只负责执行本轮的 init 或 track 逻辑并返回结果。状态的写入、下一轮的触发、异常的处理，都由 System 2 在 runner 提供的空间里自主完成。
-            </p>
-          </div>
-          <div>
-            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-gold);">
-              <strong>Tracking 的 tool 契约</strong>
-              <ul class="bullet-list">
-                <li>只处理单轮请求（init 或 track），不维护长期运行循环。</li>
-                <li>读取 runner 提供的共享状态和感知上下文。</li>
-                <li>返回结构化 JSON，包含目标信息、决策和状态补丁。</li>
-                <li>不直接向机器人发指令，所有动作建议由 runner 把关。</li>
-              </ul>
-            </div>
-            <div class="pull-quote" style="margin: 0; font-size: 1.25rem;">
-              "tracking 不是框架在为大模型服务，而是大模型在把 tracking 当作一个可用的身体能力。"
-            </div>
-          </div>
-        </div>
-
-        <div class="card" style="background: transparent; border-style: dashed;">
-          <strong>这种解耦的意义</strong>
-          <p style="margin-bottom: 0;">
-            它意味着未来替换 tracking 的实现（比如换一个检测器、换一个跟踪算法），不需要改动 runner 或 System 2 的内核逻辑。只要新的实现遵守同样的 CLI 接口和返回契约，System 2 就可以无缝地继续调用它。这是<strong>能力可替换、框架不膨胀</strong>的关键。
-          </p>
-        </div>
-      </div>
-      <div class="page-number">08</div>
-    </section>
-
-    <!-- Page 10: Closing -->
     <section class="page closing">
       <div class="closing-content">
-        <div class="kicker" style="color: var(--accent);">Closing Note</div>
-        <h2 style="margin-bottom: 0.6em;">Tracking 的价值，<br/>在于它暴露了 embodied System 2 的全部张力。</h2>
+        <div class="kicker" style="color: var(--accent);">04 / 为什么有效与下一步</div>
+        <h2 style="margin-bottom: 0.6em;">核心 message：这套方法的优势是“平时省、关键时刻准”，下一步要把它做得更稳、更能落到场景里。</h2>
+
+        <div class="two-col" style="text-align: left; margin-top: 2em; margin-bottom: 2em;">
+          <div>
+            <h3>为什么这条路是对的</h3>
+            <p>
+              这套方法把绝大多数简单时刻交给高频视觉链路，把真正容易出错的边界时刻交给 Tracking Agent。这样做的好处是：平时不浪费高成本推理，关键时刻又能把自然语言、视觉证据和历史记忆一起拉进来做判断。
+            </p>
+            <h3 style="margin-top: 1.4em;">当前还差什么</h3>
+            <p>
+              目前系统已经能在真实链路里发生目标重确认和短时恢复，但还存在两个不足：一是有时会保守等待太久，二是重新找回后还不够稳。这意味着方法方向是对的，但证据强度和后续维持还要继续加强。
+            </p>
+          </div>
+          <div>
+            <h3>下一步方法演进</h3>
+            <p>
+              继续增强目标恢复能力，把轻量身份特征、目标正反面视觉记忆和时序约束结合得更紧，让系统在遮挡、交叉和短时离场时更快、更稳地把人找回来。
+            </p>
+            <h3 style="margin-top: 1.4em;">下一步场景落地</h3>
+            <p>
+              继续把 Tracking Agent 与后续跟随、导航等执行链路打通，让它从“能判断跟谁”走向“能稳定支撑完整的智能跟随场景”。
+            </p>
+          </div>
+        </div>
+
         <p class="lead">
-          从语言的 grounding 到物理对象的绑定，从单次决策到跨轮验证，从正常运行到异常恢复——tracking 把一个抽象的"慢思考"理念，变成了一个个必须在现实里被回答的具体问题。
-        </p>
-        <p style="color: var(--ink-muted); margin-top: 2em;">
-          当我们说 System 2 能够拆解、思考、调用、验证时，<br/>
-          tracking 就是这一切的第一块试金石。
+          对老板来说，可以把 Tracking Agent 理解为一个“会判断、会记住、会保守处理异常”的目标跟踪层。<br/>
+          它不是替代前面的视觉链路，而是把前面的“看得见”真正升级成后面的“跟得住”。
         </p>
       </div>
-      <div class="page-number">09</div>
+      <div class="page-number">04</div>
     </section>
 
   </body>

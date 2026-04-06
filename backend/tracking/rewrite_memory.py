@@ -110,6 +110,29 @@ def _normalize_candidate_checks(value: Any) -> list[Dict[str, Any]]:
     return normalized
 
 
+def _reference_view_goal_prompt_text(value: Any) -> str:
+    goal = str(value or "").strip().lower()
+    if goal == "front":
+        return (
+            "当前系统缺少可靠的正面锚点。"
+            " 若当前 crop 清晰展示正面，请优先补齐 front_view，并将 reference_view 设为 front；"
+            " 如果当前不是清晰正面，只能返回 unknown，不能为了补齐正面而脑补。"
+        )
+    if goal == "back":
+        return (
+            "当前系统缺少可靠的背面锚点。"
+            " 若当前 crop 清晰展示背面，请优先补齐 back_view，并将 reference_view 设为 back；"
+            " 如果当前不是清晰背面，只能返回 unknown，不能因为看不到正面就把背影视角判成 conflict。"
+        )
+    if goal == "any":
+        return (
+            "当前系统的正面/背面锚点尚未补齐。"
+            " 如果当前 crop 清晰展示正面，就优先补齐 front；如果清晰展示背面，就优先补齐 back；"
+            " 如果视角不明，只能返回 unknown。"
+        )
+    return ""
+
+
 def _candidate_checks_prompt_text(candidate_checks: list[Dict[str, Any]]) -> str:
     if not candidate_checks:
         return "[]"
@@ -141,11 +164,14 @@ def execute_rewrite_memory_tool(
     prompt_key = "memory_init_prompt" if task == "init" else "memory_optimize_prompt"
     confirmation_reason = _optional_text(arguments.get("confirmation_reason"))
     candidate_checks = _normalize_candidate_checks(arguments.get("candidate_checks"))
+    reference_view_goal = _reference_view_goal_prompt_text(arguments.get("desired_reference_view"))
     prompt = str(config["prompts"][prompt_key]).format(
         current_memory=tracking_memory_prompt_text(previous_memory),
         confirmation_reason=confirmation_reason or "(none)",
         candidate_checks=_candidate_checks_prompt_text(candidate_checks),
     )
+    if reference_view_goal:
+        prompt = f"{reference_view_goal}\n\n{prompt}"
     output = call_model(
         api_key=settings.api_key,
         base_url=settings.base_url,

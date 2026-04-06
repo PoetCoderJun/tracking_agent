@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-id", type=int, required=True)
     parser.add_argument("--confirmation-reason", default="")
     parser.add_argument("--candidate-checks-json", default="")
+    parser.add_argument("--desired-reference-view", default="")
     parser.add_argument("--env-file", default=".ENV")
     return parser.parse_args()
 
@@ -74,6 +75,7 @@ def main() -> int:
                 "target_id": int(args.target_id),
                 "confirmation_reason": args.confirmation_reason,
                 "candidate_checks": args.candidate_checks_json,
+                "desired_reference_view": args.desired_reference_view,
             },
             env_file=Path(args.env_file),
         )

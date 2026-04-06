@@ -10,6 +10,8 @@ from agent.session_store import AgentSessionStore
 from backend.perception.service import LocalPerceptionService
 from backend.project_paths import resolve_project_path
 from backend.tracking.context import build_tracking_context
+from backend.tracking.memory import normalize_tracking_memory
+from backend.tracking.rewrite_memory import execute_rewrite_memory_tool
 from backend.tracking.select import (
     build_rewrite_memory_input,
     ensure_session_dirs,
@@ -22,6 +24,27 @@ from backend.tracking.payload import build_tracking_turn_payload, ensure_rewrite
 
 ROOT = Path(__file__).resolve().parents[2]
 TRACKING_SKILL_NAME = "tracking"
+
+
+def tracking_missing_reference_views(tracking_state: Dict[str, Any]) -> list[str]:
+    latest_memory = normalize_tracking_memory(tracking_state.get("latest_memory", {}))
+    missing: list[str] = []
+    if not str(tracking_state.get("latest_front_target_crop", "") or "").strip() or not str(latest_memory.get("front_view", "") or "").strip():
+        missing.append("front")
+    if not str(tracking_state.get("latest_back_target_crop", "") or "").strip() or not str(latest_memory.get("back_view", "") or "").strip():
+        missing.append("back")
+    return missing
+
+
+def desired_reference_view_goal(tracking_state: Dict[str, Any]) -> str:
+    missing_views = tracking_missing_reference_views(tracking_state)
+    if missing_views == ["front"]:
+        return "front"
+    if missing_views == ["back"]:
+        return "back"
+    if missing_views:
+        return "any"
+    return ""
 
 
 def _rewrite_memory_paths(request: Dict[str, Any]) -> tuple[Optional[str], list[str]]:
@@ -192,6 +215,9 @@ def schedule_tracking_memory_rewrite(
     candidate_checks = rewrite_memory_input.get("candidate_checks")
     if isinstance(candidate_checks, list) and candidate_checks:
         command.extend(["--candidate-checks-json", json.dumps(candidate_checks, ensure_ascii=False)])
+    desired_reference_view = rewrite_memory_input.get("desired_reference_view")
+    if desired_reference_view not in (None, ""):
+        command.extend(["--desired-reference-view", str(desired_reference_view)])
     for frame_path in frame_paths:
         command.extend(["--frame-path", frame_path])
 
@@ -262,8 +288,78 @@ def schedule_bound_tracking_memory_rewrite(
             ),
             frame_id=frame_id,
             target_id=int(target_id),
+            desired_reference_view=desired_reference_view_goal(tracking_state),
         ),
         env_file=env_file,
+    )
+    return True
+
+
+def run_bound_tracking_memory_rewrite_sync(
+    *,
+    sessions: AgentSessionStore,
+    session_id: str,
+    tracking_state: Dict[str, Any],
+    frame: Dict[str, Any],
+    detection: Dict[str, Any],
+    env_file: Path,
+    artifacts_root: Path,
+) -> bool:
+    image_path = str(frame.get("image_path", "")).strip()
+    frame_id = str(frame.get("frame_id", "")).strip()
+    if not image_path or not frame_id:
+        return False
+
+    target_id = tracking_state.get("latest_target_id")
+    if target_id in (None, "", []):
+        return False
+
+    bbox = detection.get("bbox")
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        return False
+
+    persisted_current_frame_path = resolve_project_path(image_path)
+    if not persisted_current_frame_path.exists():
+        return False
+
+    session_dirs = ensure_session_dirs(artifacts_root, session_id)
+    crop_path = session_dirs["crops_dir"] / f"{persisted_current_frame_path.stem}_id_{target_id}.jpg"
+    save_target_crop(persisted_current_frame_path, bbox, crop_path)
+    confirmed_frame_path = persist_reference_frame(
+        persisted_current_frame_path,
+        session_dirs["frames_dir"] / f"{persisted_current_frame_path.stem}.jpg",
+    )
+    sessions.patch_skill_state(
+        session_id,
+        skill_name=TRACKING_SKILL_NAME,
+        patch={
+            "latest_target_id": int(target_id),
+            "latest_confirmed_frame_path": str(confirmed_frame_path),
+            "latest_confirmed_bbox": [int(value) for value in bbox],
+            "latest_target_crop": str(crop_path),
+        },
+    )
+    session = sessions.load(session_id)
+    rewrite_output = execute_rewrite_memory_tool(
+        session_file=Path(session.state_paths["session_path"]),
+        arguments=build_rewrite_memory_input(
+            behavior="track",
+            crop_path=crop_path,
+            frame_paths=rewrite_memory_frame_paths(
+                behavior="track",
+                current_frame_path=confirmed_frame_path,
+                latest_confirmed_frame_path=tracking_state.get("latest_confirmed_frame_path"),
+            ),
+            frame_id=frame_id,
+            target_id=int(target_id),
+            desired_reference_view=desired_reference_view_goal(tracking_state),
+        ),
+        env_file=env_file,
+    )
+    apply_tracking_rewrite_output(
+        sessions=sessions,
+        session_id=session_id,
+        rewrite_output=rewrite_output,
     )
     return True
 

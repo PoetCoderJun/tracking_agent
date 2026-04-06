@@ -63,7 +63,14 @@ def test_select_prompts_prefer_stable_appearance_for_hard_cases() -> None:
     assert "身份连续性" in track_prompt
     assert "可迁移" in track_prompt
     assert "unknown" in track_prompt
-    assert "参考 crop" in track_prompt
+    assert "当前 tracking memory" in track_prompt
+    assert "当前正面/背面参考 crop 说明" in track_prompt
+    assert "当前候选框摘要" in track_prompt
+    assert "不要依赖历史 ID、旧 ID" in track_prompt
+    assert "当前候选框摘要里真实存在的 ID" in track_prompt
+    assert "如果当前候选像背影：优先用 back_view" in track_prompt
+    assert "如果当前候选像正面：优先用 front_view" in track_prompt
+    assert "只能记为 unknown，不能当作 conflict" in track_prompt
     assert "按从下到上核验" in track_prompt
     assert "不能当正证据，也不能当反证据" in track_prompt
     assert "下半身特征已经足够稳定且没有明显冲突，可以直接 track" in track_prompt

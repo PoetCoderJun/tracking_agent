@@ -355,12 +355,14 @@ def test_select_target_track_uses_model_with_memory_guidance(tmp_path: Path, mon
     assert str(latest_back_target_crop) == str(calls[0]["image_paths"][1])
     assert str(calls[0]["image_paths"][2]).endswith("agent_artifacts/frame_000001_overlay.jpg")
     assert "tracking memory" in calls[0]["instruction"]
-    assert "看图顺序" in calls[0]["instruction"]
-    assert "历史参考 crop 说明" in calls[0]["instruction"]
-    assert "最近保存的目标正面 crop" in calls[0]["instruction"]
+    assert "当前正面/背面参考 crop 说明" in calls[0]["instruction"]
+    assert "当前候选框摘要" in calls[0]["instruction"]
+    assert "先看正面/背面参考 crop，再看当前 overlay 图" in calls[0]["instruction"]
     assert "黑衣服，短发。" in calls[0]["instruction"]
     assert "默认按从下到上核验" in calls[0]["instruction"]
     assert "下半身特征已经足够稳定且没有明显冲突，可以直接 track" in calls[0]["instruction"]
+    assert "不要依赖历史 ID、旧 ID" in calls[0]["instruction"]
+    assert "如果当前候选像背影：优先用 back_view" in calls[0]["instruction"]
 
 
 def test_select_target_track_survives_source_frame_cleanup(tmp_path: Path, monkeypatch) -> None:
@@ -650,6 +652,144 @@ def test_select_target_track_rejects_model_target_not_in_current_candidates(
     assert payload["target_id"] is None
     assert payload["rewrite_memory_input"] is None
     assert "不在当前候选列表中" in payload["reason"]
+
+
+def test_select_target_track_recovers_unique_matched_candidate_when_model_returns_stale_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    select = _load_select()
+    frame_path = _frame_image(tmp_path / "frames" / "frame_000021.jpg")
+    reference_path = _frame_image(tmp_path / "reference.jpg")
+    tracking_context = {
+        "session_id": "sess_001",
+        "target_description": "黑衣服的人",
+        "memory": {
+            "core": "黑色连帽卫衣、眼镜、浅灰色鞋",
+            "front_view": "",
+            "back_view": "",
+            "distinguish": "",
+        },
+        "latest_target_id": 2,
+        "latest_target_crop": str(tmp_path / "latest_target_crop.jpg"),
+        "identity_target_crop": str(tmp_path / "identity_target_crop.jpg"),
+        "latest_confirmed_frame_path": str(reference_path),
+        "latest_confirmed_bbox": [10, 12, 36, 44],
+        "chat_history": [{"role": "user", "text": "继续跟踪", "timestamp": "t1"}],
+        "frames": [
+            {
+                "frame_id": "frame_000021",
+                "timestamp_ms": 1710000000000,
+                "image_path": str(frame_path),
+                "detections": [
+                    {"track_id": 63, "bbox": [10, 12, 36, 44], "score": 0.95},
+                ],
+            }
+        ],
+    }
+    tracking_context_file = tmp_path / "tracking_context.json"
+    tracking_context_file.write_text(json.dumps(tracking_context), encoding="utf-8")
+
+    _frame_image(Path(tracking_context["latest_target_crop"]))
+    _frame_image(Path(tracking_context["identity_target_crop"]))
+
+    def fake_settings(_: Path) -> Settings:
+        return Settings(
+            api_key="",
+            base_url="http://example.test",
+            model="main",
+            main_model="main",
+            sub_model="sub",
+            timeout_seconds=30,
+            sample_fps=1.0,
+            query_interval_seconds=3,
+            recent_frame_count=3,
+            chat_model="chat",
+        )
+
+    def fake_call_model(**kwargs):
+        return {
+            "elapsed_seconds": 0.04,
+            "response_text": json.dumps(
+                {
+                    "found": True,
+                    "bounding_box_id": 5,
+                    "decision": "track",
+                    "text": "已切换为跟踪 ID 5 的目标。",
+                    "reason": "当前候选与历史记忆一致。",
+                    "reject_reason": "",
+                    "needs_clarification": False,
+                    "clarification_question": None,
+                    "candidate_checks": [
+                        {
+                            "bounding_box_id": 63,
+                            "status": "match",
+                            "evidence": "黑色连帽卫衣、眼镜、浅灰色鞋一致。",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        }
+
+    monkeypatch.setattr(select, "load_settings", fake_settings)
+    monkeypatch.setattr(select, "call_model", fake_call_model)
+
+    payload = select.execute_select_tool(
+        tracking_context_file=tracking_context_file,
+        behavior="track",
+        arguments={"user_text": "继续跟踪"},
+        env_file=tmp_path / ".ENV",
+        artifacts_root=tmp_path / "artifacts",
+    )
+
+    assert payload["found"] is True
+    assert payload["decision"] == "track"
+    assert payload["target_id"] == 63
+    assert payload["bounding_box_id"] == 63
+    assert "唯一 match 的当前候选 ID 63" in payload["reason"]
+
+
+def test_normalize_select_result_coerces_wait_to_unbound_state() -> None:
+    select = _load_select()
+
+    normalized = select.normalize_select_result(
+        {
+            "found": True,
+            "bounding_box_id": 12,
+            "decision": "wait",
+            "text": "当前证据不足，保持等待。",
+            "reason": "当前看不清关键特征。",
+            "reject_reason": "当前看不清关键特征。",
+            "needs_clarification": False,
+            "clarification_question": None,
+        }
+    )
+
+    assert normalized["found"] is False
+    assert normalized["target_id"] is None
+    assert normalized["bounding_box_id"] is None
+    assert normalized["decision"] == "wait"
+
+
+def test_normalize_select_result_uses_wait_reject_reason_as_reason_when_missing() -> None:
+    select = _load_select()
+
+    normalized = select.normalize_select_result(
+        {
+            "found": False,
+            "bounding_box_id": None,
+            "decision": "wait",
+            "text": "当前证据不足，保持等待。",
+            "reason": None,
+            "reject_reason": "当前候选与记忆不一致。",
+            "needs_clarification": False,
+            "clarification_question": None,
+        }
+    )
+
+    assert normalized["reason"] == "当前候选与记忆不一致。"
+    assert normalized["reject_reason"] == "当前候选与记忆不一致。"
 
 
 def test_save_target_crop_adds_conservative_padding(tmp_path: Path) -> None:
