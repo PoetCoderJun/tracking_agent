@@ -10,7 +10,7 @@ from agent.session_store import AgentSessionStore
 from backend.perception.service import LocalPerceptionService
 from backend.project_paths import resolve_project_path
 from backend.tracking.context import build_tracking_context
-from backend.tracking.memory import normalize_tracking_memory
+from backend.tracking.memory import normalize_tracking_memory, tracking_memory_display_text
 from backend.tracking.rewrite_memory import execute_rewrite_memory_tool
 from backend.tracking.select import (
     build_rewrite_memory_input,
@@ -75,6 +75,50 @@ def _tracking_skill_state_patch(pi_payload: Dict[str, Any]) -> Optional[Dict[str
     return skill_state_patch
 
 
+def _rewrite_output_for_tracking_init(
+    *,
+    sessions: AgentSessionStore,
+    session_id: str,
+    rewrite_memory_input: Dict[str, Any] | None,
+    env_file: Path,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(rewrite_memory_input, dict) or not rewrite_memory_input:
+        return None
+    if str(rewrite_memory_input.get("task", "")).strip() != "init":
+        return None
+    session = sessions.load(session_id)
+    return execute_rewrite_memory_tool(
+        session_file=Path(session.state_paths["session_path"]),
+        arguments=dict(rewrite_memory_input),
+        env_file=env_file,
+    )
+
+
+def _merge_tracking_init_memory_text(
+    *,
+    session_result: Dict[str, Any],
+    robot_response: Optional[Dict[str, Any]],
+    rewrite_output: Optional[Dict[str, Any]],
+) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    if not isinstance(rewrite_output, dict):
+        return session_result, robot_response
+    memory_text = tracking_memory_display_text(rewrite_output.get("memory", {})).strip()
+    if not memory_text:
+        return session_result, robot_response
+
+    merged_session_result = dict(session_result)
+    base_text = str(merged_session_result.get("text", "")).strip()
+    merged_session_result["text"] = f"{base_text}\n{memory_text}".strip() if base_text else memory_text
+
+    if not isinstance(robot_response, dict):
+        return merged_session_result, robot_response
+
+    merged_robot_response = dict(robot_response)
+    base_robot_text = str(merged_robot_response.get("text", "")).strip()
+    merged_robot_response["text"] = f"{base_robot_text}\n{memory_text}".strip() if base_robot_text else memory_text
+    return merged_session_result, merged_robot_response
+
+
 def apply_processed_tracking_payload(
     *,
     sessions: AgentSessionStore,
@@ -92,6 +136,23 @@ def apply_processed_tracking_payload(
     session_result = _as_optional_dict(pi_payload.get("session_result"), "session_result")
     if session_result is None:
         raise ValueError("Processed tracking payload is missing session_result")
+    robot_response = _as_optional_dict(pi_payload.get("robot_response"), "robot_response")
+
+    if rewrite_output is None:
+        rewrite_output = _rewrite_output_for_tracking_init(
+            sessions=sessions,
+            session_id=session_id,
+            rewrite_memory_input=rewrite_memory_input,
+            env_file=env_file,
+        )
+        if rewrite_output is not None:
+            rewrite_memory_input = None
+
+    session_result, robot_response = _merge_tracking_init_memory_text(
+        session_result=session_result,
+        robot_response=robot_response,
+        rewrite_output=rewrite_output,
+    )
 
     sessions.apply_skill_result(
         session_id,
@@ -127,6 +188,13 @@ def apply_processed_tracking_payload(
             patch=skill_state_patch,
         )
 
+    if rewrite_output:
+        apply_tracking_rewrite_output(
+            sessions=sessions,
+            session_id=session_id,
+            rewrite_output=rewrite_output,
+        )
+
     if rewrite_memory_input:
         schedule_tracking_memory_rewrite(
             sessions=sessions,
@@ -146,7 +214,7 @@ def apply_processed_tracking_payload(
         "user_preferences_patch": user_preferences_patch,
         "environment_map_patch": environment_map_patch,
         "perception_cache_patch": perception_cache_patch,
-        "robot_response": pi_payload.get("robot_response") or session_result.get("robot_response"),
+        "robot_response": robot_response or session_result.get("robot_response"),
         "tool": pi_payload.get("tool"),
         "tool_output": tool_output,
         "rewrite_output": rewrite_output,

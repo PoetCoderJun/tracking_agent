@@ -24,6 +24,7 @@ def test_parse_args_defaults_interval_to_one_second(monkeypatch) -> None:
     assert args.observation_text == ""
     assert args.model == DEFAULT_PERSON_MODEL
     assert args.device is None
+    assert args.tracker == "bytetrack.yaml"
     assert args.imgsz is None
     assert args.vid_stride == 1
     assert args.fresh_session is False
@@ -149,13 +150,14 @@ def test_video_frame_step_samples_one_frame_per_interval() -> None:
 def test_track_kwargs_omits_imgsz_when_not_set(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
-        ["run_tracking_perception.py", "--source", "demo.mp4"],
+        ["run_tracking_perception.py", "--source", "demo.mp4", "--tracker", "botsort.yaml"],
     )
     args = parse_args()
 
     kwargs = _track_kwargs(source="demo.mp4", args=args, stream=True, persist=True)
 
     assert "imgsz" not in kwargs
+    assert kwargs["tracker"] == "botsort.yaml"
 
 def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_path) -> None:
     from agent.session_store import AgentSessionStore

@@ -6,10 +6,11 @@
 - `backend/` 是 perception、业务编排、状态管理和 `robot-agent chat`
 - `backend/perception/cli.py` 是独立感知服务的查询入口，供本地 runner 通过 CLI 读取
 - `viewer/` 是 tracking viewer 前端和 websocket stream
-- `skills/` 提供 capability 实现，当前重点是 tracking 和 speech
+- `skills/` 提供 capability 实现，当前重点是 tracking、web_search 和 feishu
 - `scripts/` 是兼容性薄壳，用来把 perception、轮询、viewer 这些进程跑起来
 - `skills/tracking/` 是当前的目标选择 skill
-- `skills/speech/` 是已安装的 TTS skill
+- `skills/web_search/` 是基于 SkillHub 的网页搜索 skill
+- `skills/feishu/` 是基于 SkillHub 能力包装的飞书通知 skill
 
 ## 推荐启动
 
@@ -85,8 +86,21 @@ uv run robot-agent-perception read \
 uv run robot-agent start \
   --state-root ./.runtime/agent-runtime \
   --skill tracking \
-  --skill speech
+  --skill web_search \
+  --skill feishu
 ```
+
+如果要启用真实网页搜索和真实飞书发送，在 `.ENV` 里补这些配置：
+
+```bash
+TAVILY_API_KEY=...
+FEISHU_APP_ID=...
+FEISHU_APP_SECRET=...
+FEISHU_NOTIFY_RECEIVE_ID=...
+FEISHU_NOTIFY_RECEIVE_ID_TYPE=chat_id
+```
+
+其中 `FEISHU_NOTIFY_RECEIVE_ID_TYPE` 默认为 `chat_id`。
 
 手动发一轮 agent 请求：
 
@@ -95,6 +109,32 @@ uv run robot-agent chat \
   --state-root ./.runtime/agent-runtime \
   --artifacts-root ./.runtime/pi-agent \
   --text "开始跟踪最开始出现的穿黑衣服的人。"
+```
+
+本地开发调试也可以直接启动 REPL：
+
+```bash
+uv run robot-agent repl \
+  --state-root ./.runtime/agent-runtime \
+  --artifacts-root ./.runtime/pi-agent \
+  --skill tracking \
+  --skill web_search
+```
+
+在 REPL 内部可用命令：
+
+- `/help`：查看命令
+- `/status`：查看当前会话和启用技能
+- `/quit` 或 `/q`：退出
+
+注入一条事件 turn，让 Pi 自己决定是否调用通知类 skill：
+
+```bash
+uv run robot-agent event \
+  --state-root ./.runtime/agent-runtime \
+  --artifacts-root ./.runtime/pi-agent \
+  --event-type charging_completed \
+  --text "机器人底座充电已完成，请根据当前上下文决定是否通知飞书。"
 ```
 
 单次 deterministic `track`：
@@ -194,5 +234,6 @@ uv run robot-agent-tracking-e2e \
   - `run_tracking_frontend.sh`: viewer 前端入口
   - `run_tracking_stack.sh`: 兼容性启动壳
 - `skills/tracking/`: 只保留目标选择 skill 文档面
-- `skills/speech/`: speech skill
+- `skills/web_search/`: 网页搜索 skill
+- `skills/feishu/`: 飞书通知 skill
 - `docs/Tracking Agent 接口.pdf`: 当前接口说明

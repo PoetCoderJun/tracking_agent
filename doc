@@ -1,0 +1,69 @@
+# 跟踪链路启动指令
+
+以下命令默认用于当前仓库：`/Users/huzujun/Desktop/new/tracking_agent`
+
+## 一、定义会话与根目录（可复用）
+
+```bash
+export SESSION_ID=track_sess_001
+export STATE_ROOT=./.runtime/agent-runtime
+export ARTIFACTS_ROOT=./.runtime/pi-agent
+```
+
+## 二、启动感知（摄像头）
+
+```bash
+uv run python -m scripts.run_tracking_perception \
+  --source 0 \
+  --session-id "$SESSION_ID" \
+  --device-id robot_01 \
+  --state-root "$STATE_ROOT" \
+  --fresh-session
+```
+
+> 说明：`run_tracking_perception.py` 没有 `--env-file` 参数（这是我上条里示例写多了）。
+
+如果你要加载 `.ENV` 环境变量（可选）：
+
+```bash
+set -a && source .ENV && set +a
+```
+
+## 三、启动 repl（与感知同一 session）
+
+```bash
+uv run robot-agent repl \
+  --session-id "$SESSION_ID" \
+  --state-root "$STATE_ROOT" \
+  --artifacts-root "$ARTIFACTS_ROOT" \
+  --skill tracking
+```
+
+进入 repl 后输入：
+
+```text
+开始跟踪穿黑衣服的人
+```
+
+## 四、查看 tracking memory 是否已写入
+
+```bash
+cat "$STATE_ROOT/sessions/$SESSION_ID/session.json" | python - <<'PY'
+import json,sys
+payload = json.load(sys.stdin)
+print(json.dumps(payload.get("skill_cache", {}).get("tracking", {}), ensure_ascii=False, indent=2))
+PY
+```
+
+内存主要落在：`skill_cache.tracking.latest_memory`
+
+## 五、如果你要用 MP4 做输入（替代摄像头）
+
+```bash
+uv run python -m scripts.run_tracking_perception \
+  --source "/abs/path/demo.mp4" \
+  --session-id "$SESSION_ID" \
+  --device-id robot_01 \
+  --state-root "$STATE_ROOT" \
+  --fresh-session
+```

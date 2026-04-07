@@ -7,7 +7,8 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_ROOT = ROOT / "agent"
 BACKEND_TRACKING_ROOT = ROOT / "backend" / "tracking"
 SKILL_ROOT = ROOT / "skills" / "tracking"
-SPEECH_SKILL_ROOT = ROOT / "skills" / "speech"
+WEB_SEARCH_SKILL_ROOT = ROOT / "skills" / "web_search"
+FEISHU_SKILL_ROOT = ROOT / "skills" / "feishu"
 CLI_PATH = ROOT / "backend" / "cli.py"
 TRACKING_SCRIPT_ROOT = SKILL_ROOT / "scripts"
 REPO_SCRIPT_ROOT = ROOT / "scripts"
@@ -52,14 +53,15 @@ def test_skill_package_contains_expected_files() -> None:
         assert path.exists(), f"Missing expected skill artifact: {path}"
 
 
-def test_speech_skill_is_installed_from_hub() -> None:
+def test_external_skill_wrappers_are_installed() -> None:
     expected_paths = [
-        SPEECH_SKILL_ROOT / "SKILL.md",
-        SPEECH_SKILL_ROOT / "scripts" / "text_to_speech.py",
-        SPEECH_SKILL_ROOT / "references" / "cli.md",
+        WEB_SEARCH_SKILL_ROOT / "SKILL.md",
+        WEB_SEARCH_SKILL_ROOT / "scripts" / "search_turn.py",
+        FEISHU_SKILL_ROOT / "SKILL.md",
+        FEISHU_SKILL_ROOT / "scripts" / "notify_turn.py",
     ]
     for path in expected_paths:
-        assert path.exists(), f"Missing expected speech artifact: {path}"
+        assert path.exists(), f"Missing expected external skill artifact: {path}"
 
 
 

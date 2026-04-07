@@ -42,15 +42,14 @@ Do not use this skill for:
 4. Decide only whether the user is selecting one person from the current candidate set.
 5. If yes, call the backend `init` command and return its stdout unchanged.
 6. If not, do not force the turn into this skill.
-7. If the route context is insufficient, prefer `service_commands.perception_read`.
-8. Only if the route context and perception CLI output are insufficient may you fall back to raw persisted state.
+7. If the route context is insufficient, read `state_paths.session_path` only as needed to decide whether target selection applies.
+8. Do not fetch extra perception metadata unless the deterministic backend command needs it internally.
 
 ## What To Read
 
 - `turn_context.json`
 - `context_paths.route_context_path`
 - `state_paths.session_path` when you need grounded state
-- `service_commands.perception_read` when you need the latest persisted perception snapshot
 
 Do not read extra references or raw persisted state unless you are blocked.
 

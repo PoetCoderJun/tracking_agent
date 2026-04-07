@@ -12,9 +12,12 @@ def _normalized_dialogue(history: Any, *, limit: int) -> List[Dict[str, str]]:
     for entry in list(history or [])[-limit:]:
         if not isinstance(entry, dict):
             continue
+        role = str(entry.get("role", "")).strip()
+        if role != "user":
+            continue
         normalized.append(
             {
-                "role": str(entry.get("role", "")).strip(),
+                "role": role,
                 "text": str(entry.get("text", "")).strip(),
                 "timestamp": str(entry.get("timestamp", "")).strip(),
             }
@@ -54,7 +57,7 @@ def build_route_context(
         else {
             "frame_id": latest_frame["frame_id"],
             "timestamp_ms": latest_frame["timestamp_ms"],
-            "detection_count": len(latest_frame["detections"]),
+            "image_path": latest_frame.get("image_path"),
         },
         "latest_result": {
             "behavior": latest_result.get("behavior"),
@@ -62,7 +65,6 @@ def build_route_context(
             "target_id": latest_result.get("target_id"),
             "found": latest_result.get("found"),
             "decision": latest_result.get("decision"),
-            "text": str(latest_result.get("text", "")).strip(),
             "needs_clarification": latest_result.get("needs_clarification"),
             "clarification_question": latest_result.get("clarification_question"),
         }

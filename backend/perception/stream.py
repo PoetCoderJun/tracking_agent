@@ -4,6 +4,7 @@ import base64
 import json
 import subprocess
 import time
+import numpy as np
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from fractions import Fraction
@@ -113,8 +114,24 @@ def current_timestamp_ms() -> int:
 
 
 def save_frame_image(frame_bgr: Any, output_path: Path) -> Path:
+    frame = np.asarray(frame_bgr)
+    if frame.ndim == 2:
+        frame = np.repeat(frame[:, :, None], 3, axis=2)
+    elif frame.ndim != 3:
+        raise ValueError(f"Unsupported frame dimensions: {frame.shape}")
+    if frame.shape[-1] != 3:
+        raise ValueError(f"Unsupported channel count: {frame.shape[-1]}")
+    if not np.issubdtype(frame.dtype, np.integer):
+        frame_f = frame.astype(np.float32, copy=False)
+        finite = frame_f[np.isfinite(frame_f)]
+        if finite.size > 0 and finite.max() <= 1.0:
+            frame_f = frame_f * 255.0
+        frame = np.clip(np.rint(frame_f), 0.0, 255.0).astype(np.uint8)
+    else:
+        frame = np.clip(frame, 0, 255).astype(np.uint8)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    image = Image.fromarray(frame_bgr[:, :, ::-1])
+    image = Image.fromarray(frame[:, :, ::-1])
     image.save(output_path, format="JPEG")
     return output_path
 

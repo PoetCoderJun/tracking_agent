@@ -36,6 +36,13 @@ ALLOWED_RESULT_FIELDS = frozenset(
         "available_targets",
         "latest_target_crop",
         "summary",
+        "sources",
+        "search_query",
+        "notification_channel",
+        "notification_event_type",
+        "notification_title",
+        "notification_sent_at",
+        "notification_outbox_path",
         "robot_response",
     }
 )
@@ -134,7 +141,11 @@ class BackendStore:
             payload = None
             for _ in range(5):
                 try:
-                    payload = json.loads(session_path.read_text(encoding="utf-8"))
+                    raw_text = session_path.read_text(encoding="utf-8")
+                    try:
+                        payload = json.loads(raw_text)
+                    except json.JSONDecodeError:
+                        payload, _ = json.JSONDecoder().raw_decode(raw_text)
                     break
                 except FileNotFoundError as exc:
                     last_error = exc

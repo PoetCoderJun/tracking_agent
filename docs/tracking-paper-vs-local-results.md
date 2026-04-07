@@ -75,13 +75,13 @@ Current best files:
 - Our local `corridor1` result still lags badly and remains the weakest custom sequence.
 - Our local `corridor2`, `lab-corridor`, and `room` now outperform the paper's `ByteTrack + RPF-ReID` row under our current benchmark setup, so these numbers should be interpreted as local-system results rather than like-for-like paper reproduction.
 
-| Methods | corridor2 | lab-corridor | room |
+| Methods | lab-corridor | corridor2 | room |
 | --- | ---: | ---: | ---: |
-| Zhong’s Method | 66.8 | 75.8 | 44.7 |
-| SiamRPN++ | 55.9 | 46.1 | 42.6 |
-| STARK | 83.8 | 73.1 | 65.8 |
-| SORT + RPF-ReID | 37.9 | 31.1 | 82.4 |
-| OC-SORT + RPF-ReID | 37.9 | 31.1 | 82.4 |
-| ByteTrack + RPF-ReID | 20.2 | 54.2 | 82.4 |
-| ByteTrack | 23.76 | 18.92 | 42.86 |
-| ByteTrack + TrackingAgent | 62.49 | 90.39 | 87.42 |
+| Zhong’s Method |  75.8 | 66.8 | 44.7 |
+| SiamRPN++ | 46.1 | 55.9  | 42.6 |
+| STARK | 73.1 | **83.8** | 65.8 |
+| ByteTrack | 18.92 | 23.76 | 42.86 |
+| SORT + RPF-ReID | 31.1 | 37.9 | 82.4 |
+| OC-SORT + RPF-ReID | 31.1 | 37.9 | 82.4 |
+| ByteTrack + RPF-ReID | 54.2 | 20.2 | 82.4 |
+| ByteTrack + TrackingAgent | **90.39** | 62.49 | **87.42** |

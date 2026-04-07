@@ -33,6 +33,7 @@ from backend.project_paths import resolve_project_path
 DEFAULT_PERSON_MODEL = "yolov8n.pt"
 DEFAULT_CAMERA_SOURCE = "0"
 VIDEO_TRACK_FPS = 8.0
+DEFAULT_TRACKER = "bytetrack.yaml"
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,7 +88,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Ultralytics inference device, for example 'mps', 'cpu', or '0'.",
     )
-    parser.add_argument("--tracker", default=None)
+    parser.add_argument(
+        "--tracker",
+        default=DEFAULT_TRACKER,
+        help="Ultralytics tracker config path/name. Use botsort.yaml to enable BoT-SORT.",
+    )
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument(
         "--imgsz",
@@ -162,6 +167,50 @@ def _load_cv2():
             "before running scripts/run_tracking_perception.py."
         ) from exc
     return cv2
+
+
+def _probe_camera_indices(max_index: int = 5) -> List[int]:
+    cv2 = _load_cv2()
+    available: List[int] = []
+    for index in range(max_index):
+        capture = cv2.VideoCapture(index)
+        try:
+            if capture.isOpened():
+                ok, _frame = capture.read()
+                if ok:
+                    available.append(index)
+        finally:
+            capture.release()
+    return available
+
+
+def _assert_camera_source(source: int) -> None:
+    cv2 = _load_cv2()
+    capture = cv2.VideoCapture(source)
+    try:
+        if not capture.isOpened():
+            available_cameras = _probe_camera_indices()
+            raise RuntimeError(
+                "Failed to open camera source index "
+                f"{source}. On macOS this is often caused by camera permission denied or another app holding the device. "
+                f"Available readable indices from 0..4: {available_cameras}. "
+                "Try another index such as 1 or 2, or pass a file path to --source for debugging."
+            )
+
+        ready = False
+        for _ in range(5):
+            ok, frame = capture.read()
+            if ok and frame is not None:
+                ready = True
+                break
+            time.sleep(0.2)
+        if not ready:
+            raise RuntimeError(
+                "Opened camera source but failed to read a frame. "
+                "The device might be blocked by another process or not initialized yet."
+            )
+    finally:
+        capture.release()
 
 def _normalize_xyxy_bbox(bbox: List[int]) -> List[int]:
     x1, y1, x2, y2 = [int(value) for value in bbox]
@@ -487,6 +536,7 @@ async def _async_main() -> int:
     video_fps = None if source_is_camera else probe_video_fps(Path(str(source)))
 
     if source_is_camera:
+        _assert_camera_source(int(source))
         result_stream = enumerate(
             model.track(
                 **_track_kwargs(
