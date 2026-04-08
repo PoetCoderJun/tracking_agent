@@ -6,8 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
-from agent.session_store import AgentSessionStore
-from backend.tracking.bootstrap import float_env_value, load_tracking_env_values
+from backend.tracking.env import float_env_value, load_tracking_env_values
 from backend.tracking.deterministic import (
     apply_processed_tracking_payload,
     process_tracking_request_direct,
@@ -18,6 +17,7 @@ from backend.perception.service import LocalPerceptionService
 from backend.perception.stream import generate_request_id
 from backend.persistence import resolve_session_id
 from backend.project_paths import resolve_project_path
+from backend.runtime_session import AgentSessionStore
 from backend.tracking.context import tracking_state_snapshot
 
 TRACKING_SKILL_NAME = "tracking"
@@ -109,9 +109,7 @@ def _waiting_for_user(tracking_state: Dict[str, Any]) -> bool:
 
 
 def _latest_frame(context: Any) -> Dict[str, Any]:
-    latest_observation = LocalPerceptionService(Path(context.state_paths["state_root"])).latest_camera_observation(
-        session_id=context.session_id,
-    )
+    latest_observation = LocalPerceptionService(Path(context.state_paths["state_root"])).latest_camera_observation()
     if latest_observation is None:
         return {}
     payload = dict(latest_observation.get("payload") or {})
@@ -125,7 +123,7 @@ def _latest_frame(context: Any) -> Dict[str, Any]:
 
 
 def _perception_stream_status(context: Any) -> Dict[str, Any]:
-    perception = LocalPerceptionService(Path(context.state_paths["state_root"])).read_snapshot(context.session_id)
+    perception = LocalPerceptionService(Path(context.state_paths["state_root"])).read_snapshot()
     return dict(perception.get("stream_status") or {})
 
 

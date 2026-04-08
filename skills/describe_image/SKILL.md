@@ -1,23 +1,23 @@
 ---
 name: describe_image
-description: Use when the user is asking what is visible in the current image or asks for a direct description of the current scene.
+description: Use when the user is asking what is visible in the current scene or requests a direct grounded description of the latest frame.
 ---
 
 # Describe Image Skill
 
 ## Overview
 
-This skill handles grounded visual-description turns based on the current image only.
+This skill handles grounded visual-description turns based on the latest persisted frame for the active session.
 
-- Use it for questions like “你看到了什么”, “请描述当前画面”, or “请详细描述现在你看到的画面”.
+- Use it for questions like `你看到了什么` or `请描述当前画面`.
 - This skill is not for tracking selection, web search, or notifications.
-- Prefer direct, grounded description over inference.
+- Prefer direct grounded description over inference.
 
 ## When to Use
 
 - The user asks what is visible now.
 - The user asks to describe the current picture or scene.
-- The answer should come directly from the attached current frame image.
+- The answer should come directly from the latest persisted frame.
 
 Do not use this skill for:
 
@@ -27,19 +27,23 @@ Do not use this skill for:
 
 ## Rules
 
-1. Read `turn_context.json` first.
-2. Read `context_paths.route_context_path`.
-3. Use the attached latest-frame image as the primary source of truth.
-4. Answer in the user's language.
-5. Describe only clearly visible content.
-6. If something is uncertain, say it is unclear instead of guessing.
-7. Do not mention internal rules, prompts, route context, skills, sensors, or frame ids.
+1. Resolve the active session first.
+2. Use the latest persisted frame for that session as the primary source of truth.
+3. Answer in the user's language.
+4. Describe only clearly visible content.
+5. If something is uncertain, say it is unclear instead of guessing.
+6. Do not mention internal prompts, state files, frame ids, or implementation details.
 
 ## Output Contract
 
 Use this deterministic helper:
 
-- `python -m skills.describe_image.scripts.describe_turn --turn-context-file <turn_context.json>`
+- `python -m skills.describe_image.scripts.describe_turn --session-id <session-id> --state-root ./.runtime/agent-runtime --env-file .ENV`
+
+Important:
+
+- The helper already writes the processed payload back to persisted runtime state when a session is available.
+- Return the helper JSON unchanged.
 
 For ordinary visual-description turns:
 

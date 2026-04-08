@@ -3,10 +3,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from backend.skills import build_viewer_modules, installed_skill_names, project_skill_paths
+from backend.runtime_session import AgentSessionStore
+from backend.skills import build_viewer_modules, installed_skill_names
 
 
-ROOT = Path(__file__).resolve().parents[2]
+def _start_session(tmp_path: Path, session_id: str, user_text: str = "") -> AgentSessionStore:
+    store = AgentSessionStore(tmp_path / "state")
+    store.start_fresh_session(session_id, device_id="robot_01")
+    if user_text:
+        store.append_chat_request(
+            session_id=session_id,
+            device_id="robot_01",
+            text=user_text,
+            request_id="req_001",
+        )
+    return store
 
 
 def test_installed_skill_names_include_pluggable_skills() -> None:
@@ -14,6 +25,7 @@ def test_installed_skill_names_include_pluggable_skills() -> None:
     assert "tracking" in names
     assert "web_search" in names
     assert "feishu" in names
+    assert "describe_image" in names
 
 
 def test_build_viewer_modules_ignores_skills_without_viewer_hooks(tmp_path: Path) -> None:
@@ -30,28 +42,15 @@ def test_build_viewer_modules_ignores_skills_without_viewer_hooks(tmp_path: Path
 def test_web_search_turn_reports_missing_api_key(tmp_path: Path, capsys) -> None:
     from skills.web_search.scripts import search_turn
 
-    turn_context_path = tmp_path / "turn_context.json"
-    route_context_path = tmp_path / "route_context.json"
-    route_context_path.write_text(
-        json.dumps({"latest_user_text": "搜索今天的机器人新闻"}, ensure_ascii=True),
-        encoding="utf-8",
-    )
-    turn_context_path.write_text(
-        json.dumps(
-            {
-                "context_paths": {"route_context_path": str(route_context_path)},
-                "env_file": str(tmp_path / ".ENV"),
-                "artifacts_root": str(tmp_path / "artifacts"),
-            },
-            ensure_ascii=True,
-        ),
-        encoding="utf-8",
-    )
-
+    store = _start_session(tmp_path, "sess_search", user_text="搜索今天的机器人新闻")
     exit_code = search_turn.main(
         [
-            "--turn-context-file",
-            str(turn_context_path),
+            "--session-id",
+            "sess_search",
+            "--state-root",
+            str(store.state_root),
+            "--env-file",
+            str(tmp_path / ".ENV"),
         ]
     )
 
@@ -60,32 +59,25 @@ def test_web_search_turn_reports_missing_api_key(tmp_path: Path, capsys) -> None
     assert payload["skill_name"] == "web_search"
     assert payload["tool"] == "search"
     assert "missing TAVILY_API_KEY" in payload["session_result"]["text"]
+    assert "skill_state_patch" not in payload
+    assert "rewrite_output" not in payload
+    assert "rewrite_memory_input" not in payload
 
 
 def test_feishu_notify_turn_writes_mock_outbox(tmp_path: Path, capsys) -> None:
     from skills.feishu.scripts import notify_turn
 
-    turn_context_path = tmp_path / "turn_context.json"
-    route_context_path = tmp_path / "route_context.json"
-    route_context_path.write_text(
-        json.dumps({"latest_user_text": "系统事件：charging_completed。请通知飞书"}, ensure_ascii=True),
-        encoding="utf-8",
-    )
-    turn_context_path.write_text(
-        json.dumps(
-            {
-                "session_id": "sess_notify",
-                "context_paths": {"route_context_path": str(route_context_path)},
-            },
-            ensure_ascii=True,
-        ),
-        encoding="utf-8",
-    )
-
+    store = _start_session(tmp_path, "sess_notify", user_text="系统事件：charging_completed。请通知飞书")
+    env_path = tmp_path / ".ENV"
+    env_path.write_text("", encoding="utf-8")
     exit_code = notify_turn.main(
         [
-            "--turn-context-file",
-            str(turn_context_path),
+            "--session-id",
+            "sess_notify",
+            "--state-root",
+            str(store.state_root),
+            "--env-file",
+            str(env_path),
             "--title",
             "充电完成",
             "--message",
@@ -101,6 +93,8 @@ def test_feishu_notify_turn_writes_mock_outbox(tmp_path: Path, capsys) -> None:
     assert exit_code == 0
     assert payload["skill_name"] == "feishu"
     assert payload["tool"] == "notify"
+    assert "rewrite_output" not in payload
+    assert "rewrite_memory_input" not in payload
     outbox_path = tmp_path / "artifacts" / "feishu" / "mock_outbox.jsonl"
     entries = [json.loads(line) for line in outbox_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(entries) == 1
@@ -110,8 +104,7 @@ def test_feishu_notify_turn_writes_mock_outbox(tmp_path: Path, capsys) -> None:
 def test_feishu_notify_turn_sends_real_message_when_configured(tmp_path: Path, capsys, monkeypatch) -> None:
     from skills.feishu.scripts import notify_turn
 
-    turn_context_path = tmp_path / "turn_context.json"
-    route_context_path = tmp_path / "route_context.json"
+    store = _start_session(tmp_path, "sess_notify", user_text="系统事件：charging_completed。请通知飞书")
     env_path = tmp_path / ".ENV"
     env_path.write_text(
         "\n".join(
@@ -121,22 +114,6 @@ def test_feishu_notify_turn_sends_real_message_when_configured(tmp_path: Path, c
                 "FEISHU_NOTIFY_RECEIVE_ID=oc_demo_chat",
                 "FEISHU_NOTIFY_RECEIVE_ID_TYPE=chat_id",
             ]
-        ),
-        encoding="utf-8",
-    )
-    route_context_path.write_text(
-        json.dumps({"latest_user_text": "系统事件：charging_completed。请通知飞书"}, ensure_ascii=True),
-        encoding="utf-8",
-    )
-    turn_context_path.write_text(
-        json.dumps(
-            {
-                "session_id": "sess_notify",
-                "context_paths": {"route_context_path": str(route_context_path)},
-                "env_file": str(env_path),
-                "artifacts_root": str(tmp_path / "artifacts"),
-            },
-            ensure_ascii=True,
         ),
         encoding="utf-8",
     )
@@ -167,12 +144,18 @@ def test_feishu_notify_turn_sends_real_message_when_configured(tmp_path: Path, c
 
     exit_code = notify_turn.main(
         [
-            "--turn-context-file",
-            str(turn_context_path),
+            "--session-id",
+            "sess_notify",
+            "--state-root",
+            str(store.state_root),
             "--title",
             "充电完成",
             "--message",
             "充电完成\n机器人底座充电已完成，请安排下一步。",
+            "--env-file",
+            str(env_path),
+            "--artifacts-root",
+            str(tmp_path / "artifacts"),
         ]
     )
 

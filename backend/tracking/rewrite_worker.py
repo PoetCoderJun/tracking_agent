@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent.session_store import AgentSessionStore
+from backend.runtime_session import AgentSessionStore
 from backend.tracking.deterministic import apply_tracking_rewrite_output
 from backend.tracking.rewrite_memory import execute_rewrite_memory_tool
 

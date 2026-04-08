@@ -4,32 +4,18 @@ import argparse
 import json
 import os
 import re
-import sys
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.config import parse_dotenv
+from backend.persistence import resolve_session_id
+from backend.project_paths import resolve_project_path
+from backend.runtime_apply import apply_processed_payload
+from backend.runtime_session import AgentSessionStore
 from backend.skill_payload import processed_skill_payload, reply_session_result
 
 TAVILY_URL = "https://api.tavily.com/search"
-
-
-def _load_turn_context(turn_context_file: Path) -> Dict[str, Any]:
-    return json.loads(turn_context_file.read_text(encoding="utf-8"))
-
-
-def _route_context(turn_context: Dict[str, Any]) -> Dict[str, Any]:
-    route_context_path = ((turn_context.get("context_paths") or {}).get("route_context_path"))
-    if route_context_path in (None, ""):
-        return {}
-    return json.loads(Path(str(route_context_path)).read_text(encoding="utf-8"))
-
-
-def _default_query(turn_context: Dict[str, Any]) -> str:
-    route_context = _route_context(turn_context)
-    query = str(route_context.get("latest_user_text", "")).strip()
-    return query
 
 
 def _load_tavily_key(env_file: Optional[Path]) -> Optional[str]:
@@ -41,6 +27,29 @@ def _load_tavily_key(env_file: Optional[Path]) -> Optional[str]:
     values = parse_dotenv(env_file)
     configured = str(values.get("TAVILY_API_KEY", "")).strip()
     return configured or None
+
+
+def _default_query(
+    *,
+    state_root: Path,
+    session_id: str | None,
+    frame_buffer_size: int,
+) -> str:
+    resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
+    if resolved_session_id is None:
+        return ""
+    session = AgentSessionStore(
+        state_root=state_root,
+        frame_buffer_size=frame_buffer_size,
+    ).load(resolved_session_id)
+    history = list(session.session.get("conversation_history") or [])
+    for entry in reversed(history):
+        if str(entry.get("role", "")).strip() != "user":
+            continue
+        text = str(entry.get("text", "")).strip()
+        if text:
+            return text
+    return ""
 
 
 def _tavily_search(
@@ -160,15 +169,22 @@ def build_web_search_payload(
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Run one deterministic web search skill turn.")
-    parser.add_argument("--turn-context-file", required=True)
-    parser.add_argument("--query", default=None)
-    parser.add_argument("--env-file", default=None)
+    parser.add_argument("--query", default="")
+    parser.add_argument("--session-id", default=None)
+    parser.add_argument("--state-root", default="./.runtime/agent-runtime")
+    parser.add_argument("--frame-buffer-size", type=int, default=3)
+    parser.add_argument("--env-file", default=".ENV")
     parser.add_argument("--max-results", type=int, default=5)
     parser.add_argument("--include-answer", action="store_true")
     args = parser.parse_args(argv)
 
-    turn_context = _load_turn_context(Path(args.turn_context_file))
-    query = str(args.query or _default_query(turn_context)).strip()
+    state_root = resolve_project_path(args.state_root)
+    resolved_session_id = resolve_session_id(state_root=state_root, session_id=args.session_id)
+    query = str(args.query).strip() or _default_query(
+        state_root=state_root,
+        session_id=resolved_session_id,
+        frame_buffer_size=int(args.frame_buffer_size),
+    )
     if not query:
         payload = build_web_search_payload(
             query="",
@@ -178,8 +194,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 
-    env_file = None if args.env_file in (None, "") else Path(str(args.env_file))
-    api_key = _load_tavily_key(env_file)
+    api_key = _load_tavily_key(resolve_project_path(args.env_file))
     if not api_key:
         payload = build_web_search_payload(
             query=query,
@@ -199,6 +214,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         query=query,
         tool_output=tool_output,
     )
+    if resolved_session_id is not None:
+        payload = apply_processed_payload(
+            sessions=AgentSessionStore(state_root=state_root, frame_buffer_size=int(args.frame_buffer_size)),
+            session_id=resolved_session_id,
+            pi_payload=payload,
+            env_file=resolve_project_path(args.env_file),
+        )
     print(json.dumps(payload, ensure_ascii=False))
     return 0
 

@@ -71,11 +71,10 @@ def build_agent_viewer_payload(*, state_root: Path, session_id: str | None = Non
 
     session = store.session_payload(resolved_session_id)
     perception = LocalPerceptionService(state_root)
-    perception_snapshot = perception.read_snapshot(resolved_session_id)
+    perception_snapshot = perception.read_snapshot()
     stream_status = dict(perception_snapshot.get("stream_status") or {})
     recent_frames = observation_recent_frames(
         state_root=state_root,
-        session_id=resolved_session_id,
     )
     latest_result = dict(session.get("latest_result") or {})
     modules = build_viewer_modules(
@@ -129,7 +128,7 @@ def _file_signature(*, state_root: Path, session_id: str | None = None) -> Tuple
         return (active_session_mtime, -1, -1)
 
     session_path = LiveSessionStore(state_root=state_root).session_path(resolved_session_id)
-    perception_path = state_root / "perception" / "sessions" / resolved_session_id / "snapshot.json"
+    perception_path = state_root / "perception" / "snapshot.json"
     session_mtime = session_path.stat().st_mtime_ns if session_path.exists() else -1
     perception_mtime = perception_path.stat().st_mtime_ns if perception_path.exists() else -1
     return (active_session_mtime, session_mtime, perception_mtime)

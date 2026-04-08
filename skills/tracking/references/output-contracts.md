@@ -2,24 +2,14 @@
 
 ## Final Turn Payload
 
-The skill must return one raw JSON object:
+The skill must return one raw JSON object. Use the same minimal processed-skill shell as other skills, then add tracking-specific fields only when they are actually needed.
 
 ```json
 {
-  "status": "idle" | "processed",
-  "skill_name": string | null,
-  "session_result": object | null,
-  "latest_result_patch": object | null,
-  "skill_state_patch": object | null,
-  "user_preferences_patch": object | null,
-  "environment_map_patch": object | null,
-  "perception_cache_patch": object | null,
-  "robot_response": object | null,
-  "tool": "init" | null,
-  "tool_output": object | null,
-  "rewrite_output": object | null,
-  "rewrite_memory_input": object | null,
-  "reason": string | null
+  "status": "processed",
+  "skill_name": "tracking",
+  "session_result": object,
+  "tool": "init" | "track"
 }
 ```
 
@@ -27,9 +17,26 @@ Notes:
 
 - This skill is only for selecting one current candidate person.
 - `session_result` is the minimal final result for the target-selection turn.
+- `tool_output` may be included for debugging or downstream inspection.
+- `robot_response` may be included when the caller needs a top-level action payload.
 - `skill_state_patch` only updates tracking-owned fields under `skill_cache["tracking"]`.
-- For processed turns from this skill, set `tool` to `init`.
+- `rewrite_memory_input` and `rewrite_output` are tracking-only extensions. Do not emit them unless the turn actually schedules or resolves memory rewrite work.
 - Keep canonical names such as `target_id`, `bounding_box_id`, `found`, and `text`.
+
+## Tracking Extensions
+
+Add these fields only when needed:
+
+```json
+{
+  "skill_state_patch": object,
+  "robot_response": object,
+  "tool_output": object,
+  "rewrite_output": object,
+  "rewrite_memory_input": object,
+  "reason": "brief explanation"
+}
+```
 
 ## Canonical `session_result` Shapes
 

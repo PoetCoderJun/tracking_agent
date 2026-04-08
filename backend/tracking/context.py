@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.session import AgentSession
+from backend.runtime_session import AgentSession
 from backend.session_frames import tracking_recent_frames
 from backend.tracking.memory import (
     normalize_tracking_memory,
@@ -11,7 +11,6 @@ from backend.tracking.memory import (
     tracking_memory_summary,
 )
 
-ROUTE_DIALOGUE_LIMIT = 6
 TRACKING_DIALOGUE_LIMIT = 6
 
 
@@ -28,16 +27,6 @@ def _normalized_dialogue(history: Any, *, limit: int) -> List[Dict[str, str]]:
             }
         )
     return normalized
-
-
-def _latest_user_text(session_payload: Dict[str, Any]) -> str:
-    for entry in reversed(list(session_payload.get("conversation_history") or [])):
-        if str(entry.get("role", "")).strip() != "user":
-            continue
-        text = str(entry.get("text", "")).strip()
-        if text:
-            return text
-    return ""
 
 
 def _tracking_frames(
@@ -84,57 +73,6 @@ def tracking_state_snapshot(raw_tracking_state: Any) -> Dict[str, Any]:
         "latest_memory": latest_memory,
         "latest_memory_text": tracking_memory_display_text(latest_memory),
         "memory_summary": tracking_memory_summary(latest_memory),
-    }
-
-
-def build_route_context(
-    session: AgentSession,
-    *,
-    request_id: str,
-    enabled_skill_names: List[str],
-) -> Dict[str, Any]:
-    frames = _tracking_frames(session)
-    latest_frame = None if not frames else frames[-1]
-    latest_result = dict(session.session.get("latest_result") or {})
-    tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
-    return {
-        "session_id": session.session_id,
-        "request_id": request_id,
-        "enabled_skills": list(enabled_skill_names),
-        "latest_user_text": _latest_user_text(session.session),
-        "recent_dialogue": _normalized_dialogue(
-            session.session.get("conversation_history"),
-            limit=ROUTE_DIALOGUE_LIMIT,
-        ),
-        "latest_frame": None
-        if latest_frame is None
-        else {
-            "frame_id": latest_frame["frame_id"],
-            "timestamp_ms": latest_frame["timestamp_ms"],
-            "detection_count": len(latest_frame["detections"]),
-        },
-        "latest_result": {
-            "behavior": latest_result.get("behavior"),
-            "frame_id": latest_result.get("frame_id"),
-            "target_id": latest_result.get("target_id"),
-            "found": latest_result.get("found"),
-            "decision": latest_result.get("decision"),
-            "text": str(latest_result.get("text", "")).strip(),
-            "needs_clarification": latest_result.get("needs_clarification"),
-            "clarification_question": latest_result.get("clarification_question"),
-        }
-        if latest_result
-        else None,
-        "tracking": {
-            "has_active_target": bool(
-                tracking_state.get("latest_target_id") is not None
-                and tracking_state.get("latest_confirmed_frame_path")
-            ),
-            "latest_target_id": tracking_state.get("latest_target_id"),
-            "target_description": tracking_state.get("target_description"),
-            "pending_question": tracking_state.get("pending_question"),
-            "memory_summary": tracking_state.get("memory_summary"),
-        },
     }
 
 

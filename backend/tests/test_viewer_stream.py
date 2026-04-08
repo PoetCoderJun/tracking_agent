@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from agent import AgentSessionStore
+from backend.runtime_session import AgentSessionStore
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 from backend.persistence import ActiveSessionStore, LiveSessionStore
 from viewer.stream import build_agent_viewer_payload
@@ -252,7 +252,7 @@ def test_build_agent_viewer_payload_marks_completed_stream(tmp_path: Path) -> No
         ),
         request_function="observation",
     )
-    perception.update_stream_status("sess_done", status="completed", ended_at_ms=1710000001000)
+    perception.update_stream_status(status="completed", ended_at_ms=1710000001000)
     store.append_chat_request(
         session_id="sess_done",
         device_id="robot_01",

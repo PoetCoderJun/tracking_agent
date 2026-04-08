@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from backend.skill_payload import processed_skill_payload
+
 
 def _optional_text(value: Any) -> Optional[str]:
     if value in (None, ""):
@@ -127,24 +129,20 @@ def build_tracking_turn_payload(select_output: Dict[str, Any]) -> Dict[str, Any]
     if tool not in {"init", "track"}:
         raise ValueError(f"Unsupported tracking tool: {tool}")
 
-    return {
-        "status": "processed",
-        "skill_name": "tracking",
-        "session_result": _session_result(select_output),
-        "latest_result_patch": None,
-        "skill_state_patch": _skill_state_patch(select_output),
-        "user_preferences_patch": None,
-        "environment_map_patch": None,
-        "perception_cache_patch": None,
-        "robot_response": _robot_response(select_output),
-        "tool": tool,
-        "tool_output": dict(select_output),
-        "rewrite_output": None,
-        "rewrite_memory_input": dict(select_output.get("rewrite_memory_input") or {})
-        if bool(select_output.get("found", False))
-        else None,
-        "reason": _optional_text(select_output.get("reason")),
-    }
+    return processed_skill_payload(
+        skill_name="tracking",
+        session_result=_session_result(select_output),
+        skill_state_patch=_skill_state_patch(select_output),
+        robot_response=_robot_response(select_output),
+        tool=tool,
+        tool_output=dict(select_output),
+        rewrite_memory_input=(
+            dict(select_output.get("rewrite_memory_input") or {})
+            if bool(select_output.get("found", False))
+            else None
+        ),
+        reason=_optional_text(select_output.get("reason")),
+    )
 
 
 def ensure_rewrite_paths_exist(payload: Dict[str, Any]) -> Dict[str, Any]:

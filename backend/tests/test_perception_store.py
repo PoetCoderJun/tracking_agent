@@ -4,8 +4,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from agent import AgentSessionStore
-from backend.tracking.context import build_route_context, build_tracking_context
+from backend.runtime_session import AgentSessionStore
+from backend.tracking.context import build_tracking_context
 from backend.perception import (
     CAMERA_SENSOR_NAME,
     PERSON_DETECTION_KIND,
@@ -157,9 +157,8 @@ def test_local_perception_service_describes_saved_state(tmp_path: Path) -> None:
         request_function="chat",
     )
 
-    description = service.describe_saved_state(session_id="sess_001")
+    description = service.describe_saved_state()
 
-    assert description["session_id"] == "sess_001"
     assert description["persisted"]["recent_camera_observation_count"] == 1
     assert description["persisted"]["latest_camera_observation"]["id"] == "frame_000001"
     assert description["persisted"]["saved_keyframe_count"] == 1
@@ -188,18 +187,11 @@ def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -
     )
     context = runtime.load("sess_001")
 
-    route_context = build_route_context(
-        context,
-        request_id="req_001",
-        enabled_skill_names=["tracking"],
-    )
     tracking_context = build_tracking_context(
         context,
         request_id="req_001",
     )
 
-    assert route_context["latest_frame"]["frame_id"] == "frame_000001"
-    assert route_context["tracking"]["latest_target_id"] == 7
     assert tracking_context["latest_target_id"] == 7
     assert tracking_context["frames"][0]["detections"][0]["track_id"] == 7
 
@@ -224,17 +216,11 @@ def test_tracking_context_helpers_prefer_perception_store_over_session_frames(tm
     context = runtime.load("sess_001")
     context.session["recent_frames"] = []
 
-    route_context = build_route_context(
-        context,
-        request_id="req_009",
-        enabled_skill_names=["tracking"],
-    )
     tracking_context = build_tracking_context(
         context,
         request_id="req_009",
     )
 
-    assert route_context["latest_frame"]["frame_id"] == "frame_000009"
     assert tracking_context["frames"][0]["frame_id"] == "frame_000009"
     assert tracking_context["frames"][0]["detections"][0]["track_id"] == 42
 

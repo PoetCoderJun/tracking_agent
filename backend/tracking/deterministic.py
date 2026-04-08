@@ -6,9 +6,9 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from agent.session_store import AgentSessionStore
 from backend.perception.service import LocalPerceptionService
 from backend.project_paths import resolve_project_path
+from backend.runtime_session import AgentSessionStore
 from backend.tracking.context import build_tracking_context
 from backend.tracking.memory import normalize_tracking_memory, tracking_memory_display_text
 from backend.tracking.rewrite_memory import execute_rewrite_memory_tool
@@ -446,7 +446,7 @@ def build_tracking_wait_payload(
     reason: str,
 ) -> Dict[str, Any]:
     session = sessions.load(session_id, device_id=device_id)
-    latest_observation = LocalPerceptionService(sessions.state_root).latest_camera_observation(session_id=session_id)
+    latest_observation = LocalPerceptionService(sessions.state_root).latest_camera_observation()
     latest_frame_id = None if latest_observation is None else (latest_observation.get("payload") or {}).get("frame_id")
     tracking_state = dict((session.skills.get(TRACKING_SKILL_NAME) or {}))
     target_id = tracking_state.get("latest_target_id")

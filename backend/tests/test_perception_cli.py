@@ -18,23 +18,18 @@ def _frame_image(path: Path) -> Path:
 def test_parse_args_reads_snapshot_command(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
-        ["perception.py", "read", "--state-root", "./.runtime/state", "--session-id", "sess_001"],
+        ["perception.py", "read", "--state-root", "./.runtime/state"],
     )
     args = parse_args()
     assert args.command == "read"
     assert args.state_root == "./.runtime/state"
-    assert args.session_id == "sess_001"
 
 
 def test_local_perception_service_persists_observation_snapshot(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     frame_path = _frame_image(tmp_path / "frame.jpg")
     service = LocalPerceptionService(state_root=state_root)
-    service.prepare_session(
-        session_id="sess_001",
-        device_id="robot_01",
-        fresh_session=True,
-    )
+    service.prepare(fresh_state=True)
 
     snapshot = service.write_observation(
         RobotIngestEvent(
@@ -52,7 +47,6 @@ def test_local_perception_service_persists_observation_snapshot(tmp_path: Path) 
         request_function="observation",
     )
 
-    assert snapshot["session_id"] == "sess_001"
     assert snapshot["latest_camera_observation"]["id"] == "frame_000001"
     assert snapshot["latest_person_detection"]["payload"]["detections"][0]["track_id"] == 7
     assert snapshot["saved_keyframes"]
@@ -62,11 +56,7 @@ def test_perception_cli_prints_latest_frame(monkeypatch, tmp_path: Path, capsys)
     state_root = tmp_path / "state"
     frame_path = _frame_image(tmp_path / "frame.jpg")
     service = LocalPerceptionService(state_root=state_root)
-    service.prepare_session(
-        session_id="sess_001",
-        device_id="robot_01",
-        fresh_session=True,
-    )
+    service.prepare(fresh_state=True)
     service.write_observation(
         RobotIngestEvent(
             session_id="sess_001",
@@ -88,8 +78,6 @@ def test_perception_cli_prints_latest_frame(monkeypatch, tmp_path: Path, capsys)
             "latest-frame",
             "--state-root",
             str(state_root),
-            "--session-id",
-            "sess_001",
         ],
     )
 

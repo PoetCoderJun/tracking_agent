@@ -78,7 +78,6 @@ def normalized_recent_frames(
 def observation_recent_frames(
     *,
     state_root: Path,
-    session_id: str,
     excluded_track_ids: Any = None,
 ) -> List[Dict[str, Any]]:
     from backend.perception.service import LocalPerceptionService
@@ -86,7 +85,7 @@ def observation_recent_frames(
     excluded_track_id_set = _normalized_track_id_set(excluded_track_ids)
     frames: List[Dict[str, Any]] = []
     service = LocalPerceptionService(state_root)
-    for observation in service.recent_camera_observations(session_id=session_id):
+    for observation in service.recent_camera_observations():
         payload = dict(observation.get("payload") or {})
         meta = dict(observation.get("meta") or {})
         frames.append(
@@ -110,7 +109,6 @@ def tracking_recent_frames(
 ) -> List[Dict[str, Any]]:
     frames = observation_recent_frames(
         state_root=state_root,
-        session_id=session_id,
         excluded_track_ids=excluded_track_ids,
     )
     if frames:
@@ -138,7 +136,7 @@ def tracking_frame_count(
     state_root: Path,
     session_id: str,
 ) -> int:
-    frames = observation_recent_frames(state_root=state_root, session_id=session_id)
+    frames = observation_recent_frames(state_root=state_root)
     if frames:
         return len(frames)
     return len(persisted_recent_frames(state_root=state_root, session_id=session_id))
@@ -149,7 +147,7 @@ def first_tracking_frame_snapshot(
     state_root: Path,
     session_id: str,
 ) -> Dict[str, Any] | None:
-    frames = observation_recent_frames(state_root=state_root, session_id=session_id)
+    frames = observation_recent_frames(state_root=state_root)
     if not frames:
         frames = persisted_recent_frames(state_root=state_root, session_id=session_id)
     if not frames:

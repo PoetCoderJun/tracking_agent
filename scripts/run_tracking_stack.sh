@@ -10,7 +10,6 @@ SOURCE="camera"
 DEVICE_ID="robot_01"
 DEVICE=""
 TRACKER=""
-INIT_TEXT=""
 SESSION_ID=""
 FRONTEND_HOST="127.0.0.1"
 FRONTEND_PORT="5173"
@@ -52,10 +51,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tracker)
       TRACKER="$2"
-      shift 2
-      ;;
-    --init-text)
-      INIT_TEXT="$2"
       shift 2
       ;;
     --session-id)
@@ -219,7 +214,6 @@ AGENT_CMD=(uv run python -m backend.tracking.service
   --env-file "${ENV_FILE}"
   --artifacts-root "${ARTIFACTS_ROOT}"
   --continue-text "${CONTINUE_TEXT}"
-  --init-text "${INIT_TEXT}"
 )
 
 run_component perception "${PERCEPTION_CMD[@]}"
@@ -236,11 +230,8 @@ if [[ "${START_FRONTEND}" == "1" ]]; then
 fi
 
 printf '[stack] session-id: %s\n' "${SESSION_ID}"
-if [[ -n "${INIT_TEXT}" ]]; then
-  printf '[stack] init-text: %s\n' "${INIT_TEXT}"
-else
-  printf '[stack] init-text not provided. Start the stack first, then send one init chat turn manually.\n'
-fi
+printf '[stack] target selection is now handled by pi via project skills.\n'
+printf '[stack] use robot-agent session-start to create/attach runtime state if needed.\n'
 printf '[stack] backend ws: ws://%s:%s\n' "${BACKEND_HOST}" "${BACKEND_PORT}"
 if [[ "${START_FRONTEND}" == "1" ]]; then
   printf '[stack] frontend: http://%s:%s\n' "${FRONTEND_HOST}" "${FRONTEND_PORT}"

@@ -5,6 +5,8 @@ import argparse
 import json
 from pathlib import Path
 
+from backend.persistence import LiveSessionStore, resolve_session_id
+from backend.project_paths import resolve_project_path
 from backend.tracking.payload import build_tracking_turn_payload, ensure_rewrite_paths_exist
 from backend.tracking.select import execute_select_tool
 
@@ -16,6 +18,8 @@ def parse_args() -> argparse.Namespace:
     init_parser = subparsers.add_parser("init", help="Bind or switch a tracking target deterministically.")
     init_parser.add_argument("--tracking-context-file", default="")
     init_parser.add_argument("--session-file", default="")
+    init_parser.add_argument("--session-id", default=None)
+    init_parser.add_argument("--state-root", default="./.runtime/agent-runtime")
     init_parser.add_argument("--target-description", required=True)
     init_parser.add_argument("--env-file", default=".ENV")
     init_parser.add_argument("--artifacts-root", default="./.runtime/pi-agent")
@@ -23,6 +27,8 @@ def parse_args() -> argparse.Namespace:
     track_parser = subparsers.add_parser("track", help="Run one deterministic continue-tracking turn.")
     track_parser.add_argument("--tracking-context-file", default="")
     track_parser.add_argument("--session-file", default="")
+    track_parser.add_argument("--session-id", default=None)
+    track_parser.add_argument("--state-root", default="./.runtime/agent-runtime")
     track_parser.add_argument("--user-text", default="继续跟踪")
     track_parser.add_argument("--env-file", default=".ENV")
     track_parser.add_argument("--artifacts-root", default="./.runtime/pi-agent")
@@ -30,9 +36,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _resolved_session_file(args: argparse.Namespace) -> str:
+    session_file = str(getattr(args, "session_file", "") or "").strip()
+    if session_file:
+        return session_file
+    state_root = resolve_project_path(args.state_root)
+    session_id = resolve_session_id(state_root=state_root, session_id=getattr(args, "session_id", None))
+    if session_id is None:
+        raise ValueError("No active session found. Pass --session-id, --session-file, or start a session first.")
+    return str(LiveSessionStore(state_root).session_path(session_id).resolve())
+
+
 def _payload_for_command(args: argparse.Namespace) -> dict:
     tracking_context_file = str(getattr(args, "tracking_context_file", "") or "").strip()
-    session_file = str(getattr(args, "session_file", "") or "").strip()
+    session_file = _resolved_session_file(args) if not tracking_context_file else ""
     behavior = str(args.command).strip()
     arguments = (
         {"target_description": str(args.target_description)}

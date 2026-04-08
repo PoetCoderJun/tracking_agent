@@ -1,23 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
-import threading
-import time
-from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
 
-from backend.tracking.bootstrap import (
-    build_tracking_chat_command,
-    float_env_value,
-    load_tracking_env_values,
-    run_tracking_chat_command,
-    wait_for_first_tracking_frame,
-)
-from backend.persistence import resolve_session_id
-from backend.project_paths import resolve_project_path
+from backend.tracking.env import float_env_value, load_tracking_env_values
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,17 +14,13 @@ def parse_args() -> argparse.Namespace:
     env_values = load_tracking_env_values(bootstrap_args.env_file)
 
     parser = argparse.ArgumentParser(
-        description=(
-            "Run the backend tracking service: initialize the target, keep tracking state updated, "
-            "and dispatch deterministic continue-tracking turns when the target is lost."
-        )
+        description="Run the tracking backend service as a thin wrapper around backend.tracking.loop."
     )
     parser.add_argument("--session-id", default=None)
     parser.add_argument("--device-id", default="robot_01")
     parser.add_argument("--state-root", default="./.runtime/agent-runtime")
     parser.add_argument("--env-file", default=bootstrap_args.env_file)
     parser.add_argument("--artifacts-root", default="./.runtime/pi-agent")
-    parser.add_argument("--pi-binary", default="pi")
     parser.add_argument("--continue-text", default="继续跟踪")
     parser.add_argument(
         "--interval-seconds",
@@ -61,9 +44,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-turns", type=int, default=None)
     parser.add_argument("--stop-file", default=None)
-    parser.add_argument("--chat-poll-interval", type=float, default=0.5)
-    parser.add_argument("--init-text", default="")
-    parser.add_argument("--startup-timeout-seconds", type=float, default=60.0)
     return parser.parse_args()
 
 
@@ -100,119 +80,10 @@ def _loop_command(args: argparse.Namespace) -> list[str]:
     return command
 
 
-def _chat_command(args: argparse.Namespace, *, session_id: str, text: str) -> list[str]:
-    return build_tracking_chat_command(
-        session_id=session_id,
-        text=text,
-        device_id=str(args.device_id),
-        state_root=str(args.state_root),
-        artifacts_root=str(args.artifacts_root),
-        env_file=str(args.env_file),
-        pi_binary=str(args.pi_binary or "pi"),
-    )
-
-
-def _session_file(state_root: Path, session_id: str) -> Path:
-    return state_root / "sessions" / session_id / "session.json"
-
-
-def _entry_key(entry: Dict[str, object]) -> Tuple[str, str, str]:
-    return (
-        str(entry.get("role", "")).strip(),
-        str(entry.get("timestamp", "")).strip(),
-        str(entry.get("text", "")).strip(),
-    )
-
-
-def _tail_chat_logs(args: argparse.Namespace, stop_event: threading.Event) -> None:
-    state_root = resolve_project_path(args.state_root)
-    seen: Dict[str, Set[Tuple[str, str, str]]] = {}
-    while not stop_event.is_set():
-        session_id = resolve_session_id(state_root=state_root, session_id=args.session_id)
-        if session_id is not None:
-            session_file = _session_file(state_root, session_id)
-            if session_file.exists():
-                try:
-                    payload = json.loads(session_file.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    time.sleep(args.chat_poll_interval)
-                    continue
-                entries = list(payload.get("conversation_history") or [])
-                known = seen.setdefault(session_id, set())
-                for entry in entries:
-                    if not isinstance(entry, dict):
-                        continue
-                    key = _entry_key(entry)
-                    if key in known:
-                        continue
-                    known.add(key)
-                    print(
-                        json.dumps(
-                            {
-                                "session_id": session_id,
-                                "status": "agent_chat",
-                                "role": key[0],
-                                "timestamp": key[1],
-                                "text": key[2],
-                            },
-                            ensure_ascii=True,
-                        ),
-                        flush=True,
-                    )
-        stop_event.wait(args.chat_poll_interval)
-
-
-def _run_init_chat(args: argparse.Namespace) -> int:
-    init_text = str(args.init_text or "").strip()
-    if not init_text:
-        return 0
-
-    state_root = resolve_project_path(args.state_root)
-    session_id = wait_for_first_tracking_frame(
-        state_root=state_root,
-        requested_session_id=args.session_id,
-        timeout_seconds=float(args.startup_timeout_seconds),
-    )
-
-    command = _chat_command(args, session_id=str(session_id), text=init_text)
-    completed = run_tracking_chat_command(command)
-    if completed.stdout.strip():
-        print(completed.stdout.strip(), flush=True)
-    if completed.stderr.strip():
-        print(completed.stderr.strip(), file=sys.stderr, flush=True)
-    return int(completed.returncode)
-
-
 def main() -> int:
     args = parse_args()
-    stop_event = threading.Event()
-    tail_thread = threading.Thread(
-        target=_tail_chat_logs,
-        args=(args, stop_event),
-        name="tracking-agent-chat-tail",
-        daemon=True,
-    )
-    tail_thread.start()
-
-    init_status = _run_init_chat(args)
-    if init_status != 0:
-        stop_event.set()
-        tail_thread.join(timeout=1)
-        return init_status
-
-    process = subprocess.Popen(_loop_command(args))
-    try:
-        return process.wait()
-    except KeyboardInterrupt:
-        process.terminate()
-        try:
-            return process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            return process.wait()
-    finally:
-        stop_event.set()
-        tail_thread.join(timeout=1)
+    completed = subprocess.run(_loop_command(args), check=False)
+    return int(completed.returncode)
 
 
 if __name__ == "__main__":

@@ -9,9 +9,8 @@ description: Use when the user needs current web information, links, or source-b
 
 This skill handles current-information questions that require searching the web.
 
-- The runner should still decide whether this skill applies on each turn.
-- If it applies, the skill should perform a small web search and return a standard turn payload.
-- This skill is for online lookup, not for local docs or robot perception.
+- Use it for online lookup, not for local docs or robot perception.
+- The latest user message in the active session is the default query if you do not pass one explicitly.
 
 ## When to Use
 
@@ -25,28 +24,27 @@ Do not use this skill for:
 - Feishu notification turns
 - questions answerable from local session state alone
 
-## Routing Rules
+## Rules
 
-1. Read `turn_context.json` first.
-2. Read `context_paths.route_context_path`.
-3. Decide whether this turn needs current online search.
-4. If yes, call the bundled search helper, use its result, and answer the user naturally.
-5. If no, do not force the turn into this skill.
+1. Resolve the active session first.
+2. Decide whether this turn really needs current online search.
+3. If yes, call the bundled search helper once.
+4. After the helper returns, answer the user naturally and stop.
 
 ## Helper Script
 
 Use this deterministic helper:
 
-- `python -m skills.web_search.scripts.search_turn --turn-context-file <turn_context.json> --query ...`
+- `python -m skills.web_search.scripts.search_turn --session-id <session-id> --state-root ./.runtime/agent-runtime --env-file .ENV --query ...`
 
 Important:
 
-- The helper is an internal execution surface for obtaining search results.
 - Keep the query short and focused.
-- Do not expose the helper JSON to the user.
-- After the helper returns, give the user a concise natural-language answer with sources when useful.
-- After the helper returns and you have answered, stop immediately.
-- Do not inspect files, do not verify artifacts, do not run follow-up searches, and do not call any more tools.
+- The helper also applies the processed payload to persisted runtime state.
+- Do not inspect files, do not verify artifacts, and do not widen the turn beyond one search.
+- Do not expose helper JSON to the user.
+- Do not inspect files, do not verify artifacts, and do not call extra tools after the helper returns.
+- Do not run follow-up searches unless the user explicitly asks for refinement.
 
 ## Output Contract
 
@@ -56,5 +54,3 @@ For handled turns:
 2. call exactly one helper command
 3. answer the user naturally from the helper result
 4. stop immediately after answering
-
-If web search configuration is missing, the helper will still return a processed reply explaining the issue.

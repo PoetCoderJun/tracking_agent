@@ -20,14 +20,14 @@ Common options:
   --device <cpu|mps|cuda>
   --tracker <yaml>
   --session-id <id>
-  --init-text <text>
   --realtime-playback
   --start-frontend
 
 Current recommended flow:
-  1. Start the stack without forcing init.
-  2. Send one init turn separately with `robot-agent chat` or `robot-agent tracking-init`.
-  3. Use `robot-agent tracking-track` for deterministic single-step tracking tests.
+  1. Start the stack without forcing target selection.
+  2. Start or attach to the runtime session with `robot-agent session-start`.
+  3. Let `pi` run the conversation loop and call project skills directly.
+  4. Use `robot-agent tracking-init` / `robot-agent tracking-track` only for deterministic backend checks.
 """
 
 

@@ -9,7 +9,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, Iterable, List, Mapping, Sequence
 
-from agent.session_store import AgentSessionStore
 from backend.perception.service import LocalPerceptionService
 from backend.perception.stream import (
     RobotFrame,
@@ -22,6 +21,7 @@ from backend.perception.stream import (
 )
 from backend.perception.stream import RobotDetection
 from backend.project_paths import PROJECT_ROOT, resolve_project_path
+from backend.runtime_session import AgentSessionStore
 from backend.tracking.context import tracking_state_snapshot
 from backend.tracking.deterministic import (
     apply_tracking_rewrite_output,
@@ -942,12 +942,7 @@ def run_sequence_benchmark_stack_chain(
     session_id = f"bench_{sequence.name}_stack_vid{vid_stride}"
 
     perception_service = LocalPerceptionService(state_root=state_root)
-    perception_service.prepare_session(
-        session_id=session_id,
-        device_id=device_id,
-        fresh_session=True,
-        mark_active=True,
-    )
+    perception_service.prepare(fresh_state=True)
     sessions = AgentSessionStore(state_root=state_root, frame_buffer_size=frame_buffer_size)
 
     ground_truth_by_frame = load_sequence_ground_truth(sequence.labels_path)
@@ -1126,12 +1121,7 @@ def run_sequence_benchmark_rebind_fsm(
     session_id = f"bench_{sequence.name}_rebind_fsm"
 
     perception_service = LocalPerceptionService(state_root=state_root)
-    perception_service.prepare_session(
-        session_id=session_id,
-        device_id=device_id,
-        fresh_session=True,
-        mark_active=True,
-    )
+    perception_service.prepare(fresh_state=True)
     sessions = AgentSessionStore(state_root=state_root, frame_buffer_size=frame_buffer_size)
 
     label_map = load_sequence_label_map(sequence.labels_path)

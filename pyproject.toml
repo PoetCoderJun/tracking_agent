@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "robot-agent-runtime"
 version = "0.1.0"
-description = "Generic robot agent runtime with pluggable skills."
+description = "Pi-integrated runtime kernel for perception, tracking, and skill-side capability commands."
 readme = "README.md"
 requires-python = ">=3.9,<3.10"
 dependencies = [
@@ -28,7 +28,6 @@ robot-agent-tracking-stack = "scripts.run_tracking_stack:main"
 robot-agent-tracking-loop = "backend.tracking.loop:main"
 robot-agent-tracking-backend = "backend.tracking.service:main"
 robot-agent-tracking-viewer-stream = "viewer.stream:main"
-robot-agent-tracking-e2e = "backend.tests.run_demo_tracking_e2e:main"
 
 [dependency-groups]
 dev = [
@@ -36,7 +35,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["agent*", "backend*", "viewer*", "skills*", "scripts*"]
+include = ["backend*", "viewer*", "skills*", "scripts*"]
 
 [tool.uv]
 default-groups = ["dev"]

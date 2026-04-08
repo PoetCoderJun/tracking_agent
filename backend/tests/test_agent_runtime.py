@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from agent import AgentSessionStore
+from backend.runtime_session import AgentSessionStore
 from backend.perception import (
     LocalPerceptionService,
     RobotDetection,
@@ -114,6 +114,7 @@ def test_agent_session_store_apply_skill_result_keeps_runtime_summary_small(tmp_
     runtime = AgentSessionStore(tmp_path / "state")
     perception = LocalPerceptionService(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
+    runtime.start_fresh_session("sess_result", device_id="robot_01")
 
     perception.write_observation(
         RobotIngestEvent(

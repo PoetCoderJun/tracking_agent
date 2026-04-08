@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
 
-from agent.session import AgentSession
+from backend.runtime_session import AgentSession
 from backend.session_frames import observation_recent_frames
 
 
@@ -34,7 +34,6 @@ RobotPerceptionBundle = PerceptionBundle
 def build_perception_bundle(session: AgentSession) -> PerceptionBundle:
     recent_frames = observation_recent_frames(
         state_root=Path(session.state_paths["state_root"]),
-        session_id=session.session_id,
     )
     latest_frame = None if not recent_frames else recent_frames[-1]
     return PerceptionBundle(

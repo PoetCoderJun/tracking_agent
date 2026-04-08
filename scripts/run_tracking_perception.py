@@ -20,7 +20,6 @@ from backend.perception.stream import (
     RobotIngestEvent,
     append_event_jsonl,
     current_timestamp_ms,
-    generate_session_id,
     is_camera_source,
     normalize_source,
     probe_video_fps,
@@ -60,12 +59,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--session-id",
         default=None,
-        help="Optional. If omitted, create a random fresh session and mark it active.",
+        help="Optional. Stored in observation metadata only. It does not create or switch runtime sessions.",
     )
     parser.add_argument(
         "--fresh-session",
         action="store_true",
-        help="When --session-id is provided and already exists, reset it before writing new perception events.",
+        help="Reset the persisted global perception state before writing new perception events.",
     )
     parser.add_argument("--device-id", default="robot_01")
     parser.add_argument(
@@ -467,7 +466,6 @@ async def _run_perception_writer(
             break
 
     perception_service.update_stream_status(
-        session_id,
         status="completed",
         ended_at_ms=last_timestamp_ms if last_timestamp_ms is not None else current_timestamp_ms(),
     )
@@ -477,16 +475,9 @@ async def _run_perception_writer(
 def _prepare_perception_session(
     *,
     perception_service: LocalPerceptionService,
-    session_id: str,
-    device_id: str,
     fresh_session: bool,
 ) -> None:
-    perception_service.prepare_session(
-        session_id=session_id,
-        device_id=device_id,
-        fresh_session=fresh_session,
-        mark_active=True,
-    )
+    perception_service.prepare(fresh_state=fresh_session)
 
 
 async def _async_main() -> int:
@@ -511,7 +502,7 @@ async def _async_main() -> int:
     output_dir = resolve_project_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "events.jsonl").write_text("", encoding="utf-8")
-    session_id = args.session_id or generate_session_id()
+    session_id = str(args.session_id or "").strip()
     state_root = resolve_project_path(args.state_root)
     perception_service = LocalPerceptionService(
         state_root=state_root,
@@ -521,9 +512,7 @@ async def _async_main() -> int:
     )
     _prepare_perception_session(
         perception_service=perception_service,
-        session_id=session_id,
-        device_id=args.device_id,
-        fresh_session=bool(args.fresh_session or args.session_id in (None, "")),
+        fresh_session=bool(args.fresh_session),
     )
 
     YOLO = _load_yolo()

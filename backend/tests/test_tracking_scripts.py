@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from agent.session_store import AgentSessionStore
+from backend.runtime_session import AgentSessionStore
 from backend.config import Settings
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 

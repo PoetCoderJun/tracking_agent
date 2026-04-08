@@ -160,7 +160,7 @@ def test_track_kwargs_omits_imgsz_when_not_set(monkeypatch) -> None:
     assert kwargs["tracker"] == "botsort.yaml"
 
 def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_path) -> None:
-    from agent.session_store import AgentSessionStore
+    from backend.runtime_session import AgentSessionStore
     from backend.perception import LocalPerceptionService
 
     state_root = tmp_path / "state"
@@ -171,8 +171,6 @@ def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_pa
 
     _prepare_perception_session(
         perception_service=perception,
-        session_id="sess_001",
-        device_id="robot_01",
         fresh_session=False,
     )
 
@@ -181,7 +179,7 @@ def test_prepare_perception_session_reuses_existing_session_without_reset(tmp_pa
 
 
 def test_prepare_perception_session_resets_existing_session_when_requested(tmp_path) -> None:
-    from agent.session_store import AgentSessionStore
+    from backend.runtime_session import AgentSessionStore
     from backend.perception import LocalPerceptionService
 
     state_root = tmp_path / "state"
@@ -192,10 +190,8 @@ def test_prepare_perception_session_resets_existing_session_when_requested(tmp_p
 
     _prepare_perception_session(
         perception_service=perception,
-        session_id="sess_001",
-        device_id="robot_01",
         fresh_session=True,
     )
 
     context = runtime.load("sess_001")
-    assert context.skill_cache == {}
+    assert context.skill_cache["tracking"]["latest_target_id"] == 7
