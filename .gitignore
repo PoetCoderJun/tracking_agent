@@ -38,6 +38,7 @@ runtime/
 .runtime/
 claw/target/
 *.pt
+*.omx
 
 # Generated weekly deck artifacts and local media scratch files.
 docs/weekly_ppt_deck/*.pptx
