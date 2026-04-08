@@ -1,5 +1,5 @@
 {
-  "last_turn_at": "2026-04-07T04:00:40.988Z",
-  "turn_count": 392,
-  "last_agent_output": "可以，给你一个“更深入”的结论：\n\n`--source 0` 现在不行的核心不在脚本流程，而在 macOS 的 **摄像头设备映射/采集状态** 上。\n\n我刚做的直接复验显示：\n- `model.tr"
+  "last_turn_at": "2026-04-08T06:28:10.137Z",
+  "turn_count": 396,
+  "last_agent_output": "是。这是个核心问题。\n\n你现在能看到的只有两类东西：\n1. 最终超时错误\n2. 事后去翻 `pi_stdout.jsonl`\n\n这会导致排查很被动，因为真正决定成败的是中间过程：\n- 它读了哪个文件\n"
 }

@@ -375,11 +375,12 @@ def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _unique_matched_candidate_id(
+def _collect_matched_candidates(
     *,
     candidate_checks: List[Dict[str, Any]],
     detections: List[DetectionRecord],
-) -> Optional[int]:
+) -> List[int]:
+    """收集所有 status 为 match 的候选 ID（按 candidate_checks 顺序）。"""
     matched_ids: List[int] = []
     seen: set[int] = set()
     for item in list(candidate_checks or []):
@@ -397,9 +398,64 @@ def _unique_matched_candidate_id(
             continue
         seen.add(resolved_id)
         matched_ids.append(resolved_id)
+    return matched_ids
+
+
+def _unique_matched_candidate_id(
+    *,
+    candidate_checks: List[Dict[str, Any]],
+    detections: List[DetectionRecord],
+) -> Optional[int]:
+    matched_ids = _collect_matched_candidates(
+        candidate_checks=candidate_checks,
+        detections=detections,
+    )
     if len(matched_ids) != 1:
         return None
     return matched_ids[0]
+
+
+def _build_clarification_for_multiple_matches(
+    *,
+    matched_ids: List[int],
+    candidate_checks: List[Dict[str, Any]],
+) -> str:
+    """基于 candidate_checks 中的 evidence 构建多目标澄清问题。"""
+    if not matched_ids:
+        return "当前没有匹配的候选人，请补充特征描述。"
+    
+    # 收集每个匹配候选的 evidence
+    id_to_evidence: Dict[int, str] = {}
+    for item in list(candidate_checks or []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status", "")).strip() != "match":
+            continue
+        candidate_id = item.get("bounding_box_id")
+        if candidate_id in (None, ""):
+            continue
+        resolved_id = int(candidate_id)
+        if resolved_id not in matched_ids:
+            continue
+        evidence = str(item.get("evidence", "")).strip()
+        if evidence:
+            id_to_evidence[resolved_id] = evidence
+    
+    if len(matched_ids) == 1:
+        return f"请确认是否跟踪 ID 为 {matched_ids[0]} 的目标？"
+    
+    # 构建问题
+    parts: List[str] = []
+    for idx, cid in enumerate(matched_ids, 1):
+        evidence = id_to_evidence.get(cid, "")
+        if evidence:
+            parts.append(f"第{idx}个（ID {cid}）：{evidence}")
+        else:
+            parts.append(f"第{idx}个（ID {cid}）")
+    
+    question = f"当前有 {len(matched_ids)} 个匹配的目标：\n" + "\n".join(parts)
+    question += "\n请问跟踪哪一个？请回复目标编号或描述特征。"
+    return question
 
 
 def explicit_target_result(*, target_id: int, matched: Optional[DetectionRecord], behavior: str) -> Dict[str, Any]:
@@ -656,6 +712,29 @@ def execute_select_tool(
                 detections=detections,
                 behavior=behavior,
             )
+            # init 模式下：如果用户未明确指定目标，且检测到多个匹配候选，触发澄清问题
+            if (
+                normalized.get("found")
+                and requested_target_id is None
+                and not normalized.get("needs_clarification")
+            ):
+                matched_ids = _collect_matched_candidates(
+                    candidate_checks=list(normalized.get("candidate_checks") or []),
+                    detections=detections,
+                )
+                if len(matched_ids) > 1:
+                    question = _build_clarification_for_multiple_matches(
+                        matched_ids=matched_ids,
+                        candidate_checks=list(normalized.get("candidate_checks") or []),
+                    )
+                    normalized["found"] = False
+                    normalized["target_id"] = None
+                    normalized["bounding_box_id"] = None
+                    normalized["decision"] = "ask"
+                    normalized["needs_clarification"] = True
+                    normalized["clarification_question"] = question
+                    normalized["text"] = question
+                    normalized["reason"] = f"检测到 {len(matched_ids)} 个匹配目标，需要用户澄清。"
     else:
         if requested_target_id is not None:
             normalized = explicit_target_result(

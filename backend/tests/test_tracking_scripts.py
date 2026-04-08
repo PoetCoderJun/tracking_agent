@@ -1234,3 +1234,198 @@ def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> Non
     assert exit_code == 0
     context = runtime.load("sess_worker_skip")
     assert context.skill_cache["tracking"]["latest_memory"] == _structured_memory("旧 memory")
+
+
+def test_select_init_requests_clarification_when_multiple_candidates_match(tmp_path: Path, monkeypatch):
+    """Test that init mode asks for clarification when multiple candidates match the description."""
+    select = _load_select()
+
+    from backend.config import Settings
+
+    def fake_settings(_: Path | None = None):
+        return Settings(
+            api_key="test",
+            base_url="http://test",
+            model="main",
+            main_model="main",
+            sub_model="sub",
+            timeout_seconds=30,
+            sample_fps=1.0,
+            query_interval_seconds=3,
+            recent_frame_count=3,
+            chat_model="chat",
+        )
+
+    # 模拟模型返回多个匹配的候选
+    def fake_call_model(**kwargs):
+        return {
+            "elapsed_seconds": 0.05,
+            "response_text": json.dumps(
+                {
+                    "found": True,
+                    "bounding_box_id": 10,
+                    "decision": "track",
+                    "text": "已锁定穿黑衣服的人。",
+                    "reason": "找到匹配的候选人。",
+                    "reject_reason": "",
+                    "needs_clarification": False,
+                    "clarification_question": None,
+                    "candidate_checks": [
+                        {"bounding_box_id": 10, "status": "match", "evidence": "黑色上衣、浅色短裤"},
+                        {"bounding_box_id": 11, "status": "match", "evidence": "黑色上衣、深色长裤"},
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        }
+
+    monkeypatch.setattr(select, "load_settings", fake_settings)
+    monkeypatch.setattr(select, "call_model", fake_call_model)
+
+    # 创建测试用的 session 文件
+    frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
+    session_file = tmp_path / "session.json"
+    session = {
+        "session_id": "test_session",
+        "device_id": "robot_01",
+        "latest_request_id": "req_001",
+        "latest_request_function": "chat",
+        "conversation_history": [],
+        "recent_frames": [
+            {
+                "frame_id": "frame_000001",
+                "timestamp_ms": 1710000000000,
+                "image_path": str(frame_path),
+                "detections": [
+                    {"track_id": 10, "bbox": [100, 100, 200, 300], "score": 0.92},
+                    {"track_id": 11, "bbox": [300, 100, 400, 300], "score": 0.89},
+                ],
+            }
+        ],
+        "user_preferences": {},
+        "environment_map": {},
+        "perception_cache": {},
+        "skill_cache": {
+            "tracking": {
+                "target_description": "穿黑衣服的人",
+                "latest_memory": "",
+                "latest_target_id": None,
+                "latest_confirmed_frame_path": None,
+            }
+        },
+    }
+    session_file.write_text(json.dumps(session), encoding="utf-8")
+
+    result = select.execute_select_tool(
+        session_file=session_file,
+        behavior="init",
+        arguments={"target_description": "穿黑衣服的人"},
+        env_file=tmp_path / ".ENV",
+        artifacts_root=tmp_path / "artifacts",
+    )
+
+    # 验证结果：应该触发澄清问题，而不是直接锁定目标
+    assert result["found"] is False
+    assert result["decision"] == "ask"
+    assert result["needs_clarification"] is True
+    assert result["target_id"] is None
+    assert result["bounding_box_id"] is None
+    assert "2 个匹配的目标" in result["text"]
+    assert "ID 10" in result["text"]
+    assert "ID 11" in result["text"]
+    assert "黑色上衣、浅色短裤" in result["text"]
+    assert "黑色上衣、深色长裤" in result["text"]
+
+
+def test_select_init_does_not_request_clarification_when_single_match(tmp_path: Path, monkeypatch):
+    """Test that init mode proceeds normally when only one candidate matches."""
+    select = _load_select()
+
+    from backend.config import Settings
+
+    def fake_settings(_: Path | None = None):
+        return Settings(
+            api_key="test",
+            base_url="http://test",
+            model="main",
+            main_model="main",
+            sub_model="sub",
+            timeout_seconds=30,
+            sample_fps=1.0,
+            query_interval_seconds=3,
+            recent_frame_count=3,
+            chat_model="chat",
+        )
+
+    # 模拟模型返回单个匹配的候选
+    def fake_call_model(**kwargs):
+        return {
+            "elapsed_seconds": 0.05,
+            "response_text": json.dumps(
+                {
+                    "found": True,
+                    "bounding_box_id": 10,
+                    "decision": "track",
+                    "text": "已锁定穿黑衣服的人。",
+                    "reason": "找到唯一匹配的候选人。",
+                    "reject_reason": "",
+                    "needs_clarification": False,
+                    "clarification_question": None,
+                    "candidate_checks": [
+                        {"bounding_box_id": 10, "status": "match", "evidence": "黑色上衣、浅色短裤"},
+                        {"bounding_box_id": 11, "status": "unknown", "evidence": "上衣颜色不符"},
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        }
+
+    monkeypatch.setattr(select, "load_settings", fake_settings)
+    monkeypatch.setattr(select, "call_model", fake_call_model)
+
+    frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
+    session_file = tmp_path / "session.json"
+    session = {
+        "session_id": "test_session",
+        "device_id": "robot_01",
+        "latest_request_id": "req_001",
+        "latest_request_function": "chat",
+        "conversation_history": [],
+        "recent_frames": [
+            {
+                "frame_id": "frame_000001",
+                "timestamp_ms": 1710000000000,
+                "image_path": str(frame_path),
+                "detections": [
+                    {"track_id": 10, "bbox": [100, 100, 200, 300], "score": 0.92},
+                    {"track_id": 11, "bbox": [300, 100, 400, 300], "score": 0.89},
+                ],
+            }
+        ],
+        "user_preferences": {},
+        "environment_map": {},
+        "perception_cache": {},
+        "skill_cache": {
+            "tracking": {
+                "target_description": "穿黑衣服的人",
+                "latest_memory": "",
+                "latest_target_id": None,
+                "latest_confirmed_frame_path": None,
+            }
+        },
+    }
+    session_file.write_text(json.dumps(session), encoding="utf-8")
+
+    result = select.execute_select_tool(
+        session_file=session_file,
+        behavior="init",
+        arguments={"target_description": "穿黑衣服的人"},
+        env_file=tmp_path / ".ENV",
+        artifacts_root=tmp_path / "artifacts",
+    )
+
+    # 验证结果：应该直接锁定目标，不触发澄清问题
+    assert result["found"] is True
+    assert result["decision"] == "track"
+    assert result["needs_clarification"] is False
+    assert result["target_id"] == 10
