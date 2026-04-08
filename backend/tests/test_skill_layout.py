@@ -5,6 +5,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND_TRACKING_ROOT = ROOT / "backend" / "tracking"
+BACKEND_WEB_SEARCH_PATH = ROOT / "backend" / "web_search.py"
+BACKEND_FEISHU_PATH = ROOT / "backend" / "feishu.py"
+BACKEND_DESCRIBE_IMAGE_PATH = ROOT / "backend" / "describe_image.py"
 RUNTIME_SESSION_PATH = ROOT / "backend" / "runtime_session.py"
 SKILL_ROOT = ROOT / "skills" / "tracking"
 WEB_SEARCH_SKILL_ROOT = ROOT / "skills" / "web_search"
@@ -30,9 +33,10 @@ def test_skill_package_contains_expected_files() -> None:
         BACKEND_TRACKING_ROOT / "visualization.py",
         BACKEND_TRACKING_ROOT / "viewer.py",
         BACKEND_TRACKING_ROOT / "rewrite_memory.py",
-        BACKEND_TRACKING_ROOT / "rewrite_worker.py",
-        BACKEND_TRACKING_ROOT / "service.py",
         BACKEND_TRACKING_ROOT / "loop.py",
+        BACKEND_WEB_SEARCH_PATH,
+        BACKEND_FEISHU_PATH,
+        BACKEND_DESCRIBE_IMAGE_PATH,
         ROOT / "scripts" / "run_tracking_perception.py",
         ROOT / "scripts" / "run_tracking_loop.py",
         ROOT / "scripts" / "run_tracking_viewer_stream.py",
@@ -67,6 +71,8 @@ def test_legacy_turn_runner_artifacts_are_removed() -> None:
     assert not (ROOT / "terminal" / "pi_agent_tui.mjs").exists()
     assert not (ROOT / "terminal" / "package.json").exists()
     assert not (ROOT / "scripts" / "run_tracking_agent.py").exists()
+    assert not (BACKEND_TRACKING_ROOT / "service.py").exists()
+    assert not (BACKEND_TRACKING_ROOT / "rewrite_worker.py").exists()
 
 
 def test_tracking_skill_contract_is_pi_native() -> None:
@@ -83,6 +89,7 @@ def test_web_search_skill_contract_is_pi_native() -> None:
     assert "route_context" not in skill
     assert "--session-id <session-id>" in skill
     assert "python -m skills.web_search.scripts.search_turn" in skill
+    assert "backend" in skill
 
 
 def test_feishu_skill_contract_is_pi_native() -> None:
@@ -91,6 +98,7 @@ def test_feishu_skill_contract_is_pi_native() -> None:
     assert "route_context" not in skill
     assert "--session-id <session-id>" in skill
     assert "python -m skills.feishu.scripts.notify_turn" in skill
+    assert "backend" in skill
 
 
 def test_describe_image_skill_contract_is_pi_native() -> None:
@@ -99,3 +107,21 @@ def test_describe_image_skill_contract_is_pi_native() -> None:
     assert "route_context" not in skill
     assert "--session-id <session-id>" in skill
     assert "python -m skills.describe_image.scripts.describe_turn" in skill
+    assert "backend" in skill
+
+
+def test_external_skill_scripts_are_thin_backend_adapters() -> None:
+    web_search = (WEB_SEARCH_SKILL_ROOT / "scripts" / "search_turn.py").read_text(encoding="utf-8")
+    feishu = (FEISHU_SKILL_ROOT / "scripts" / "notify_turn.py").read_text(encoding="utf-8")
+    describe_image = (DESCRIBE_IMAGE_SKILL_ROOT / "scripts" / "describe_turn.py").read_text(encoding="utf-8")
+
+    assert "run_web_search_turn" in web_search
+    assert "run_notify_turn" in feishu
+    assert "run_describe_turn" in describe_image
+
+    assert "processed_skill_payload" not in web_search
+    assert "apply_processed_payload" not in web_search
+    assert "processed_skill_payload" not in feishu
+    assert "apply_processed_payload" not in feishu
+    assert "processed_skill_payload" not in describe_image
+    assert "apply_processed_payload" not in describe_image

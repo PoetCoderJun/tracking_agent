@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from backend.runtime_session import AgentSessionStore
 from backend.skills import build_viewer_modules, installed_skill_names
 
@@ -62,6 +64,66 @@ def test_web_search_turn_reports_missing_api_key(tmp_path: Path, capsys) -> None
     assert "skill_state_patch" not in payload
     assert "rewrite_output" not in payload
     assert "rewrite_memory_input" not in payload
+
+
+def test_web_search_turn_without_session_stays_stateless(tmp_path: Path, capsys) -> None:
+    from skills.web_search.scripts import search_turn
+
+    env_path = tmp_path / ".ENV"
+    env_path.write_text("", encoding="utf-8")
+    exit_code = search_turn.main(
+        [
+            "--query",
+            "搜索今天的机器人新闻",
+            "--state-root",
+            str(tmp_path / "state"),
+            "--env-file",
+            str(env_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["skill_name"] == "web_search"
+    assert "missing TAVILY_API_KEY" in payload["session_result"]["text"]
+    assert not ((tmp_path / "state") / "active_session.json").exists()
+
+
+def test_feishu_notify_turn_requires_existing_or_explicit_session(tmp_path: Path) -> None:
+    from skills.feishu.scripts import notify_turn
+
+    env_path = tmp_path / ".ENV"
+    env_path.write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="No active session found"):
+        notify_turn.main(
+            [
+                "--state-root",
+                str(tmp_path / "state"),
+                "--env-file",
+                str(env_path),
+            ]
+        )
+
+
+def test_describe_image_turn_without_session_stays_stateless(tmp_path: Path, capsys) -> None:
+    from skills.describe_image.scripts import describe_turn
+
+    env_path = tmp_path / ".ENV"
+    env_path.write_text("", encoding="utf-8")
+    exit_code = describe_turn.main(
+        [
+            "--state-root",
+            str(tmp_path / "state"),
+            "--env-file",
+            str(env_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["skill_name"] == "describe_image"
+    assert payload["tool_output"]["error"] == "missing image"
+    assert not ((tmp_path / "state") / "active_session.json").exists()
 
 
 def test_feishu_notify_turn_writes_mock_outbox(tmp_path: Path, capsys) -> None:
@@ -140,7 +202,9 @@ def test_feishu_notify_turn_sends_real_message_when_configured(tmp_path: Path, c
             return _Response({"code": 0, "tenant_access_token": "tenant_token_001"})
         return _Response({"code": 0, "data": {"message_id": "om_123"}})
 
-    monkeypatch.setattr(notify_turn.urllib.request, "urlopen", _fake_urlopen)
+    import backend.feishu as backend_feishu
+
+    monkeypatch.setattr(backend_feishu.urllib.request, "urlopen", _fake_urlopen)
 
     exit_code = notify_turn.main(
         [

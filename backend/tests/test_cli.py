@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 
 from backend.cli import main, parse_args
 
@@ -10,14 +11,14 @@ def test_parse_args_session_start(monkeypatch) -> None:
         "sys.argv",
         [
             "robot_agent.py",
-            "session-start",
+            "runner-bootstrap",
             "--state-root",
             "./.runtime/agent-runtime",
             "--fresh",
         ],
     )
     args = parse_args()
-    assert args.command == "session-start"
+    assert args.command == "runner-bootstrap"
     assert args.fresh is True
 
 
@@ -42,7 +43,7 @@ def test_main_session_start_marks_active_session(monkeypatch, tmp_path, capsys) 
         "sys.argv",
         [
             "robot_agent.py",
-            "session-start",
+            "runner-bootstrap",
             "--session-id",
             "sess_001",
             "--state-root",
@@ -53,7 +54,7 @@ def test_main_session_start_marks_active_session(monkeypatch, tmp_path, capsys) 
 
     assert main() == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["status"] == "started"
+    assert payload["status"] == "bootstrapped"
     assert payload["session_id"] == "sess_001"
     active_session = json.loads((state_root / "active_session.json").read_text(encoding="utf-8"))
     assert active_session["session_id"] == "sess_001"
@@ -71,7 +72,7 @@ def test_main_session_start_without_session_id_creates_new_session(monkeypatch, 
         "sys.argv",
         [
             "robot_agent.py",
-            "session-start",
+            "runner-bootstrap",
             "--state-root",
             str(state_root),
         ],
@@ -79,7 +80,7 @@ def test_main_session_start_without_session_id_creates_new_session(monkeypatch, 
 
     assert main() == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["status"] == "started"
+    assert payload["status"] == "bootstrapped"
     assert payload["session_id"] != "sess_old"
     active_session = json.loads((state_root / "active_session.json").read_text(encoding="utf-8"))
     assert active_session["session_id"] == payload["session_id"]
@@ -187,3 +188,21 @@ def test_main_tracking_init_calls_deterministic_backend(monkeypatch, tmp_path, c
     payload = json.loads(capsys.readouterr().out)
     assert payload["tool"] == "init"
     assert captured["session_id"] == "sess_001"
+
+
+def test_main_tracking_init_requires_existing_or_explicit_session(monkeypatch, tmp_path) -> None:
+    state_root = tmp_path / "state"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "robot_agent.py",
+            "tracking-init",
+            "--state-root",
+            str(state_root),
+            "--text",
+            "开始跟踪穿黑衣服的人",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="No active session found"):
+        main()

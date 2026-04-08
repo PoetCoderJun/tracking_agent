@@ -44,6 +44,8 @@ class LocalPerceptionService:
         return snapshot
 
     def reset(self) -> Dict[str, Any]:
+        if self._recorder is not None:
+            self._recorder.clear()
         snapshot = self._empty_snapshot_payload()
         self._write_snapshot_payload(payload=snapshot)
         return self.read_snapshot()

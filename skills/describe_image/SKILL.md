@@ -42,7 +42,7 @@ Use this deterministic helper:
 
 Important:
 
-- The helper already writes the processed payload back to persisted runtime state when a session is available.
+- The helper is only a thin entrypoint; backend turn logic assembles and applies the processed payload.
 - Return the helper JSON unchanged.
 
 For ordinary visual-description turns:

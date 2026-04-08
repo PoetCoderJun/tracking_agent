@@ -15,9 +15,9 @@ FRONTEND_HOST="127.0.0.1"
 FRONTEND_PORT="5173"
 BACKEND_HOST="127.0.0.1"
 BACKEND_PORT="8765"
-CONTINUE_TEXT="继续跟踪"
 REALTIME_PLAYBACK="0"
 START_FRONTEND="0"
+SHUTTING_DOWN="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -77,10 +77,6 @@ while [[ $# -gt 0 ]]; do
       BACKEND_PORT="$2"
       shift 2
       ;;
-    --continue-text)
-      CONTINUE_TEXT="$2"
-      shift 2
-      ;;
     --realtime-playback)
       REALTIME_PLAYBACK="1"
       shift
@@ -121,25 +117,21 @@ ensure_port_free() {
 }
 
 cleanup() {
+  if [[ "${SHUTTING_DOWN}" == "1" ]]; then
+    return 0
+  fi
+  SHUTTING_DOWN="1"
   for pid in "${PIDS[@]:-}"; do
     kill_tree "${pid}"
   done
+  wait || true
 }
 
 prefix_stream() {
   local default_name="$1"
-  local prefix
   local line
   while IFS= read -r line || [[ -n "${line}" ]]; do
-    prefix="${default_name}"
-    if [[ "${default_name}" == "agent" ]]; then
-      case "${line}" in
-        *'"status": "tracking_bound"'*|*'"status":"tracking_bound"'*|*'"status": "idle"'*|*'"status":"idle"'*)
-          prefix="loop"
-          ;;
-      esac
-    fi
-    printf '[%s] %s\n' "${prefix}" "${line}"
+    printf '[%s] %s\n' "${default_name}" "${line}"
   done
 }
 
@@ -157,10 +149,27 @@ kill_tree() {
       fi
     done <<< "${children}"
   fi
-  kill "${pid}" >/dev/null 2>&1 || true
+  kill -TERM "${pid}" >/dev/null 2>&1 || true
+  sleep 0.2
+  kill -0 "${pid}" >/dev/null 2>&1 || return 0
+  kill -KILL "${pid}" >/dev/null 2>&1 || true
 }
 
-trap cleanup EXIT INT TERM
+handle_interrupt() {
+  trap - EXIT INT TERM
+  cleanup
+  exit 130
+}
+
+handle_term() {
+  trap - EXIT INT TERM
+  cleanup
+  exit 143
+}
+
+trap cleanup EXIT
+trap handle_interrupt INT
+trap handle_term TERM
 
 run_component() {
   local name="$1"
@@ -207,18 +216,8 @@ BACKEND_CMD=(uv run python -m viewer.stream
   --port "${BACKEND_PORT}"
 )
 
-AGENT_CMD=(uv run python -m backend.tracking.service
-  --session-id "${SESSION_ID}"
-  --device-id "${DEVICE_ID}"
-  --state-root "${STATE_ROOT}"
-  --env-file "${ENV_FILE}"
-  --artifacts-root "${ARTIFACTS_ROOT}"
-  --continue-text "${CONTINUE_TEXT}"
-)
-
 run_component perception "${PERCEPTION_CMD[@]}"
 run_component backend "${BACKEND_CMD[@]}"
-run_component agent "${AGENT_CMD[@]}"
 
 if [[ "${START_FRONTEND}" == "1" ]]; then
   FRONTEND_CMD=(bash "${ROOT_DIR}/scripts/run_tracking_frontend.sh"
@@ -231,7 +230,9 @@ fi
 
 printf '[stack] session-id: %s\n' "${SESSION_ID}"
 printf '[stack] target selection is now handled by pi via project skills.\n'
-printf '[stack] use robot-agent session-start to create/attach runtime state if needed.\n'
+printf '[stack] stack only starts perception and viewer.\n'
+printf '[stack] use e-agent to bootstrap the main runner session and enter pi.\n'
+printf '[stack] start robot-agent-tracking-loop separately only if you want continuous tracking.\n'
 printf '[stack] backend ws: ws://%s:%s\n' "${BACKEND_HOST}" "${BACKEND_PORT}"
 if [[ "${START_FRONTEND}" == "1" ]]; then
   printf '[stack] frontend: http://%s:%s\n' "${FRONTEND_HOST}" "${FRONTEND_PORT}"

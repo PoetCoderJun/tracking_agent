@@ -10,11 +10,11 @@ from PIL import Image, ImageDraw
 from backend.runtime_session import AgentSessionStore
 from backend.config import Settings
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
+from backend.tracking.deterministic import schedule_tracking_memory_rewrite
 
 
 ROOT = Path(__file__).resolve().parents[2]
 TRACKING_BACKEND_ROOT = ROOT / "backend" / "tracking"
-TRACKING_WORKER_PATH = TRACKING_BACKEND_ROOT / "rewrite_worker.py"
 
 
 def _load_module(name: str, path: Path):
@@ -45,11 +45,6 @@ def _load_run_init():
 
 def _load_run_track():
     return _load_module("tracking_run_track", TRACKING_BACKEND_ROOT / "cli.py")
-
-
-def _load_run_worker():
-    return _load_module("tracking_run_rewrite_worker", TRACKING_WORKER_PATH)
-
 
 def _load_target_crop():
     return _load_module("tracking_target_crop", TRACKING_BACKEND_ROOT / "crop.py")
@@ -1080,8 +1075,7 @@ def test_run_tracking_track_script_returns_final_payload(tmp_path: Path, monkeyp
     assert payload["robot_response"]["action"] == "track"
 
 
-def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypatch) -> None:
-    worker = _load_run_worker()
+def test_schedule_tracking_memory_rewrite_updates_session_inline(tmp_path: Path, monkeypatch) -> None:
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root=state_root)
     perception = LocalPerceptionService(state_root=state_root)
@@ -1115,11 +1109,8 @@ def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypat
             "latest_confirmed_frame_path": str(frame_path),
         },
     )
-    memory_file = Path(runtime.load("sess_worker").state_paths["session_path"])
-
     monkeypatch.setattr(
-        worker,
-        "execute_rewrite_memory_tool",
+        "backend.tracking.deterministic.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "update",
             "memory": _structured_memory("新的 memory"),
@@ -1130,40 +1121,26 @@ def test_rewrite_worker_writes_status_and_result_files(tmp_path: Path, monkeypat
             "elapsed_seconds": 0.05,
         },
     )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "rewrite_worker.py",
-            "--state-root",
-            str(state_root),
-            "--session-id",
-            "sess_worker",
-            "--session-file",
-            str(memory_file),
-            "--task",
-            "update",
-            "--crop-path",
-            str(crop_path),
-            "--frame-path",
-            str(frame_path),
-            "--frame-id",
-            "frame_000001",
-            "--target-id",
-            "15",
-        ],
+
+    schedule_tracking_memory_rewrite(
+        sessions=runtime,
+        session_id="sess_worker",
+        rewrite_memory_input={
+            "task": "update",
+            "crop_path": str(crop_path),
+            "frame_paths": [str(frame_path)],
+            "frame_id": "frame_000001",
+            "target_id": 15,
+        },
+        env_file=tmp_path / ".ENV",
     )
 
-    exit_code = worker.main()
-
-    assert exit_code == 0
     context = runtime.load("sess_worker")
     assert context.skill_cache["tracking"]["latest_memory"] == _structured_memory("新的 memory")
     assert context.skill_cache["tracking"]["latest_front_target_crop"] == str(crop_path)
 
 
-def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> None:
-    worker = _load_run_worker()
+def test_schedule_tracking_memory_rewrite_skips_superseded_state(tmp_path: Path, monkeypatch) -> None:
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root=state_root)
     perception = LocalPerceptionService(state_root=state_root)
@@ -1198,40 +1175,24 @@ def test_rewrite_worker_skips_superseded_job(tmp_path: Path, monkeypatch) -> Non
             "latest_memory": _structured_memory("旧 memory"),
         },
     )
-    memory_file = Path(runtime.load("sess_worker_skip").state_paths["session_path"])
-
     monkeypatch.setattr(
-        worker,
-        "execute_rewrite_memory_tool",
-        lambda **_: (_ for _ in ()).throw(AssertionError("superseded job should not execute rewrite")),
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "rewrite_worker.py",
-            "--state-root",
-            str(state_root),
-            "--session-id",
-            "sess_worker_skip",
-            "--session-file",
-            str(memory_file),
-            "--task",
-            "update",
-            "--crop-path",
-            str(crop_path),
-            "--frame-path",
-            str(frame_path),
-            "--frame-id",
-            "frame_000001",
-            "--target-id",
-            "15",
-        ],
+        "backend.tracking.deterministic.execute_rewrite_memory_tool",
+        lambda **_: (_ for _ in ()).throw(AssertionError("superseded rewrite should not execute")),
     )
 
-    exit_code = worker.main()
+    schedule_tracking_memory_rewrite(
+        sessions=runtime,
+        session_id="sess_worker_skip",
+        rewrite_memory_input={
+            "task": "update",
+            "crop_path": str(crop_path),
+            "frame_paths": [str(frame_path)],
+            "frame_id": "frame_000001",
+            "target_id": 15,
+        },
+        env_file=tmp_path / ".ENV",
+    )
 
-    assert exit_code == 0
     context = runtime.load("sess_worker_skip")
     assert context.skill_cache["tracking"]["latest_memory"] == _structured_memory("旧 memory")
 

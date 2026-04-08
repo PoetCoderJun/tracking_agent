@@ -21,12 +21,12 @@ dependencies = [
 ]
 
 [project.scripts]
+e-agent = "scripts.e_agent:main"
 robot-agent = "backend.cli:main"
 robot-agent-perception = "backend.perception.cli:main"
 robot-agent-tracking-perception = "scripts.run_tracking_perception:main"
 robot-agent-tracking-stack = "scripts.run_tracking_stack:main"
 robot-agent-tracking-loop = "backend.tracking.loop:main"
-robot-agent-tracking-backend = "backend.tracking.service:main"
 robot-agent-tracking-viewer-stream = "viewer.stream:main"
 
 [dependency-groups]

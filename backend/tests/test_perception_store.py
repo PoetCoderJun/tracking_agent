@@ -104,6 +104,29 @@ def test_perception_recorder_prunes_history_to_retention_window(tmp_path: Path) 
     assert [path.stem for path in saved_paths] == ["frame_000002", "frame_000003"]
 
 
+def test_perception_recorder_prunes_existing_history_after_restart(tmp_path: Path) -> None:
+    source = _frame_image(tmp_path / "source.jpg")
+    root = tmp_path / "keyframes"
+
+    recorder = PerceptionRecorder(
+        root,
+        save_frame_every_seconds=1.0,
+        retention_seconds=2.0,
+    )
+    recorder.save_frame_reference(sensor=CAMERA_SENSOR_NAME, frame_id="frame_000001", ts_ms=1000, source_path=source)
+    recorder.save_frame_reference(sensor=CAMERA_SENSOR_NAME, frame_id="frame_000002", ts_ms=2000, source_path=source)
+
+    restarted = PerceptionRecorder(
+        root,
+        save_frame_every_seconds=1.0,
+        retention_seconds=2.0,
+    )
+    restarted.save_frame_reference(sensor=CAMERA_SENSOR_NAME, frame_id="frame_000003", ts_ms=3000, source_path=source)
+
+    saved_paths = restarted.saved_frame_paths(sensor=CAMERA_SENSOR_NAME)
+    assert [path.stem for path in saved_paths] == ["frame_000002", "frame_000003"]
+
+
 def test_local_perception_service_exposes_recent_camera_queries(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     service = LocalPerceptionService(state_root=state_root, observation_window_seconds=5.0)
@@ -162,6 +185,36 @@ def test_local_perception_service_describes_saved_state(tmp_path: Path) -> None:
     assert description["persisted"]["recent_camera_observation_count"] == 1
     assert description["persisted"]["latest_camera_observation"]["id"] == "frame_000001"
     assert description["persisted"]["saved_keyframe_count"] == 1
+
+
+def test_local_perception_service_reset_clears_snapshot_and_saved_keyframes(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    service = LocalPerceptionService(state_root=state_root, observation_window_seconds=5.0)
+    frame_path = _frame_image(tmp_path / "frame.jpg")
+
+    service.write_observation(
+        RobotIngestEvent(
+            session_id="sess_001",
+            device_id="robot_01",
+            frame=RobotFrame(frame_id="frame_000001", timestamp_ms=1000, image_path=str(frame_path)),
+            detections=[RobotDetection(track_id=9, bbox=[1, 2, 3, 4], score=0.9)],
+            text="继续跟踪",
+        ),
+    )
+
+    reset_snapshot = service.reset()
+
+    assert reset_snapshot["latest_camera_observation"] is None
+    assert reset_snapshot["saved_keyframes"] == []
+    assert service.save_frame_reference(
+        frame_id="frame_000002",
+        ts_ms=2000,
+        source_path=frame_path,
+        force=True,
+    ) is not None
+
+    service.reset()
+    assert service.describe_saved_state()["persisted"]["saved_keyframe_count"] == 0
 
 
 def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -> None:

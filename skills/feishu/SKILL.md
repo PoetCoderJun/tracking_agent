@@ -40,7 +40,7 @@ Use this deterministic helper:
 Important:
 
 - The helper writes the side effect and returns machine-readable details for the turn.
-- The helper also applies the processed payload to persisted runtime state.
+- The helper is only a thin entrypoint; backend turn logic assembles and applies the processed payload.
 - If `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_NOTIFY_RECEIVE_ID` are configured, the helper sends a real Feishu message and still records the mock Feishu outbox entry.
 - Keep the title short and action-oriented.
 - Do not expose helper JSON to the user.

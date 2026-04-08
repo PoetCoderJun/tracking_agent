@@ -40,7 +40,7 @@ Use this deterministic helper:
 Important:
 
 - Keep the query short and focused.
-- The helper also applies the processed payload to persisted runtime state.
+- The helper is only a thin entrypoint; backend turn logic assembles and applies the processed payload.
 - Do not inspect files, do not verify artifacts, and do not widen the turn beyond one search.
 - Do not expose helper JSON to the user.
 - Do not inspect files, do not verify artifacts, and do not call extra tools after the helper returns.

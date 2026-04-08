@@ -26,6 +26,7 @@ class PerceptionRecorder:
         self._last_saved_at_ms: dict[str, int] = {}
         self._saved_paths: DefaultDict[str, Deque[Path]] = defaultdict(deque)
         self._root.mkdir(parents=True, exist_ok=True)
+        self._load_existing_history()
 
     def maybe_save_camera_frame(
         self,
@@ -71,6 +72,18 @@ class PerceptionRecorder:
             key=lambda path: path.stat().st_mtime_ns,
         )
 
+    def clear(self) -> None:
+        for sensor_paths in self._saved_paths.values():
+            sensor_paths.clear()
+        self._saved_paths.clear()
+        self._last_saved_at_ms.clear()
+
+        if not self._root.exists():
+            return
+        for path in self._root.rglob("*"):
+            if path.is_file():
+                path.unlink()
+
     def _should_save(self, *, sensor: str, ts_ms: int) -> bool:
         last_saved_at_ms = self._last_saved_at_ms.get(sensor)
         if last_saved_at_ms is None:
@@ -89,3 +102,15 @@ class PerceptionRecorder:
                 expired_path.unlink()
             except FileNotFoundError:
                 continue
+
+    def _load_existing_history(self) -> None:
+        for sensor_dir in sorted(path for path in self._root.iterdir() if path.is_dir()):
+            paths = self._saved_paths[sensor_dir.name]
+            for path in self.saved_frame_paths(sensor=sensor_dir.name):
+                paths.append(path)
+            while len(paths) > self._max_saved_frames:
+                expired_path = paths.popleft()
+                try:
+                    expired_path.unlink()
+                except FileNotFoundError:
+                    continue

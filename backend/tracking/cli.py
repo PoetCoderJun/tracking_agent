@@ -43,7 +43,9 @@ def _resolved_session_file(args: argparse.Namespace) -> str:
     state_root = resolve_project_path(args.state_root)
     session_id = resolve_session_id(state_root=state_root, session_id=getattr(args, "session_id", None))
     if session_id is None:
-        raise ValueError("No active session found. Pass --session-id, --session-file, or start a session first.")
+        raise ValueError(
+            "No active session found. Pass --session-id, --session-file, or bootstrap the main runner session first."
+        )
     return str(LiveSessionStore(state_root).session_path(session_id).resolve())
 
 

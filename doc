@@ -37,10 +37,10 @@ uv run robot-agent session-start \
   --state-root "$STATE_ROOT"
 ```
 
-然后用 `pi` 作为唯一 runner，直接加载仓库 skills。一个最小示意流程是：
+然后用 `pi --no-skills` 作为唯一 runner，只加载仓库 skills。一个最小示意流程是：
 
 ```bash
-pi --skill ./skills/tracking --skill ./skills/describe_image --skill ./skills/web_search --skill ./skills/feishu
+pi --no-skills --skill ./skills/tracking --skill ./skills/describe_image --skill ./skills/web_search --skill ./skills/feishu
 ```
 
 在 `pi` 里输入：

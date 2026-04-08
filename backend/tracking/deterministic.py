@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -22,7 +20,6 @@ from backend.tracking.select import (
 from backend.tracking.crop import save_target_crop
 from backend.tracking.payload import build_tracking_turn_payload, ensure_rewrite_paths_exist
 
-ROOT = Path(__file__).resolve().parents[2]
 TRACKING_SKILL_NAME = "tracking"
 
 
@@ -244,6 +241,25 @@ def apply_tracking_rewrite_output(
     )
 
 
+def tracking_rewrite_still_relevant(
+    sessions: AgentSessionStore,
+    *,
+    session_id: str,
+    target_id: int,
+    confirmed_frame_path: str,
+) -> bool:
+    session = sessions.load(session_id)
+    tracking_state = dict(session.skills.get(TRACKING_SKILL_NAME) or {})
+    current_target_id = tracking_state.get("latest_target_id")
+    if current_target_id in (None, "", []):
+        return False
+    current_frame_path = str(tracking_state.get("latest_confirmed_frame_path", "") or "").strip()
+    try:
+        return int(current_target_id) == int(target_id) and current_frame_path == confirmed_frame_path
+    except (TypeError, ValueError):
+        return False
+
+
 def schedule_tracking_memory_rewrite(
     *,
     sessions: AgentSessionStore,
@@ -255,48 +271,34 @@ def schedule_tracking_memory_rewrite(
     if crop_path in (None, "") or not frame_paths:
         return
 
-    session = sessions.load(session_id)
-    command = [
-        sys.executable,
-        "-m",
-        "backend.tracking.rewrite_worker",
-        "--state-root",
-        str(session.state_paths["state_root"]),
-        "--session-id",
-        session_id,
-        "--session-file",
-        str(session.state_paths["session_path"]),
-        "--task",
-        str(rewrite_memory_input["task"]),
-        "--crop-path",
-        crop_path,
-        "--frame-id",
-        str(rewrite_memory_input["frame_id"]),
-        "--target-id",
-        str(rewrite_memory_input["target_id"]),
-        "--env-file",
-        str(env_file),
-    ]
-    confirmation_reason = rewrite_memory_input.get("confirmation_reason")
-    if confirmation_reason not in (None, ""):
-        command.extend(["--confirmation-reason", confirmation_reason])
-    candidate_checks = rewrite_memory_input.get("candidate_checks")
-    if isinstance(candidate_checks, list) and candidate_checks:
-        command.extend(["--candidate-checks-json", json.dumps(candidate_checks, ensure_ascii=False)])
-    desired_reference_view = rewrite_memory_input.get("desired_reference_view")
-    if desired_reference_view not in (None, ""):
-        command.extend(["--desired-reference-view", str(desired_reference_view)])
-    for frame_path in frame_paths:
-        command.extend(["--frame-path", frame_path])
+    confirmed_frame_path = frame_paths[-1]
+    target_id = int(rewrite_memory_input["target_id"])
+    if not tracking_rewrite_still_relevant(
+        sessions,
+        session_id=session_id,
+        target_id=target_id,
+        confirmed_frame_path=confirmed_frame_path,
+    ):
+        return
 
-    try:
-        subprocess.Popen(
-            command,
-            cwd=ROOT,
-            start_new_session=True,
-        )
-    except Exception as exc:
-        raise RuntimeError(f"failed to launch tracking rewrite worker: {exc}") from exc
+    session = sessions.load(session_id)
+    rewrite_output = execute_rewrite_memory_tool(
+        session_file=Path(session.state_paths["session_path"]),
+        arguments=dict(rewrite_memory_input),
+        env_file=env_file,
+    )
+    if not tracking_rewrite_still_relevant(
+        sessions,
+        session_id=session_id,
+        target_id=target_id,
+        confirmed_frame_path=confirmed_frame_path,
+    ):
+        return
+    apply_tracking_rewrite_output(
+        sessions=sessions,
+        session_id=session_id,
+        rewrite_output=rewrite_output,
+    )
 
 
 def schedule_bound_tracking_memory_rewrite(

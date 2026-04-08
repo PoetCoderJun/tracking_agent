@@ -15,21 +15,44 @@ from backend.runtime_session import AgentSessionStore
 from backend.tracking.deterministic import process_tracking_init_direct, process_tracking_request_direct
 
 
+def bootstrap_runner_session(
+    *,
+    state_root: Path,
+    device_id: str = "robot_01",
+    session_id: str | None = None,
+    frame_buffer_size: int = 3,
+    fresh: bool = False,
+):
+    sessions = AgentSessionStore(
+        state_root=state_root,
+        frame_buffer_size=frame_buffer_size,
+    )
+    requested_session_id = str(session_id or "").strip()
+    resolved_session_id = requested_session_id or generate_session_id(prefix="runtime")
+    session = (
+        sessions.start_fresh_session(resolved_session_id, device_id=device_id)
+        if fresh
+        else sessions.load(resolved_session_id, device_id=device_id)
+    )
+    ActiveSessionStore(state_root).write(resolved_session_id)
+    return session
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Runtime capability CLI for sessions, perception state, and deterministic tracking commands."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    session_start = subparsers.add_parser(
-        "session-start",
-        help="Attach to a session and make it active for pi-facing skills and runtime commands.",
+    runner_bootstrap = subparsers.add_parser(
+        "runner-bootstrap",
+        help="Create or attach the unique active session owned by the main runner.",
     )
-    session_start.add_argument("--session-id", default=None)
-    session_start.add_argument("--device-id", default="robot_01")
-    session_start.add_argument("--state-root", default="./.runtime/agent-runtime")
-    session_start.add_argument("--frame-buffer-size", type=int, default=3)
-    session_start.add_argument("--fresh", action="store_true")
+    runner_bootstrap.add_argument("--session-id", default=None)
+    runner_bootstrap.add_argument("--device-id", default="robot_01")
+    runner_bootstrap.add_argument("--state-root", default="./.runtime/agent-runtime")
+    runner_bootstrap.add_argument("--frame-buffer-size", type=int, default=3)
+    runner_bootstrap.add_argument("--fresh", action="store_true")
 
     session_show = subparsers.add_parser(
         "session-show",
@@ -102,7 +125,7 @@ def _resolved_active_or_explicit_session_id(args: argparse.Namespace) -> str:
         session_id=args.session_id,
     )
     if session_id is None:
-        raise ValueError("No active session found. Pass --session-id or start one first with session-start.")
+        raise ValueError("No active session found. Pass --session-id or bootstrap one first with runner-bootstrap.")
     return session_id
 
 
@@ -130,22 +153,20 @@ def _read_payload_input(payload_file: str | None) -> dict:
 def main() -> int:
     args = parse_args()
 
-    if args.command == "session-start":
+    if args.command == "runner-bootstrap":
         state_root = resolve_project_path(args.state_root)
-        sessions = _session_store_from_args(args)
-        requested_session_id = str(args.session_id or "").strip()
-        session_id = requested_session_id or generate_session_id(prefix="runtime")
-        session = (
-            sessions.start_fresh_session(session_id, device_id=args.device_id)
-            if args.fresh
-            else sessions.load(session_id, device_id=args.device_id)
+        session = bootstrap_runner_session(
+            state_root=state_root,
+            device_id=args.device_id,
+            session_id=args.session_id,
+            frame_buffer_size=args.frame_buffer_size,
+            fresh=bool(args.fresh),
         )
-        ActiveSessionStore(state_root).write(session_id)
         print(
             json.dumps(
                 {
-                    "status": "started",
-                    "session_id": session_id,
+                    "status": "bootstrapped",
+                    "session_id": session.session_id,
                     "device_id": session.session.get("device_id") or args.device_id,
                     "state_paths": dict(session.state_paths),
                     "session": session.session,
