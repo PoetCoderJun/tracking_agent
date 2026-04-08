@@ -1,5 +1,5 @@
 ---
-name: web_search
+name: web-search
 description: Use when the user needs current web information, links, or source-backed lookup results.
 ---
 
@@ -35,7 +35,7 @@ Do not use this skill for:
 
 Use this deterministic helper:
 
-- `python -m skills.web_search.scripts.search_turn --session-id <session-id> --state-root ./.runtime/agent-runtime --env-file .ENV --query ...`
+- `python ./skills/web-search/scripts/search_turn.py --session-id <session-id> --state-root ./.runtime/agent-runtime --env-file .ENV --query ...`
 
 Important:
 

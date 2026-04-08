@@ -13,15 +13,12 @@ export ARTIFACTS_ROOT=./.runtime/pi-agent
 ## 二、启动感知（摄像头）
 
 ```bash
-uv run python -m scripts.run_tracking_perception \
+uv run python -m scripts.run_perception \
   --source 0 \
-  --session-id "$SESSION_ID" \
-  --device-id robot_01 \
-  --state-root "$STATE_ROOT" \
-  --fresh-session
+  --state-root "$STATE_ROOT"
 ```
 
-> 说明：`run_tracking_perception.py` 没有 `--env-file` 参数（这是我上条里示例写多了）。
+> 说明：perception writer 启动时会直接 reset 全局 `snapshot.json`，不需要 session 参数。
 
 如果你要加载 `.ENV` 环境变量（可选）：
 
@@ -40,7 +37,7 @@ uv run robot-agent session-start \
 然后用 `pi --no-skills` 作为唯一 runner，只加载仓库 skills。一个最小示意流程是：
 
 ```bash
-pi --no-skills --skill ./skills/tracking --skill ./skills/describe_image --skill ./skills/web_search --skill ./skills/feishu
+pi --no-skills --skill ./skills/tracking --skill ./skills/describe-image --skill ./skills/web-search --skill ./skills/feishu
 ```
 
 在 `pi` 里输入：
@@ -49,7 +46,15 @@ pi --no-skills --skill ./skills/tracking --skill ./skills/describe_image --skill
 开始跟踪穿黑衣服的人
 ```
 
-## 四、查看 tracking memory 是否已写入
+## 四、查看 perception snapshot
+
+```bash
+cat "$STATE_ROOT/perception/snapshot.json"
+```
+
+`pi` 直接读这个文件拿世界状态和最新图片路径。
+
+## 五、查看 tracking memory 是否已写入
 
 ```bash
 cat "$STATE_ROOT/sessions/$SESSION_ID/session.json" | python - <<'PY'
@@ -61,13 +66,10 @@ PY
 
 内存主要落在：`skill_cache.tracking.latest_memory`
 
-## 五、如果你要用 MP4 做输入（替代摄像头）
+## 六、如果你要用 MP4 做输入（替代摄像头）
 
 ```bash
-uv run python -m scripts.run_tracking_perception \
+uv run python -m scripts.run_perception \
   --source "/abs/path/demo.mp4" \
-  --session-id "$SESSION_ID" \
-  --device-id robot_01 \
-  --state-root "$STATE_ROOT" \
-  --fresh-session
+  --state-root "$STATE_ROOT"
 ```

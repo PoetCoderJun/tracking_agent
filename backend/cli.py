@@ -6,7 +6,6 @@ import json
 import sys
 from pathlib import Path
 
-from backend.perception.service import LocalPerceptionService
 from backend.perception.stream import generate_request_id, generate_session_id
 from backend.persistence import ActiveSessionStore, resolve_session_id
 from backend.project_paths import resolve_project_path
@@ -62,15 +61,6 @@ def parse_args() -> argparse.Namespace:
     session_show.add_argument("--device-id", default="robot_01")
     session_show.add_argument("--state-root", default="./.runtime/agent-runtime")
     session_show.add_argument("--frame-buffer-size", type=int, default=3)
-
-    latest_frame = subparsers.add_parser(
-        "latest-frame",
-        help="Read the latest persisted perception frame for the active or explicit session.",
-    )
-    latest_frame.add_argument("--session-id", default=None)
-    latest_frame.add_argument("--device-id", default="robot_01")
-    latest_frame.add_argument("--state-root", default="./.runtime/agent-runtime")
-    latest_frame.add_argument("--frame-buffer-size", type=int, default=3)
 
     tracking_track = subparsers.add_parser(
         "tracking-track",
@@ -181,12 +171,6 @@ def main() -> int:
         session_id = _resolved_active_or_explicit_session_id(args)
         session = sessions.load(session_id, device_id=args.device_id)
         print(json.dumps(_session_payload(session), ensure_ascii=False))
-        return 0
-
-    if args.command == "latest-frame":
-        session_id = _resolved_active_or_explicit_session_id(args)
-        frame = LocalPerceptionService(resolve_project_path(args.state_root)).read_latest_frame()
-        print(json.dumps({"session_id": session_id, "latest_frame": frame}, ensure_ascii=False))
         return 0
 
     if args.command == "tracking-track":

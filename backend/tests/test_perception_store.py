@@ -138,7 +138,7 @@ def test_local_perception_service_exposes_recent_camera_queries(tmp_path: Path) 
             session_id="sess_001",
             device_id="robot_01",
             frame=RobotFrame(frame_id="frame_000001", timestamp_ms=1000, image_path=str(frame_a)),
-            detections=[RobotDetection(track_id=1, bbox=[1, 2, 3, 4], score=0.9)],
+            detections=[],
             text="",
         ),
     )
@@ -147,20 +147,20 @@ def test_local_perception_service_exposes_recent_camera_queries(tmp_path: Path) 
             session_id="sess_001",
             device_id="robot_01",
             frame=RobotFrame(frame_id="frame_000002", timestamp_ms=2500, image_path=str(frame_b)),
-            detections=[RobotDetection(track_id=2, bbox=[5, 6, 7, 8], score=0.8)],
+            detections=[],
             text="",
         ),
     )
 
     latest = service.latest_camera_observation()
     recent = service.recent_camera_observations(seconds=1.0)
-    detections = service.latest_person_detection()
+    latest_frame = service.read_latest_frame()
 
     assert latest is not None
+    assert latest_frame is not None
     assert latest["id"] == "frame_000002"
+    assert latest_frame["frame_id"] == "frame_000002"
     assert [item["id"] for item in recent] == ["frame_000002"]
-    assert detections is not None
-    assert detections["payload"]["detections"][0]["track_id"] == 2
 
 
 def test_local_perception_service_describes_saved_state(tmp_path: Path) -> None:
@@ -176,13 +176,12 @@ def test_local_perception_service_describes_saved_state(tmp_path: Path) -> None:
             detections=[RobotDetection(track_id=9, bbox=[1, 2, 3, 4], score=0.9)],
             text="继续跟踪",
         ),
-        request_id="req_001",
-        request_function="chat",
     )
 
     description = service.describe_saved_state()
 
     assert description["persisted"]["recent_camera_observation_count"] == 1
+    assert description["persisted"]["latest_frame"]["frame_id"] == "frame_000001"
     assert description["persisted"]["latest_camera_observation"]["id"] == "frame_000001"
     assert description["persisted"]["saved_keyframe_count"] == 1
 
@@ -220,25 +219,21 @@ def test_local_perception_service_reset_clears_snapshot_and_saved_keyframes(tmp_
 def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
-    perception = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
     runtime.patch_skill_state(
         "sess_001",
         skill_name="tracking",
         patch={"latest_target_id": 7, "target_description": "黑衣服的人"},
     )
-    perception.write_observation(
-        RobotIngestEvent(
-            session_id="sess_001",
-            device_id="robot_01",
-            frame=RobotFrame(frame_id="frame_000001", timestamp_ms=1710000000000, image_path=str(frame_path)),
-            detections=[RobotDetection(track_id=7, bbox=[10, 20, 30, 40], score=0.95)],
-            text="继续跟踪",
-        ),
-        request_id="req_001",
-        request_function="chat",
-    )
     context = runtime.load("sess_001")
+    context.session["recent_frames"] = [
+        {
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_path": str(frame_path),
+            "detections": [{"track_id": 7, "bbox": [10, 20, 30, 40], "score": 0.95, "label": "person"}],
+        }
+    ]
 
     tracking_context = build_tracking_context(
         context,
@@ -249,7 +244,7 @@ def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -
     assert tracking_context["frames"][0]["detections"][0]["track_id"] == 7
 
 
-def test_tracking_context_helpers_prefer_perception_store_over_session_frames(tmp_path: Path) -> None:
+def test_tracking_context_helpers_fall_back_to_session_frames_when_snapshot_has_no_detections(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
@@ -260,14 +255,19 @@ def test_tracking_context_helpers_prefer_perception_store_over_session_frames(tm
             session_id="sess_001",
             device_id="robot_01",
             frame=RobotFrame(frame_id="frame_000009", timestamp_ms=1710000000000, image_path=str(frame_path)),
-            detections=[RobotDetection(track_id=42, bbox=[10, 20, 30, 40], score=0.95)],
+            detections=[],
             text="继续跟踪",
         ),
-        request_id="req_009",
-        request_function="chat",
     )
     context = runtime.load("sess_001")
-    context.session["recent_frames"] = []
+    context.session["recent_frames"] = [
+        {
+            "frame_id": "frame_000009",
+            "timestamp_ms": 1710000000000,
+            "image_path": str(frame_path),
+            "detections": [{"track_id": 42, "bbox": [10, 20, 30, 40], "score": 0.95, "label": "person"}],
+        }
+    ]
 
     tracking_context = build_tracking_context(
         context,
@@ -281,25 +281,20 @@ def test_tracking_context_helpers_prefer_perception_store_over_session_frames(tm
 def test_tracking_context_filters_excluded_track_ids(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
-    perception = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
-
-    perception.write_observation(
-        RobotIngestEvent(
-            session_id="sess_001",
-            device_id="robot_01",
-            frame=RobotFrame(frame_id="frame_000011", timestamp_ms=1710000000000, image_path=str(frame_path)),
-            detections=[
-                RobotDetection(track_id=7, bbox=[10, 20, 30, 40], score=0.95),
-                RobotDetection(track_id=12, bbox=[30, 20, 50, 40], score=0.92),
-                RobotDetection(track_id=21, bbox=[50, 20, 70, 40], score=0.90),
-            ],
-            text="继续跟踪",
-        ),
-        request_id="req_011",
-        request_function="chat",
-    )
     context = runtime.load("sess_001")
+    context.session["recent_frames"] = [
+        {
+            "frame_id": "frame_000011",
+            "timestamp_ms": 1710000000000,
+            "image_path": str(frame_path),
+            "detections": [
+                {"track_id": 7, "bbox": [10, 20, 30, 40], "score": 0.95, "label": "person"},
+                {"track_id": 12, "bbox": [30, 20, 50, 40], "score": 0.92, "label": "person"},
+                {"track_id": 21, "bbox": [50, 20, 70, 40], "score": 0.90, "label": "person"},
+            ],
+        }
+    ]
 
     tracking_context = build_tracking_context(
         context,

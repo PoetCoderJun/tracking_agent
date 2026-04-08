@@ -87,13 +87,12 @@ def observation_recent_frames(
     service = LocalPerceptionService(state_root)
     for observation in service.recent_camera_observations():
         payload = dict(observation.get("payload") or {})
-        meta = dict(observation.get("meta") or {})
         frames.append(
             _normalized_frame(
                 frame_id=payload.get("frame_id", observation.get("id", "")),
                 timestamp_ms=observation.get("ts_ms", 0),
                 image_path=payload.get("image_path", ""),
-                detections=meta.get("detections"),
+                detections=[],
                 excluded_track_ids=excluded_track_id_set,
             )
         )
@@ -107,13 +106,13 @@ def tracking_recent_frames(
     raw_session: Dict[str, Any],
     excluded_track_ids: Any = None,
 ) -> List[Dict[str, Any]]:
-    frames = observation_recent_frames(
+    session_frames = normalized_recent_frames(raw_session, excluded_track_ids=excluded_track_ids)
+    if session_frames:
+        return session_frames
+    return observation_recent_frames(
         state_root=state_root,
         excluded_track_ids=excluded_track_ids,
     )
-    if frames:
-        return frames
-    return normalized_recent_frames(raw_session, excluded_track_ids=excluded_track_ids)
 
 
 def persisted_recent_frames(

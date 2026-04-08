@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from backend.perception.models import CAMERA_SENSOR_NAME, PERSON_DETECTION_KIND
+from backend.perception.models import CAMERA_SENSOR_NAME
 from backend.perception.recorder import PerceptionRecorder
 from backend.perception.stream import RobotIngestEvent
 
@@ -53,23 +53,19 @@ class LocalPerceptionService:
     def write_observation(
         self,
         event: RobotIngestEvent,
-        *,
-        request_id: Optional[str] = None,
-        request_function: str = "observation",
-        frame_payload: Optional[Dict[str, Any]] = None,
-        record_conversation: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        self._record_camera_observation(
-            event,
-            request_id=request_id,
-            request_function=request_function,
-        )
+        self._record_camera_observation(event)
         return self.read_snapshot()
 
     def read_snapshot(self) -> Dict[str, Any]:
         return self._read_snapshot_payload() or self._empty_snapshot_payload()
 
     def read_latest_frame(self) -> Optional[Dict[str, Any]]:
+        persisted = self._read_snapshot_payload()
+        if persisted is not None:
+            latest_frame = persisted.get("latest_frame")
+            if isinstance(latest_frame, dict):
+                return dict(latest_frame)
         latest_observation = self.latest_camera_observation()
         if latest_observation is None:
             return None
@@ -79,7 +75,6 @@ class LocalPerceptionService:
             "frame_id": str(payload.get("frame_id", latest_observation.get("id", ""))).strip(),
             "timestamp_ms": int(latest_observation.get("ts_ms", 0)),
             "image_path": str(payload.get("image_path", "")).strip(),
-            "detections": list(meta.get("detections") or []),
         }
 
     def latest_camera_observation(self) -> Optional[Dict[str, Any]]:
@@ -103,13 +98,6 @@ class LocalPerceptionService:
         cutoff_ms = int(items[-1]["ts_ms"]) - round(float(seconds) * 1000)
         return [item for item in items if int(item.get("ts_ms", 0)) >= cutoff_ms]
 
-    def latest_person_detection(self) -> Optional[Dict[str, Any]]:
-        persisted = self._read_snapshot_payload()
-        if persisted is None:
-            return None
-        latest_detection = persisted.get("latest_person_detection")
-        return None if not isinstance(latest_detection, dict) else dict(latest_detection)
-
     def describe_saved_state(self) -> Dict[str, Any]:
         persisted_payload = self._read_snapshot_payload()
         return {
@@ -119,8 +107,8 @@ class LocalPerceptionService:
             else {
                 "snapshot_path": str(self._perception_snapshot_path().resolve()),
                 "recent_camera_observation_count": len(list(persisted_payload.get("recent_camera_observations") or [])),
+                "latest_frame": persisted_payload.get("latest_frame"),
                 "latest_camera_observation": persisted_payload.get("latest_camera_observation"),
-                "latest_person_detection": persisted_payload.get("latest_person_detection"),
                 "saved_keyframe_count": len(list(persisted_payload.get("saved_keyframes") or [])),
                 "saved_keyframes": list(persisted_payload.get("saved_keyframes") or []),
                 "stream_status": dict(persisted_payload.get("stream_status") or {}),
@@ -165,19 +153,7 @@ class LocalPerceptionService:
     def _record_camera_observation(
         self,
         event: RobotIngestEvent,
-        *,
-        request_id: Optional[str],
-        request_function: str,
     ) -> None:
-        detections = [
-            {
-                "track_id": detection.track_id,
-                "bbox": list(detection.bbox),
-                "score": detection.score,
-                "label": detection.label,
-            }
-            for detection in event.detections
-        ]
         saved_path = None
         if self._recorder is not None:
             saved_path = self._recorder.save_frame_reference(
@@ -195,37 +171,14 @@ class LocalPerceptionService:
                 "frame_id": event.frame.frame_id,
                 "image_path": str(saved_path or event.frame.image_path),
             },
-            "meta": {
-                "session_id": event.session_id,
-                "device_id": event.device_id,
-                "request_id": request_id,
-                "request_function": request_function,
-                "text": event.text,
-                "detections": detections,
-            },
+            "meta": {},
         }
-        latest_person_detection = {
-            "id": f"{event.frame.frame_id}:{PERSON_DETECTION_KIND}",
-            "source_id": event.frame.frame_id,
-            "ts_ms": event.frame.timestamp_ms,
-            "kind": PERSON_DETECTION_KIND,
-            "sensor": CAMERA_SENSOR_NAME,
-            "payload": {"detections": detections},
-            "meta": {
-                "session_id": event.session_id,
-                "device_id": event.device_id,
-            },
-        }
-        self._write_persisted_snapshot(
-            observation=observation,
-            latest_person_detection=latest_person_detection,
-        )
+        self._write_persisted_snapshot(observation=observation)
 
     def _write_persisted_snapshot(
         self,
         *,
         observation: Dict[str, Any],
-        latest_person_detection: Dict[str, Any],
     ) -> None:
         existing = self._read_snapshot_payload() or self._empty_snapshot_payload()
         observations = [
@@ -238,8 +191,12 @@ class LocalPerceptionService:
         observations = [item for item in observations if int(item.get("ts_ms", 0)) >= cutoff_ms]
         payload = {
             "recent_camera_observations": observations,
+            "latest_frame": {
+                "frame_id": str((observation.get("payload") or {}).get("frame_id", observation.get("id", ""))).strip(),
+                "timestamp_ms": int(observation.get("ts_ms", 0)),
+                "image_path": str((observation.get("payload") or {}).get("image_path", "")).strip(),
+            },
             "latest_camera_observation": dict(observation),
-            "latest_person_detection": dict(latest_person_detection),
             "saved_keyframes": [
                 str(path.resolve())
                 for path in self._recorder.saved_frame_paths(sensor=CAMERA_SENSOR_NAME)
@@ -272,8 +229,8 @@ class LocalPerceptionService:
     def _empty_snapshot_payload(self) -> Dict[str, Any]:
         return {
             "recent_camera_observations": [],
+            "latest_frame": None,
             "latest_camera_observation": None,
-            "latest_person_detection": None,
             "saved_keyframes": [],
             "stream_status": {},
         }

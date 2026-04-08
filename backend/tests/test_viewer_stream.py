@@ -52,7 +52,6 @@ def test_build_agent_viewer_payload_includes_current_frame_memory_and_history(
             detections=[RobotDetection(track_id=3, bbox=[10, 20, 30, 40], score=0.95)],
             text="先看看画面",
         ),
-        request_function="observation",
     )
     store.append_chat_request(
         session_id="sess_001",
@@ -131,7 +130,7 @@ def test_build_agent_viewer_payload_uses_active_session_when_session_id_is_omitt
 
     assert payload["available"] is True
     assert payload["session_id"] == "sess_active"
-    assert payload["observation"]["latest_frame"] is None
+    assert payload["observation"]["latest_frame"]["frame_id"] == "frame_000001"
 
 
 def test_build_agent_viewer_payload_hides_raw_perception_frames_before_target_confirmation(
@@ -158,8 +157,8 @@ def test_build_agent_viewer_payload_hides_raw_perception_frames_before_target_co
     assert payload["available"] is True
     assert payload["agent"]["latest_result"] is None
     assert payload["modules"]["tracking"]["display_frame"] is None
-    assert payload["summary"]["frame_id"] is None
-    assert payload["summary"]["detection_count"] == 0
+    assert payload["summary"]["frame_id"] == "frame_000001"
+    assert payload["summary"]["detection_count"] == 1
 
 
 def test_build_agent_viewer_payload_follows_latest_perception_frame_after_confirmation(
@@ -182,7 +181,6 @@ def test_build_agent_viewer_payload_follows_latest_perception_frame_after_confir
             detections=[RobotDetection(track_id=3, bbox=[10, 20, 30, 40], score=0.95)],
             text="先看看画面",
         ),
-        request_function="observation",
     )
     store.append_chat_request(
         session_id="sess_live",
@@ -214,7 +212,18 @@ def test_build_agent_viewer_payload_follows_latest_perception_frame_after_confir
             detections=[RobotDetection(track_id=3, bbox=[12, 24, 34, 46], score=0.96)],
             text="更新画面",
         ),
-        request_function="observation",
+    )
+    store.ingest_robot_event(
+        session_id="sess_live",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000002",
+            "timestamp_ms": 1710000001000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[{"track_id": 3, "bbox": [12, 24, 34, 46], "score": 0.96}],
+        text="更新画面",
+        record_conversation=False,
     )
     AgentSessionStore(state_root).patch_skill_state(
         "sess_live",
@@ -250,7 +259,6 @@ def test_build_agent_viewer_payload_marks_completed_stream(tmp_path: Path) -> No
             detections=[RobotDetection(track_id=3, bbox=[10, 20, 30, 40], score=0.95)],
             text="更新画面",
         ),
-        request_function="observation",
     )
     perception.update_stream_status(status="completed", ended_at_ms=1710000001000)
     store.append_chat_request(
@@ -305,7 +313,18 @@ def test_build_agent_viewer_payload_keeps_display_frame_during_wait(tmp_path: Pa
             detections=[RobotDetection(track_id=8, bbox=[11, 21, 31, 41], score=0.95)],
             text="更新画面",
         ),
-        request_function="observation",
+    )
+    store.ingest_robot_event(
+        session_id="sess_wait_live",
+        device_id="robot_01",
+        frame={
+            "frame_id": "frame_000010",
+            "timestamp_ms": 1710000000000,
+            "image_base64": _tiny_jpeg_base64(),
+        },
+        detections=[{"track_id": 8, "bbox": [11, 21, 31, 41], "score": 0.95}],
+        text="更新画面",
+        record_conversation=False,
     )
     store.append_chat_request(
         session_id="sess_wait_live",

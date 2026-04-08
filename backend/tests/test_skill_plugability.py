@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -7,6 +8,18 @@ import pytest
 
 from backend.runtime_session import AgentSessionStore
 from backend.skills import build_viewer_modules, installed_skill_names
+
+ROOT = Path(__file__).resolve().parents[2]
+WEB_SEARCH_SCRIPT = ROOT / "skills" / "web-search" / "scripts" / "search_turn.py"
+DESCRIBE_IMAGE_SCRIPT = ROOT / "skills" / "describe-image" / "scripts" / "describe_turn.py"
+
+
+def _load_script_module(path: Path, module_name: str):
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _start_session(tmp_path: Path, session_id: str, user_text: str = "") -> AgentSessionStore:
@@ -25,9 +38,9 @@ def _start_session(tmp_path: Path, session_id: str, user_text: str = "") -> Agen
 def test_installed_skill_names_include_pluggable_skills() -> None:
     names = set(installed_skill_names())
     assert "tracking" in names
-    assert "web_search" in names
+    assert "web-search" in names
     assert "feishu" in names
-    assert "describe_image" in names
+    assert "describe-image" in names
 
 
 def test_build_viewer_modules_ignores_skills_without_viewer_hooks(tmp_path: Path) -> None:
@@ -37,12 +50,12 @@ def test_build_viewer_modules_ignores_skills_without_viewer_hooks(tmp_path: Path
         perception_snapshot={"stream_status": {}},
         recent_frames=[],
     )
-    assert "web_search" not in modules
+    assert "web-search" not in modules
     assert "feishu" not in modules
 
 
 def test_web_search_turn_reports_missing_api_key(tmp_path: Path, capsys) -> None:
-    from skills.web_search.scripts import search_turn
+    search_turn = _load_script_module(WEB_SEARCH_SCRIPT, "test_web_search_turn")
 
     store = _start_session(tmp_path, "sess_search", user_text="搜索今天的机器人新闻")
     exit_code = search_turn.main(
@@ -67,7 +80,7 @@ def test_web_search_turn_reports_missing_api_key(tmp_path: Path, capsys) -> None
 
 
 def test_web_search_turn_without_session_stays_stateless(tmp_path: Path, capsys) -> None:
-    from skills.web_search.scripts import search_turn
+    search_turn = _load_script_module(WEB_SEARCH_SCRIPT, "test_web_search_turn_stateless")
 
     env_path = tmp_path / ".ENV"
     env_path.write_text("", encoding="utf-8")
@@ -106,7 +119,7 @@ def test_feishu_notify_turn_requires_existing_or_explicit_session(tmp_path: Path
 
 
 def test_describe_image_turn_without_session_stays_stateless(tmp_path: Path, capsys) -> None:
-    from skills.describe_image.scripts import describe_turn
+    describe_turn = _load_script_module(DESCRIBE_IMAGE_SCRIPT, "test_describe_image_turn")
 
     env_path = tmp_path / ".ENV"
     env_path.write_text("", encoding="utf-8")

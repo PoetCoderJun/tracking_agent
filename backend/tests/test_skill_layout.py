@@ -10,9 +10,9 @@ BACKEND_FEISHU_PATH = ROOT / "backend" / "feishu.py"
 BACKEND_DESCRIBE_IMAGE_PATH = ROOT / "backend" / "describe_image.py"
 RUNTIME_SESSION_PATH = ROOT / "backend" / "runtime_session.py"
 SKILL_ROOT = ROOT / "skills" / "tracking"
-WEB_SEARCH_SKILL_ROOT = ROOT / "skills" / "web_search"
+WEB_SEARCH_SKILL_ROOT = ROOT / "skills" / "web-search"
 FEISHU_SKILL_ROOT = ROOT / "skills" / "feishu"
-DESCRIBE_IMAGE_SKILL_ROOT = ROOT / "skills" / "describe_image"
+DESCRIBE_IMAGE_SKILL_ROOT = ROOT / "skills" / "describe-image"
 CLI_PATH = ROOT / "backend" / "cli.py"
 TRACKING_VIEWER_ROOT = ROOT / "viewer"
 
@@ -37,6 +37,7 @@ def test_skill_package_contains_expected_files() -> None:
         BACKEND_WEB_SEARCH_PATH,
         BACKEND_FEISHU_PATH,
         BACKEND_DESCRIBE_IMAGE_PATH,
+        ROOT / "scripts" / "run_perception.py",
         ROOT / "scripts" / "run_tracking_perception.py",
         ROOT / "scripts" / "run_tracking_loop.py",
         ROOT / "scripts" / "run_tracking_viewer_stream.py",
@@ -88,7 +89,7 @@ def test_web_search_skill_contract_is_pi_native() -> None:
     assert "turn_context.json" not in skill
     assert "route_context" not in skill
     assert "--session-id <session-id>" in skill
-    assert "python -m skills.web_search.scripts.search_turn" in skill
+    assert "python ./skills/web-search/scripts/search_turn.py" in skill
     assert "backend" in skill
 
 
@@ -105,9 +106,10 @@ def test_describe_image_skill_contract_is_pi_native() -> None:
     skill = (DESCRIBE_IMAGE_SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     assert "turn_context.json" not in skill
     assert "route_context" not in skill
-    assert "--session-id <session-id>" in skill
-    assert "python -m skills.describe_image.scripts.describe_turn" in skill
-    assert "backend" in skill
+    assert "./.runtime/agent-runtime/perception/snapshot.json" in skill
+    assert "latest_frame.image_path" in skill
+    assert "answer the user naturally" in skill
+    assert "Do not call `describe_turn.py`" in skill
 
 
 def test_external_skill_scripts_are_thin_backend_adapters() -> None:

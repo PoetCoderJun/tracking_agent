@@ -4,14 +4,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-WEB_SEARCH_SKILL = ROOT / "skills" / "web_search" / "SKILL.md"
+WEB_SEARCH_SKILL = ROOT / "skills" / "web-search" / "SKILL.md"
 FEISHU_SKILL = ROOT / "skills" / "feishu" / "SKILL.md"
 
 
 def test_web_search_skill_mentions_deterministic_helper() -> None:
     skill = WEB_SEARCH_SKILL.read_text(encoding="utf-8")
 
-    assert "python -m skills.web_search.scripts.search_turn" in skill
+    assert "python ./skills/web-search/scripts/search_turn.py" in skill
     assert "answer the user naturally" in skill
     assert "Do not inspect files, do not verify artifacts" in skill
 

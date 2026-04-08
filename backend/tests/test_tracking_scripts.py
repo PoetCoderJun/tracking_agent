@@ -1094,8 +1094,6 @@ def test_schedule_tracking_memory_rewrite_updates_session_inline(tmp_path: Path,
             detections=[RobotDetection(track_id=15, bbox=[10, 12, 36, 44], score=0.95)],
             text="camera observation",
         ),
-        request_id="req_obs",
-        request_function="observation",
     )
     runtime.apply_skill_result(
         "sess_worker",
@@ -1159,8 +1157,6 @@ def test_schedule_tracking_memory_rewrite_skips_superseded_state(tmp_path: Path,
             detections=[RobotDetection(track_id=15, bbox=[10, 12, 36, 44], score=0.95)],
             text="camera observation",
         ),
-        request_id="req_obs",
-        request_function="observation",
     )
     runtime.apply_skill_result(
         "sess_worker_skip",

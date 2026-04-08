@@ -3,14 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_ROOT="./.runtime/agent-runtime"
-OUTPUT_DIR="./.runtime/tracking-perception"
-ARTIFACTS_ROOT="./.runtime/pi-agent"
-ENV_FILE=".ENV"
-SOURCE="camera"
-DEVICE_ID="robot_01"
-DEVICE=""
-TRACKER=""
-SESSION_ID=""
+SOURCE="0"
 FRONTEND_HOST="127.0.0.1"
 FRONTEND_PORT="5173"
 BACKEND_HOST="127.0.0.1"
@@ -27,34 +20,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --state-root)
       STATE_ROOT="$2"
-      shift 2
-      ;;
-    --output-dir)
-      OUTPUT_DIR="$2"
-      shift 2
-      ;;
-    --artifacts-root)
-      ARTIFACTS_ROOT="$2"
-      shift 2
-      ;;
-    --env-file)
-      ENV_FILE="$2"
-      shift 2
-      ;;
-    --device-id)
-      DEVICE_ID="$2"
-      shift 2
-      ;;
-    --device)
-      DEVICE="$2"
-      shift 2
-      ;;
-    --tracker)
-      TRACKER="$2"
-      shift 2
-      ;;
-    --session-id)
-      SESSION_ID="$2"
       shift 2
       ;;
     --frontend-host)
@@ -87,10 +52,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-if [[ -z "${SESSION_ID}" ]]; then
-  SESSION_ID="session_$(date -u +"%Y%m%dT%H%M%S%NZ")"
-fi
 
 declare -a PIDS=()
 
@@ -192,20 +153,11 @@ if [[ "${START_FRONTEND}" == "1" ]]; then
   ensure_port_free "${FRONTEND_HOST}" "${FRONTEND_PORT}" "frontend"
 fi
 
-PERCEPTION_CMD=(uv run python -m scripts.run_tracking_perception
+PERCEPTION_CMD=(uv run python -m scripts.run_perception
   --source "${SOURCE}"
-  --output-dir "${OUTPUT_DIR}"
-  --session-id "${SESSION_ID}"
-  --device-id "${DEVICE_ID}"
   --state-root "${STATE_ROOT}"
   --interval-seconds "1.0"
 )
-if [[ -n "${DEVICE}" ]]; then
-  PERCEPTION_CMD+=(--device "${DEVICE}")
-fi
-if [[ -n "${TRACKER}" ]]; then
-  PERCEPTION_CMD+=(--tracker "${TRACKER}")
-fi
 if [[ "${REALTIME_PLAYBACK}" == "1" ]]; then
   PERCEPTION_CMD+=(--realtime-playback)
 fi
@@ -228,7 +180,6 @@ if [[ "${START_FRONTEND}" == "1" ]]; then
   run_component frontend "${FRONTEND_CMD[@]}"
 fi
 
-printf '[stack] session-id: %s\n' "${SESSION_ID}"
 printf '[stack] target selection is now handled by pi via project skills.\n'
 printf '[stack] stack only starts perception and viewer.\n'
 printf '[stack] use e-agent to bootstrap the main runner session and enter pi.\n'

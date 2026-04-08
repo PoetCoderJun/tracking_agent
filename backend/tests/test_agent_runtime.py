@@ -39,8 +39,6 @@ def test_agent_session_store_load_contains_generic_state(tmp_path: Path) -> None
             detections=[RobotDetection(track_id=12, bbox=[10, 20, 30, 40], score=0.95)],
             text="跟踪穿黑衣服的人",
         ),
-        request_id="req_001",
-        request_function="tracking",
     )
     context = runtime.load("sess_001", device_id="robot_01")
 
@@ -70,8 +68,6 @@ def test_agent_session_store_builds_perception_bundle(tmp_path: Path) -> None:
             detections=[],
             text="继续跟踪",
         ),
-        request_id="req_001",
-        request_function="tracking",
     )
     context = runtime.load("sess_001", device_id="robot_01")
 
@@ -100,8 +96,6 @@ def test_agent_session_store_observation_ingest_does_not_pollute_chat_history(tm
             detections=[],
             text="camera observation",
         ),
-        request_id="req_obs_001",
-        request_function="observation",
     )
     context = runtime.load("sess_obs", device_id="robot_01")
 
@@ -128,8 +122,6 @@ def test_agent_session_store_apply_skill_result_keeps_runtime_summary_small(tmp_
             detections=[],
             text="继续跟踪",
         ),
-        request_id="req_001",
-        request_function="chat",
     )
 
     context = runtime.apply_skill_result(

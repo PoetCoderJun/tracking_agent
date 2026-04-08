@@ -41,7 +41,7 @@ set -a && source .ENV && set +a
 1. 启动常驻 perception：
 
 ```bash
-uv run robot-agent-tracking-perception --source 0 --fresh-session
+uv run robot-agent-perception-writer --source 0
 ```
 
 2. 直接启动主 runner：
@@ -53,10 +53,10 @@ uv run e-agent
 说明：
 
 - `e-agent` 会先 bootstrap 主 runner session，然后直接 `exec` 进 `pi`。
-- `e-agent` 默认会用 macOS `sandbox-exec` 把项目代码目录锁成只读，只放开 `./.runtime`、`~/.pi/agent` 和系统临时目录的写入。
 - 会显式关闭 `pi` 的默认 skills 发现，只加载仓库内 `skills/` 和你额外传入的 `--skill`。
-- 如果某个 workflow 确实需要额外写目录，可以追加 `--pi-writable-dir /abs/path`。
-- 如果你明确需要关闭这层保护，再显式传 `--unsafe-no-pi-sandbox`。
+- `e-agent` 默认直接进入 `pi`，避免交互 TUI 在 macOS 沙箱里触发终端 raw mode 错误。
+- 如果你明确要把 `pi` 放进 macOS `sandbox-exec`，再显式传 `--pi-sandbox`。
+- 开启 `--pi-sandbox` 后，如果某个 workflow 还需要额外写目录，可以追加 `--pi-writable-dir /abs/path`。
 - 如果你要固定 session id：
 
 ```bash
@@ -121,7 +121,7 @@ uv run robot-agent-tracking-loop \
 1. perception：
 
 ```bash
-uv run robot-agent-tracking-perception --source 0 --fresh-session
+uv run robot-agent-perception-writer --source 0
 ```
 
 2. tracking runner：
@@ -152,16 +152,16 @@ uv run robot-agent session-show --state-root ./.runtime/agent-runtime
 uv run robot-agent runner-bootstrap --session-id sess_001 --state-root ./.runtime/agent-runtime --fresh
 ```
 
-看当前 session 视角下的最新 frame：
-
-```bash
-uv run robot-agent latest-frame --state-root ./.runtime/agent-runtime
-```
-
 看全局 perception 最新 frame：
 
 ```bash
 uv run robot-agent-perception latest-frame --state-root ./.runtime/agent-runtime
+```
+
+直接看全局 perception snapshot.json：
+
+```bash
+cat ./.runtime/agent-runtime/perception/snapshot.json
 ```
 
 手动做一次确定性 tracking init：

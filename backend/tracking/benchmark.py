@@ -1000,7 +1000,6 @@ def run_sequence_benchmark_stack_chain(
             )
             perception_service.write_observation(
                 event,
-                request_function="observation",
             )
             processed_frame_indices.append(frame_index)
 
@@ -1179,7 +1178,6 @@ def run_sequence_benchmark_rebind_fsm(
                     detections=frame_detections,
                     text="",
                 ),
-                request_function="observation",
             )
             processed_frame_indices.append(frame_index)
             gt_bbox = label_map.get(frame_index)

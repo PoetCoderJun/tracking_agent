@@ -13,7 +13,7 @@ from backend.project_paths import resolve_project_path
 from backend.skills import build_viewer_modules
 from backend.perception.service import LocalPerceptionService
 from backend.persistence import ActiveSessionStore, LiveSessionStore, resolve_session_id
-from backend.session_frames import observation_recent_frames
+from backend.session_frames import tracking_recent_frames
 
 
 def _enriched_conversation_history(
@@ -73,8 +73,10 @@ def build_agent_viewer_payload(*, state_root: Path, session_id: str | None = Non
     perception = LocalPerceptionService(state_root)
     perception_snapshot = perception.read_snapshot()
     stream_status = dict(perception_snapshot.get("stream_status") or {})
-    recent_frames = observation_recent_frames(
+    recent_frames = tracking_recent_frames(
         state_root=state_root,
+        session_id=resolved_session_id,
+        raw_session=session,
     )
     latest_result = dict(session.get("latest_result") or {})
     modules = build_viewer_modules(

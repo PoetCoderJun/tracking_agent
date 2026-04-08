@@ -15,6 +15,7 @@
 - `backend/` 只保留 perception、runner、持久化、文件读写和唯一的本地 chat CLI。
 - agent-owned state 统一持久化在 `session.json`，不再把 `agent_memory.json` 当成主真相源。
 - perception service 独立运行，只通过共享存储写 observation，不通过 runtime API 注入。
+- `robot-agent-perception-writer` 是唯一常驻 perception 写入口；`robot-agent-perception` 只负责读取 `snapshot.json`。
 - runtime 只读取 perception 已落盘的数据，不拥有 perception loop。
 - tracking 只保留 `backend.tracking.loop` 这一条 runner 路径，不再保留独立 service 包装层或 detached rewrite worker。
 - perception CLI 负责把感知快照暴露成 runner 易于读取的命令行接口。

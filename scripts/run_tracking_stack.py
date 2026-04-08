@@ -15,11 +15,6 @@ Start the tracking stack environment (perception + backend websocket viewer only
 Common options:
   --source <video-or-camera>
   --state-root <path>
-  --output-dir <path>
-  --artifacts-root <path>
-  --device <cpu|mps|cuda>
-  --tracker <yaml>
-  --session-id <id>
   --realtime-playback
   --start-frontend
 

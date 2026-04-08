@@ -24,9 +24,14 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--pi-bin", default="pi")
     parser.add_argument(
+        "--pi-sandbox",
+        action="store_true",
+        help="Run pi inside the macOS sandbox wrapper with the project tree kept read-only.",
+    )
+    parser.add_argument(
         "--unsafe-no-pi-sandbox",
         action="store_true",
-        help="Disable the macOS sandbox wrapper and let pi run with normal filesystem write access.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--pi-writable-dir",
@@ -154,7 +159,7 @@ def _sandbox_profile_path(args: argparse.Namespace, env: dict[str, str]) -> Path
 
 
 def _sandboxed_command(command: List[str], args: argparse.Namespace, env: dict[str, str]) -> List[str]:
-    if bool(args.unsafe_no_pi_sandbox):
+    if bool(args.unsafe_no_pi_sandbox) or not bool(args.pi_sandbox):
         return command
     profile_path = _sandbox_profile_path(args, env)
     return ["/usr/bin/sandbox-exec", "-f", str(profile_path), *command]

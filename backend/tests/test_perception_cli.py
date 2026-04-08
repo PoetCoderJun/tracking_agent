@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
+from backend.perception import LocalPerceptionService, RobotFrame, RobotIngestEvent
 from backend.perception.cli import main, parse_args
 
 
@@ -40,15 +40,14 @@ def test_local_perception_service_persists_observation_snapshot(tmp_path: Path) 
                 timestamp_ms=1710000000000,
                 image_path=str(frame_path),
             ),
-            detections=[RobotDetection(track_id=7, bbox=[10, 12, 40, 44], score=0.9)],
+            detections=[],
             text="camera observation",
         ),
-        request_id="req_obs_001",
-        request_function="observation",
     )
 
     assert snapshot["latest_camera_observation"]["id"] == "frame_000001"
-    assert snapshot["latest_person_detection"]["payload"]["detections"][0]["track_id"] == 7
+    assert snapshot["latest_camera_observation"]["payload"]["image_path"]
+    assert "session_id" not in snapshot["latest_camera_observation"]["meta"]
     assert snapshot["saved_keyframes"]
 
 
