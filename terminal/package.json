@@ -1,0 +1,16 @@
+{
+  "name": "robot-agent-pi-tui",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "PI TUI shell for robot-agent repl",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node ./pi_agent_tui.mjs"
+  },
+  "dependencies": {
+    "@mariozechner/pi-tui": "0.65.2"
+  }
+}

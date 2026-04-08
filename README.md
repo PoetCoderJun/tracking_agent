@@ -80,14 +80,11 @@ uv run robot-agent-perception read \
   --state-root ./.runtime/agent-runtime
 ```
 
-启动 agent，并指定当前 session 启用哪些 skills：
+启动 agent。它会自动发现 `skills/` 下带 `SKILL.md` 的 project skills，并把它们写入当前 session：
 
 ```bash
 uv run robot-agent start \
-  --state-root ./.runtime/agent-runtime \
-  --skill tracking \
-  --skill web_search \
-  --skill feishu
+  --state-root ./.runtime/agent-runtime
 ```
 
 如果要启用真实网页搜索和真实飞书发送，在 `.ENV` 里补这些配置：
@@ -113,15 +110,25 @@ uv run robot-agent chat \
 
 本地开发调试也可以直接启动 REPL：
 
+先安装 TUI 依赖：
+
+```bash
+cd terminal
+npm install
+```
+
+然后启动：
+
 ```bash
 uv run robot-agent repl \
   --state-root ./.runtime/agent-runtime \
-  --artifacts-root ./.runtime/pi-agent \
-  --skill tracking \
-  --skill web_search
+  --artifacts-root ./.runtime/pi-agent
 ```
 
-在 REPL 内部可用命令：
+`robot-agent repl` 现在会启动基于 `@mariozechner/pi-tui` 的 terminal UI，而不是原来的 `input()` 循环。
+`repl` 不再需要传 `--skill`；它会直接使用 `skills/` 下自动发现的 project skills。
+
+在 TUI 内部可用命令：
 
 - `/help`：查看命令
 - `/status`：查看当前会话和启用技能

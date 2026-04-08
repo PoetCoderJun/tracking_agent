@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import Any
+import subprocess
+import sys
+from pathlib import Path
 
 from agent.pi_protocol import _resolve_pi_timeout_seconds
 from agent.runner import (
@@ -38,13 +40,6 @@ def parse_args() -> argparse.Namespace:
     start_parser.add_argument("--device-id", default="robot_01")
     start_parser.add_argument("--state-root", default="./.runtime/agent-runtime")
     start_parser.add_argument("--frame-buffer-size", type=int, default=3)
-    start_parser.add_argument(
-        "--skill",
-        action="append",
-        dest="skills",
-        default=None,
-        help="Enable one skill. Repeat the flag or pass comma-separated names.",
-    )
 
     chat_parser = subparsers.add_parser(
         "chat",
@@ -88,13 +83,6 @@ def parse_args() -> argparse.Namespace:
     repl_parser.add_argument("--artifacts-root", default="./.runtime/pi-agent")
     repl_parser.add_argument("--pi-binary", default="pi")
     repl_parser.add_argument("--pi-timeout-seconds", type=int, default=None)
-    repl_parser.add_argument(
-        "--skill",
-        action="append",
-        dest="skills",
-        default=None,
-        help="Optional skill override for this session. Repeat the flag or pass comma-separated names.",
-    )
 
     event_parser = subparsers.add_parser(
         "event",
@@ -223,107 +211,74 @@ def _ensure_repl_session(args: argparse.Namespace) -> tuple[AgentSessionStore, s
     return sessions, session_id
 
 
-def _apply_repl_skill_overrides(
-    sessions: AgentSessionStore,
-    session_id: str,
-    args: argparse.Namespace,
-) -> None:
-    enabled_skills = _validated_enabled_skills(getattr(args, "skills", None))
-    if not enabled_skills:
-        return
-    sessions.patch_environment(
-        session_id,
-        {
-            AGENT_RUNTIME_NAMESPACE: {
-                ENABLED_SKILLS_FIELD: enabled_skills,
-            }
-        },
-    )
-
-
-def _print_repl_help() -> None:
-    print("REPL commands:")
-    print("/help      - show this message")
-    print("/status    - print current session status")
-    print("/quit /q   - exit the loop")
-    print("Any other line is sent as chat text.")
-
-
-def _print_repl_status(
+def _repl_enabled_skills(
     sessions: AgentSessionStore,
     session_id: str,
     device_id: str,
-) -> None:
-    session = sessions.load(session_id, device_id=device_id)
-    runtime_state = dict((session.environment.get(AGENT_RUNTIME_NAMESPACE) or {}))
-    enabled_skills = runtime_state.get(ENABLED_SKILLS_FIELD) or []
-    print(f"session_id={session_id}")
-    print(f"enabled_skills={enabled_skills}")
+) -> list[str]:
+    sessions.load(session_id, device_id=device_id)
+    return available_project_skill_names()
 
 
-def _print_repl_turn(payload: dict[str, Any]) -> None:
-    session_result = payload.get("session_result")
-    if isinstance(session_result, dict):
-        text = session_result.get("text")
-        if isinstance(text, str) and text.strip():
-            print(text.strip())
-            return
+def _resolve_repl_tui_entry() -> Path:
+    return resolve_project_path("./terminal/pi_agent_tui.mjs")
 
-    reason = str(payload.get("reason", "")).strip()
-    if reason:
-        print(reason)
-        return
 
-    print(payload.get("skill_name") or "")
+def _launch_repl_tui(
+    *,
+    args: argparse.Namespace,
+    session_id: str,
+    enabled_skills: list[str],
+) -> int:
+    tui_entry = _resolve_repl_tui_entry()
+    if not tui_entry.exists():
+        raise RuntimeError(f"PI TUI entrypoint not found: {tui_entry}")
+
+    command = [
+        "node",
+        str(tui_entry),
+        "--python",
+        sys.executable,
+        "--repo-root",
+        str(resolve_project_path(".")),
+        "--session-id",
+        session_id,
+        "--device-id",
+        args.device_id,
+        "--state-root",
+        str(resolve_project_path(args.state_root)),
+        "--artifacts-root",
+        str(resolve_project_path(args.artifacts_root)),
+        "--env-file",
+        str(resolve_project_path(args.env_file)),
+        "--pi-binary",
+        str(args.pi_binary or "pi"),
+        "--frame-buffer-size",
+        str(args.frame_buffer_size),
+    ]
+    if args.pi_timeout_seconds is not None:
+        command.extend(["--pi-timeout-seconds", str(args.pi_timeout_seconds)])
+    for skill_name in available_project_skill_names():
+        command.extend(["--available-skill", skill_name])
+    for skill_name in enabled_skills:
+        command.extend(["--enabled-skill", skill_name])
+
+    completed = subprocess.run(
+        command,
+        cwd=resolve_project_path("."),
+        check=False,
+    )
+    return int(completed.returncode)
 
 
 def _run_repl(args: argparse.Namespace) -> int:
     sessions, session_id = _ensure_repl_session(args)
-    _apply_repl_skill_overrides(sessions, session_id, args)
-    runner = _runner_from_args(args)
-    env_file = resolve_project_path(args.env_file)
-    artifacts_root = resolve_project_path(args.artifacts_root)
-
-    print(f"Pi REPL started. session={session_id}, device={args.device_id}")
-    print("Type /help for commands.")
-    while True:
-        try:
-            user_text = input(f"{session_id}> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return 0
-
-        if not user_text:
-            continue
-
-        normalized = user_text.lower().strip()
-        if normalized in {"/quit", "/q", "/exit"}:
-            print("exit")
-            return 0
-        if normalized == "/help":
-            _print_repl_help()
-            continue
-        if normalized == "/status":
-            _print_repl_status(sessions, session_id, args.device_id)
-            continue
-        if user_text.startswith("/"):
-            print("unknown command, type /help")
-            continue
-
-        try:
-            payload = runner.process_chat_request(
-                session_id=session_id,
-                device_id=args.device_id,
-                text=user_text,
-                request_id=generate_request_id(prefix="chat"),
-                env_file=env_file,
-                artifacts_root=artifacts_root,
-            )
-        except (RuntimeError, ValueError) as exc:
-            print(f"{type(exc).__name__}: {exc}")
-            print("If this is a timeout, you can retry with --pi-timeout-seconds 180 (or higher).")
-            continue
-        _print_repl_turn(payload)
+    enabled_skills = _repl_enabled_skills(sessions, session_id, args.device_id)
+    return _launch_repl_tui(
+        args=args,
+        session_id=session_id,
+        enabled_skills=enabled_skills,
+    )
 
 
 def _event_turn_text(args: argparse.Namespace) -> str:
@@ -344,16 +299,8 @@ def main() -> int:
             session_id=args.session_id,
         ) or generate_session_id(prefix="agent")
         session = sessions.load(session_id, device_id=args.device_id)
-        existing_skills = normalize_enabled_skill_names(
-            dict((session.environment.get(AGENT_RUNTIME_NAMESPACE) or {})).get(ENABLED_SKILLS_FIELD)
-        )
-        enabled_skills = (
-            _validated_enabled_skills(args.skills)
-            or existing_skills
-            or available_project_skill_names()
-        )
         available_skills = available_project_skill_names()
-        enabled_skills = _validated_enabled_skills(enabled_skills) or enabled_skills
+        enabled_skills = list(available_skills)
         sessions.patch_environment(
             session_id,
             {

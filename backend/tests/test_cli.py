@@ -1,5 +1,7 @@
+import argparse
 import json
 
+import backend.cli as cli_module
 from backend.cli import main, parse_args
 from backend.project_paths import resolve_project_path
 
@@ -68,7 +70,7 @@ def test_parse_args_accepts_runtime_paths_for_chat(monkeypatch) -> None:
     assert args.artifacts_root == "./.runtime/custom-artifacts"
 
 
-def test_parse_args_start_accepts_skill_selection(monkeypatch) -> None:
+def test_parse_args_start_interface(monkeypatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -76,12 +78,6 @@ def test_parse_args_start_accepts_skill_selection(monkeypatch) -> None:
             "start",
             "--session-id",
             "sess_001",
-            "--skill",
-            "tracking",
-            "--skill",
-            "web_search",
-            "--skill",
-            "feishu",
         ],
     )
 
@@ -89,7 +85,7 @@ def test_parse_args_start_accepts_skill_selection(monkeypatch) -> None:
 
     assert args.command == "start"
     assert args.session_id == "sess_001"
-    assert args.skills == ["tracking", "web_search", "feishu"]
+    assert args.state_root == "./.runtime/agent-runtime"
 
 
 def test_parse_args_event_interface(monkeypatch) -> None:
@@ -123,17 +119,12 @@ def test_parse_args_repl_interface(monkeypatch) -> None:
             "repl",
             "--state-root",
             "./.runtime/agent-runtime",
-            "--skill",
-            "tracking",
-            "--skill",
-            "web_search",
         ],
     )
 
     args = parse_args()
 
     assert args.command == "repl"
-    assert args.skills == ["tracking", "web_search"]
     assert args.env_file == ".ENV"
     assert args.pi_binary == "pi"
 
@@ -298,6 +289,7 @@ def test_main_start_persists_enabled_skills_and_active_session(
     capsys,
 ) -> None:
     state_root = tmp_path / "state"
+    monkeypatch.setattr("backend.cli.available_project_skill_names", lambda: ["tracking", "web_search", "feishu"])
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -305,12 +297,6 @@ def test_main_start_persists_enabled_skills_and_active_session(
             "start",
             "--state-root",
             str(state_root),
-            "--skill",
-            "tracking",
-            "--skill",
-            "web_search",
-            "--skill",
-            "feishu",
         ],
     )
 
@@ -376,37 +362,19 @@ def test_main_event_routes_through_runner(monkeypatch, tmp_path, capsys) -> None
     assert "系统事件：charging_completed" in captured["text"]
 
 
-def test_main_repl_starts_session_and_runs_turn(monkeypatch, tmp_path, capsys) -> None:
+def test_main_repl_starts_session_and_launches_tui(monkeypatch, tmp_path) -> None:
     state_root = tmp_path / "state"
     artifacts_root = tmp_path / "artifacts"
-    calls = []
+    captured = {}
 
-    class _FakeRunner:
-        def process_chat_request(self, **kwargs):
-            calls.append(kwargs)
-            return {
-                "status": "processed",
-                "skill_name": "tracking",
-                "session_result": {"text": "ok", "behavior": "reply"},
-                "latest_result_patch": None,
-                "skill_state_patch": None,
-                "user_preferences_patch": None,
-                "environment_map_patch": None,
-                "perception_cache_patch": None,
-                "robot_response": None,
-                "tool": "reply",
-                "tool_output": None,
-                "rewrite_output": None,
-                "rewrite_memory_input": None,
-                "reason": None,
-            }
+    def fake_launch_repl_tui(*, args, session_id, enabled_skills):
+        captured["args"] = args
+        captured["session_id"] = session_id
+        captured["enabled_skills"] = enabled_skills
+        return 0
 
-    inputs = iter(["hello", "/quit"])
-    monkeypatch.setattr("builtins.input", lambda *_args: next(inputs))
-    monkeypatch.setattr(
-        "backend.cli._runner_from_args",
-        lambda _: _FakeRunner(),
-    )
+    monkeypatch.setattr("backend.cli._launch_repl_tui", fake_launch_repl_tui)
+    monkeypatch.setattr("backend.cli.available_project_skill_names", lambda: ["tracking", "web_search", "feishu"])
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -418,42 +386,25 @@ def test_main_repl_starts_session_and_runs_turn(monkeypatch, tmp_path, capsys) -
             str(state_root),
             "--artifacts-root",
             str(artifacts_root),
-            "--skill",
-            "tracking",
-            "--skill",
-            "web_search",
         ],
     )
 
     assert main() == 0
-    assert len(calls) == 1
-    assert calls[0]["session_id"] == "sess_repl_001"
-    assert calls[0]["text"] == "hello"
     payload = json.loads((resolve_project_path(str(state_root)) / "sessions" / "sess_repl_001" / "session.json").read_text(encoding="utf-8"))
-    assert payload["environment_map"]["agent_runtime"]["enabled_skills"] == ["tracking", "web_search"]
+    assert payload["environment_map"].get("agent_runtime") in (None, {})
     assert (
         json.loads((resolve_project_path(str(state_root)) / "active_session.json").read_text(encoding="utf-8"))["session_id"]
         == "sess_repl_001"
     )
-    output = capsys.readouterr().out
-    assert "Pi REPL started. session=sess_repl_001" in output
-    assert "ok" in output
+    assert captured["session_id"] == "sess_repl_001"
+    assert captured["enabled_skills"] == ["tracking", "web_search", "feishu"]
+    assert captured["args"].artifacts_root == str(artifacts_root)
 
 
-def test_main_repl_handles_invalid_pi_payload_without_crashing(monkeypatch, tmp_path, capsys) -> None:
+def test_main_repl_returns_tui_exit_code(monkeypatch, tmp_path) -> None:
     state_root = tmp_path / "state"
     artifacts_root = tmp_path / "artifacts"
-
-    class _FakeRunner:
-        def process_chat_request(self, **_kwargs):
-            raise ValueError("Pi did not return a valid turn payload.")
-
-    inputs = iter(["hello", "/quit"])
-    monkeypatch.setattr("builtins.input", lambda *_args: next(inputs))
-    monkeypatch.setattr(
-        "backend.cli._runner_from_args",
-        lambda _: _FakeRunner(),
-    )
+    monkeypatch.setattr("backend.cli._launch_repl_tui", lambda **_kwargs: 17)
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -465,12 +416,53 @@ def test_main_repl_handles_invalid_pi_payload_without_crashing(monkeypatch, tmp_
             str(state_root),
             "--artifacts-root",
             str(artifacts_root),
-            "--skill",
-            "tracking",
         ],
     )
 
-    assert main() == 0
-    output = capsys.readouterr().out
-    assert "ValueError: Pi did not return a valid turn payload." in output
-    assert "exit" in output
+    assert main() == 17
+
+
+def test_launch_repl_tui_passes_runtime_config(monkeypatch, tmp_path) -> None:
+    state_root = tmp_path / "state"
+    artifacts_root = tmp_path / "artifacts"
+    env_file = tmp_path / ".ENV"
+    env_file.write_text("", encoding="utf-8")
+    captured = {}
+
+    def fake_run(command, cwd, check):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        captured["check"] = check
+
+        class _Completed:
+            returncode = 0
+
+        return _Completed()
+
+    monkeypatch.setattr("backend.cli.subprocess.run", fake_run)
+    args = argparse.Namespace(
+        device_id="robot_01",
+        state_root=str(state_root),
+        frame_buffer_size=5,
+        env_file=str(env_file),
+        artifacts_root=str(artifacts_root),
+        pi_binary="pi",
+        pi_timeout_seconds=180,
+    )
+
+    exit_code = cli_module._launch_repl_tui(
+        args=args,
+        session_id="sess_repl_001",
+        enabled_skills=["tracking", "web_search"],
+    )
+
+    assert exit_code == 0
+    assert captured["check"] is False
+    assert captured["cwd"] == resolve_project_path(".")
+    assert captured["command"][0] == "node"
+    assert str(resolve_project_path("./terminal/pi_agent_tui.mjs")) in captured["command"]
+    assert "--session-id" in captured["command"]
+    assert "sess_repl_001" in captured["command"]
+    assert "--pi-timeout-seconds" in captured["command"]
+    assert "180" in captured["command"]
+    assert captured["command"].count("--enabled-skill") == 2
