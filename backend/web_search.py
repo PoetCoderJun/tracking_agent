@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.config import parse_dotenv
 from backend.persistence import resolve_session_id
-from backend.runtime_apply import apply_processed_payload
+from backend.runner import commit_skill_turn
 from backend.runtime_session import AgentSessionStore
 from backend.skill_payload import processed_skill_payload, reply_session_result
 
@@ -204,7 +204,7 @@ def run_web_search_turn(
 
     if resolved_session_id is None:
         return payload
-    return apply_processed_payload(
+    return commit_skill_turn(
         sessions=sessions,
         session_id=resolved_session_id,
         pi_payload=payload,

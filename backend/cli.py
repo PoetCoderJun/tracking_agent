@@ -9,9 +9,11 @@ from pathlib import Path
 from backend.perception.stream import generate_request_id, generate_session_id
 from backend.persistence import ActiveSessionStore, resolve_session_id
 from backend.project_paths import resolve_project_path
-from backend.runtime_apply import apply_processed_payload
+from backend.runner import commit_skill_turn, run_tracking_followup_turn, run_tracking_init_turn, run_tts_turn
 from backend.runtime_session import AgentSessionStore
-from backend.tracking.deterministic import process_tracking_init_direct, process_tracking_request_direct
+
+process_tracking_request_direct = run_tracking_followup_turn
+process_tracking_init_direct = run_tracking_init_turn
 
 
 def bootstrap_runner_session(
@@ -80,15 +82,16 @@ def parse_args() -> argparse.Namespace:
     tracking_init.add_argument("--artifacts-root", default="./.runtime/pi-agent")
     tracking_init.add_argument("--request-id", default=None)
 
-    apply_payload = subparsers.add_parser(
-        "apply-payload",
-        help="Apply one processed skill payload to persisted runtime session state.",
+    tts_say = subparsers.add_parser(
+        "tts-say",
+        help="Run one deterministic speech/tts turn against the current session state.",
     )
-    apply_payload.add_argument("--session-id", default=None)
-    apply_payload.add_argument("--device-id", default="robot_01")
-    apply_payload.add_argument("--state-root", default="./.runtime/agent-runtime")
-    apply_payload.add_argument("--env-file", default=".ENV")
-    apply_payload.add_argument("--payload-file", default=None)
+    tts_say.add_argument("--session-id", default=None)
+    tts_say.add_argument("--text", default="")
+    tts_say.add_argument("--device-id", default="robot_01")
+    tts_say.add_argument("--state-root", default="./.runtime/agent-runtime")
+    tts_say.add_argument("--env-file", default=".ENV")
+    tts_say.add_argument("--artifacts-root", default="./.runtime/pi-agent")
 
     return parser.parse_args()
 
@@ -114,19 +117,10 @@ def _session_payload(session) -> dict:
         "session": session.session,
         "latest_result": session.latest_result,
         "environment_map": session.environment_map,
-        "perception_cache": session.perception_cache,
+        "state": dict(session.session.get("state") or {}),
         "runner_state": session.runner_state,
         "skill_cache": session.skill_cache,
     }
-
-
-def _read_payload_input(payload_file: str | None) -> dict:
-    if str(payload_file or "").strip():
-        return json.loads(Path(str(payload_file)).read_text(encoding="utf-8"))
-    raw = sys.stdin.read().strip()
-    if not raw:
-        raise ValueError("apply-payload requires --payload-file or JSON on stdin")
-    return json.loads(raw)
 
 
 def main() -> int:
@@ -191,19 +185,19 @@ def main() -> int:
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 
-    if args.command != "apply-payload":  # pragma: no cover
-        raise ValueError(f"Unsupported command: {args.command}")
+    if args.command == "tts-say":
+        session_id = _resolved_active_or_explicit_session_id(args)
+        payload = run_tts_turn(
+            text=args.text,
+            session_id=session_id,
+            state_root=resolve_project_path(args.state_root),
+            env_file=resolve_project_path(args.env_file),
+            artifacts_root=resolve_project_path(args.artifacts_root),
+        )
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
 
-    sessions = _session_store_from_args(args)
-    session_id = _resolved_active_or_explicit_session_id(args)
-    payload = apply_processed_payload(
-        sessions=sessions,
-        session_id=session_id,
-        pi_payload=_read_payload_input(args.payload_file),
-        env_file=resolve_project_path(args.env_file),
-    )
-    print(json.dumps(payload, ensure_ascii=False))
-    return 0
+    raise ValueError(f"Unsupported command: {args.command}")  # pragma: no cover
 
 
 if __name__ == "__main__":

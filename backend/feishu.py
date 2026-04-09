@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 
 from backend.config import parse_dotenv
 from backend.persistence import resolve_session_id
-from backend.runtime_apply import apply_processed_payload
+from backend.runner import commit_skill_turn
 from backend.runtime_session import AgentSessionStore
 from backend.skill_payload import processed_skill_payload, reply_session_result
 
@@ -229,7 +229,7 @@ def run_notify_turn(
 
     outbox_path = _write_outbox_entry(_outbox_path(artifacts_root), sent_entry)
     payload = build_feishu_payload(entry=sent_entry, outbox_path=outbox_path)
-    return apply_processed_payload(
+    return commit_skill_turn(
         sessions=store,
         session_id=resolved_session_id,
         pi_payload=payload,
