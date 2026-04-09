@@ -103,7 +103,7 @@ class AgentSession:
     @property
     def perception(self) -> Dict[str, Any]:
         return {
-            "language": _latest_language_snapshot(self.payload),
+            "language": self.language_context,
             "runtime": _runtime_result_snapshot(self.payload),
         }
 

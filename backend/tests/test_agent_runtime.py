@@ -211,3 +211,5 @@ def test_agent_session_exposes_canonical_language_context(tmp_path: Path) -> Non
     assert context.language_context["latest_request_function"] == "chat"
     assert context.language_context["latest_user_text"] == "先看左边的人"
     assert context.language_context["recent_dialogue"][-1]["text"] == "收到，先观察左边。"
+    assert context.perception["language"]["latest_user_text"] == "先看左边的人"
+    assert context.perception["language"]["recent_dialogue"][-1]["role"] == "assistant"
