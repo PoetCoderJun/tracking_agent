@@ -10,10 +10,10 @@ from websockets.exceptions import ConnectionClosed
 from websockets.legacy.server import WebSocketServerProtocol, serve
 
 from backend.project_paths import resolve_project_path
+from backend.perception.frames import recent_frames
 from backend.skills import build_viewer_modules
 from backend.perception.service import LocalPerceptionService
 from backend.persistence import ActiveSessionStore, LiveSessionStore, resolve_session_id
-from backend.session_frames import observation_recent_frames
 
 
 def _enriched_conversation_history(
@@ -73,19 +73,19 @@ def build_agent_viewer_payload(*, state_root: Path, session_id: str | None = Non
     perception = LocalPerceptionService(state_root)
     perception_snapshot = perception.read_snapshot()
     stream_status = dict(perception_snapshot.get("stream_status") or {})
-    recent_frames = observation_recent_frames(state_root=state_root)
+    frames = recent_frames(state_root=state_root)
     latest_result = dict(session.get("latest_result") or {})
     modules = build_viewer_modules(
         session=session,
         state_root=state_root,
         perception_snapshot=perception_snapshot,
-        recent_frames=recent_frames,
+        recent_frames=frames,
     )
     primary_module_name = next(iter(modules.keys()), None)
     primary_module = {} if primary_module_name is None else dict(modules[primary_module_name] or {})
     latest_frame = primary_module.get("display_frame")
-    if latest_frame is None and recent_frames:
-        latest_frame = dict(recent_frames[-1])
+    if latest_frame is None and frames:
+        latest_frame = dict(frames[-1])
 
     return {
         "kind": "agent_viewer_state",
@@ -118,20 +118,18 @@ def build_agent_viewer_payload(*, state_root: Path, session_id: str | None = Non
     }
 
 
-def _file_signature(*, state_root: Path, session_id: str | None = None) -> Tuple[int, int, int, int]:
+def _file_signature(*, state_root: Path, session_id: str | None = None) -> Tuple[int, int, int]:
     active_session_path = ActiveSessionStore(state_root).path()
     active_session_mtime = active_session_path.stat().st_mtime_ns if active_session_path.exists() else -1
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
     if resolved_session_id is None:
-        return (active_session_mtime, -1, -1, -1)
+        return (active_session_mtime, -1, -1)
 
     session_path = LiveSessionStore(state_root=state_root).session_path(resolved_session_id)
     perception_path = state_root / "perception" / "snapshot.json"
-    system1_path = state_root / "system1" / "snapshot.json"
     session_mtime = session_path.stat().st_mtime_ns if session_path.exists() else -1
     perception_mtime = perception_path.stat().st_mtime_ns if perception_path.exists() else -1
-    system1_mtime = system1_path.stat().st_mtime_ns if system1_path.exists() else -1
-    return (active_session_mtime, session_mtime, perception_mtime, system1_mtime)
+    return (active_session_mtime, session_mtime, perception_mtime)
 
 
 class AgentViewerStreamServer:
@@ -151,7 +149,7 @@ class AgentViewerStreamServer:
         self._poll_interval = poll_interval
 
     async def _handler(self, websocket: WebSocketServerProtocol) -> None:
-        last_signature: Optional[Tuple[int, int, int, int]] = None
+        last_signature: Optional[Tuple[int, int, int]] = None
         while True:
             try:
                 signature = _file_signature(state_root=self._state_root, session_id=self._session_id)

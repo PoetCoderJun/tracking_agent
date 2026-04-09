@@ -143,10 +143,10 @@ def test_external_skill_scripts_are_thin_backend_adapters() -> None:
     assert "run_tts_turn" in tts
 
     assert "processed_skill_payload" not in web_search
-    assert "apply_processed_payload" not in web_search
+    assert "commit_skill_turn" not in web_search
     assert "processed_skill_payload" not in feishu
-    assert "apply_processed_payload" not in feishu
+    assert "commit_skill_turn" not in feishu
     assert "processed_skill_payload" not in describe_image
-    assert "apply_processed_payload" not in describe_image
+    assert "commit_skill_turn" not in describe_image
     assert "processed_skill_payload" not in tts
-    assert "apply_processed_payload" not in tts
+    assert "commit_skill_turn" not in tts

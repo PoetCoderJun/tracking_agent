@@ -104,7 +104,9 @@ def build_viewer_module(
     perception_snapshot: Dict[str, Any],
     recent_frames: list[Dict[str, Any]],
 ) -> Dict[str, Any] | None:
-    tracking_state = tracking_state_snapshot((session.get("skill_cache") or {}).get("tracking"))
+    raw_state = dict(session.get("state") or {})
+    capabilities = dict(raw_state.get("capabilities") or {})
+    tracking_state = tracking_state_snapshot(capabilities.get("tracking"))
     memory_snapshot = read_tracking_memory_snapshot(
         state_root=state_root,
         session_id=str(session.get("session_id", "")).strip(),

@@ -404,7 +404,7 @@ def supervisor_tracking_step(
             env_file=env_file,
             artifacts_root=artifacts_root,
             append_chat_request=False,
-            apply_processed_payload=lambda *, session_id, pi_payload, env_file: apply_processed_tracking_payload(
+            apply_tracking_payload=lambda *, session_id, pi_payload, env_file: apply_processed_tracking_payload(
                 sessions=sessions,
                 session_id=session_id,
                 pi_payload=pi_payload,

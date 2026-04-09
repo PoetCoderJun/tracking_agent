@@ -10,12 +10,13 @@ from typing import List
 
 from backend.cli import bootstrap_runner_session
 from backend.project_paths import resolve_project_path
+from backend.runner import run_due_tracking_step
 from backend.runtime_session import AgentSessionStore
 from backend.skills import project_skill_paths
 from backend.tracking.context import TRACKING_LIFECYCLE_STOPPED
-from backend.tracking.loop import DEFAULT_SUPERVISOR_POLL_SECONDS, supervisor_tracking_step
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_TRACKING_POLL_SECONDS = 0.25
 TRACKING_ROUTING_SYSTEM_PROMPT = (
     "This repository is a chat-first embodied-agent runtime, not a default code-review task. "
     "When the user is asking the robot to start tracking or replace the tracked person, "
@@ -69,7 +70,7 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--supervisor-poll-seconds",
         type=float,
-        default=DEFAULT_SUPERVISOR_POLL_SECONDS,
+        default=DEFAULT_TRACKING_POLL_SECONDS,
         help=argparse.SUPPRESS,
     )
     parser.add_argument("pi_args", nargs=argparse.REMAINDER)
@@ -273,7 +274,7 @@ def _supervise_pi(
             return_code = child.poll()
             if return_code is not None:
                 return int(return_code)
-            supervisor_tracking_step(
+            run_due_tracking_step(
                 sessions=sessions,
                 session_id=session_id,
                 device_id=str(args.device_id),

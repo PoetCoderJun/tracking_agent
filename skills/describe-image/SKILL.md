@@ -25,10 +25,11 @@ Do not use this skill for:
 
 ## MVP Workflow
 
-1. Read `./.runtime/agent-runtime/perception/snapshot.json`.
-2. Find `latest_frame.image_path`.
-3. Open that image directly and inspect it with vision.
-4. Answer the user in natural language.
+1. Read `$ROBOT_AGENT_STATE_ROOT/perception/snapshot.json` in the normal PI runtime.
+2. If that env var is unavailable, fall back to `./.runtime/agent-runtime/perception/snapshot.json`.
+3. Find `latest_frame.image_path`.
+4. Open that image directly and inspect it with vision.
+5. Answer the user in natural language.
 
 If `snapshot.json` is missing, `latest_frame` is empty, or the image file does not exist, say that you do not currently have a usable frame and cannot describe the scene accurately.
 

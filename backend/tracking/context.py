@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from backend.perception.frames import observation_recent_frames
 from backend.runtime_session import AgentSession
-from backend.session_frames import observation_recent_frames
 from backend.tracking.memory import (
     read_tracking_memory_snapshot,
     tracking_memory_display_text,

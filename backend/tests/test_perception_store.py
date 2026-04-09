@@ -17,6 +17,7 @@ from backend.perception import (
     RobotDetection,
     RobotFrame,
     RobotIngestEvent,
+    observation_recent_frames,
 )
 
 
@@ -184,6 +185,27 @@ def test_local_perception_service_describes_saved_state(tmp_path: Path) -> None:
     assert description["persisted"]["latest_frame"]["frame_id"] == "frame_000001"
     assert description["persisted"]["latest_camera_observation"]["id"] == "frame_000001"
     assert description["persisted"]["saved_keyframe_count"] == 1
+
+
+def test_observation_recent_frames_keeps_none_track_id_detections(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    service = LocalPerceptionService(state_root=state_root, observation_window_seconds=5.0)
+    frame_path = _frame_image(tmp_path / "frame_none_track.jpg")
+
+    service.write_observation(
+        RobotIngestEvent(
+            session_id="sess_none_track",
+            device_id="robot_01",
+            frame=RobotFrame(frame_id="frame_000001", timestamp_ms=1000, image_path=str(frame_path)),
+            detections=[RobotDetection(track_id=-1, bbox=[1, 2, 3, 4], score=0.9)],
+            text="观察画面",
+        ),
+    )
+
+    frames = observation_recent_frames(state_root=state_root)
+
+    assert frames[0]["frame_id"] == "frame_000001"
+    assert frames[0]["detections"][0]["track_id"] is None
 
 
 def test_local_perception_service_reset_clears_snapshot_and_saved_keyframes(tmp_path: Path) -> None:

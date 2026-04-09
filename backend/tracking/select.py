@@ -18,7 +18,7 @@ if str(ROOT) not in sys.path:
 
 from backend.config import load_settings
 from backend.llm_client import call_model, parse_json_block
-from backend.session_frames import observation_recent_frames
+from backend.perception.frames import observation_recent_frames
 from backend.tracking.memory import (
     empty_tracking_memory,
     read_tracking_memory_snapshot,
@@ -70,7 +70,10 @@ def normalized_frame(frame: Any) -> Optional[Dict[str, Any]]:
 
     detections: List[Dict[str, Any]] = []
     for detection in frame.get("detections", []):
-        track_id = int(detection["track_id"])
+        raw_track_id = detection.get("track_id")
+        if raw_track_id in (None, ""):
+            continue
+        track_id = int(raw_track_id)
         detections.append(
             {
                 "track_id": track_id,
@@ -106,7 +109,9 @@ def normalized_track_ids(raw_track_ids: Any) -> List[int]:
 
 def load_tracking_context(session_file: Path) -> Dict[str, Any]:
     raw_session = load_json(session_file)
-    tracking_state = dict(((raw_session.get("skill_cache") or {}).get("tracking") or {}))
+    raw_state = dict(raw_session.get("state") or {})
+    capabilities = dict(raw_state.get("capabilities") or {})
+    tracking_state = dict((capabilities.get("tracking") or {}))
     excluded_track_ids = normalized_track_ids(tracking_state.get("excluded_track_ids"))
     state_root = session_file.resolve().parents[2]
     session_id = str(raw_session["session_id"])

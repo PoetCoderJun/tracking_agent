@@ -182,6 +182,34 @@ def test_tracking_scripts_use_reference_config() -> None:
     assert select.DEFAULT_CONFIG_PATH.name == "robot-agent-config.json"
 
 
+def test_select_normalized_frame_skips_detection_without_track_id(tmp_path: Path) -> None:
+    select = _load_select()
+    frame_path = _frame_image(tmp_path / "frames" / "frame_none_track.jpg")
+
+    normalized = select.normalized_frame(
+        {
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_path": str(frame_path),
+            "detections": [
+                {"track_id": None, "bbox": [1, 2, 3, 4], "score": 0.5},
+                {"track_id": 12, "bbox": [10, 20, 30, 40], "score": 0.95},
+            ],
+        }
+    )
+
+    assert normalized is not None
+    assert normalized["detections"] == [
+        {
+            "track_id": 12,
+            "bounding_box_id": 12,
+            "bbox": [10, 20, 30, 40],
+            "score": 0.95,
+            "label": "person",
+        }
+    ]
+
+
 def test_select_target_returns_direct_match_for_explicit_init_id(tmp_path: Path) -> None:
     select = _load_select()
     frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")

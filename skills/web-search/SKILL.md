@@ -27,15 +27,18 @@ Do not use this skill for:
 ## Rules
 
 1. Resolve the active session first.
-2. Decide whether this turn really needs current online search.
-3. If yes, call the bundled search helper once.
-4. After the helper returns, answer the user naturally and stop.
+2. In this runtime, prefer `ROBOT_AGENT_SESSION_ID` and `ROBOT_AGENT_STATE_ROOT` from the environment over hardcoded runtime paths.
+3. Decide whether this turn really needs current online search.
+4. If yes, call the bundled search helper once.
+5. After the helper returns, answer the user naturally and stop.
 
 ## Helper Script
 
 Use this deterministic helper:
 
 - `python ./skills/web-search/scripts/search_turn.py --session-id <session-id> --state-root ./.runtime/agent-runtime --env-file .ENV --query ...`
+- In the normal PI runtime, prefer:
+  `python ./skills/web-search/scripts/search_turn.py --session-id "$ROBOT_AGENT_SESSION_ID" --state-root "$ROBOT_AGENT_STATE_ROOT" --env-file .ENV --query "..."`
 
 Important:
 

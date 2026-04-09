@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List
 
+from backend.perception.service import LocalPerceptionService
+
 
 def _normalized_track_id_set(raw_track_ids: Any) -> set[int]:
     normalized: set[int] = set()
@@ -20,8 +22,9 @@ def _normalized_detection(detection: Any, *, excluded_track_ids: set[int]) -> Di
     bbox = detection.get("bbox")
     if not isinstance(bbox, list) or len(bbox) != 4:
         return None
-    track_id = int(detection["track_id"])
-    if track_id in excluded_track_ids:
+    raw_track_id = detection.get("track_id")
+    track_id = None if raw_track_id in (None, "") else int(raw_track_id)
+    if track_id is not None and track_id in excluded_track_ids:
         return None
     return {
         "track_id": track_id,
@@ -52,43 +55,36 @@ def _normalized_frame(
     }
 
 
-def _system1_results_by_frame_id(state_root: Path) -> Dict[str, Dict[str, Any]]:
-    from backend.system1 import LocalSystem1Service
-
-    results: Dict[str, Dict[str, Any]] = {}
-    for frame_result in LocalSystem1Service(state_root).recent_frame_results():
-        if not isinstance(frame_result, dict):
-            continue
-        frame_id = str(frame_result.get("frame_id", "")).strip()
-        if not frame_id:
-            continue
-        results[frame_id] = dict(frame_result)
-    return results
-
-
 def observation_recent_frames(
     *,
     state_root: Path,
     excluded_track_ids: Any = None,
 ) -> List[Dict[str, Any]]:
-    from backend.perception.service import LocalPerceptionService
-
     excluded_track_id_set = _normalized_track_id_set(excluded_track_ids)
     frames: List[Dict[str, Any]] = []
-    system1_by_frame_id = _system1_results_by_frame_id(state_root)
     service = LocalPerceptionService(state_root)
     for observation in service.recent_camera_observations():
         payload = dict(observation.get("payload") or {})
+        meta = dict(observation.get("meta") or {})
         frame_id = str(payload.get("frame_id", observation.get("id", ""))).strip()
-        system1_result = system1_by_frame_id.get(frame_id, {})
         frames.append(
             _normalized_frame(
                 frame_id=frame_id,
                 timestamp_ms=observation.get("ts_ms", 0),
                 image_path=payload.get("image_path", ""),
-                detections=system1_result.get("detections") or [],
+                detections=meta.get("detections") or [],
                 excluded_track_ids=excluded_track_id_set,
             )
         )
     return frames
 
+
+def recent_frames(
+    *,
+    state_root: Path,
+    excluded_track_ids: Any = None,
+) -> List[Dict[str, Any]]:
+    return observation_recent_frames(
+        state_root=state_root,
+        excluded_track_ids=excluded_track_ids,
+    )

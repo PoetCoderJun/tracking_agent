@@ -9,7 +9,6 @@ from PIL import Image
 from backend.runtime_session import AgentSessionStore
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 from backend.persistence import ActiveSessionStore, LiveSessionStore
-from backend.system1 import LocalSystem1Service
 from backend.tracking.memory import write_tracking_memory_snapshot
 from viewer.stream import build_agent_viewer_payload
 
@@ -46,7 +45,6 @@ def _write_environment_frame(
     text: str = "观察画面",
 ) -> None:
     perception = LocalPerceptionService(state_root)
-    system1 = LocalSystem1Service(state_root)
     perception.write_observation(
         RobotIngestEvent(
             session_id=session_id,
@@ -67,7 +65,7 @@ def _write_environment_frame(
             text=text,
         ),
     )
-    system1.write_result(
+    perception.write_frame_result(
         {
             "frame_id": frame_id,
             "timestamp_ms": timestamp_ms,
@@ -254,7 +252,7 @@ def test_build_agent_viewer_payload_follows_latest_perception_frame_after_confir
             text="先看看画面",
         ),
     )
-    LocalSystem1Service(state_root).write_result(
+    LocalPerceptionService(state_root).write_frame_result(
         {
             "frame_id": "frame_000001",
             "timestamp_ms": 1710000000000,
@@ -293,7 +291,7 @@ def test_build_agent_viewer_payload_follows_latest_perception_frame_after_confir
             text="更新画面",
         ),
     )
-    LocalSystem1Service(state_root).write_result(
+    LocalPerceptionService(state_root).write_frame_result(
         {
             "frame_id": "frame_000002",
             "timestamp_ms": 1710000001000,

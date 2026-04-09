@@ -54,7 +54,7 @@ def test_main_bootstraps_session_then_supervises_pi(monkeypatch, tmp_path) -> No
         lambda command, env: _FakeProcess(captured, command, env),
     )
     monkeypatch.setattr(e_agent, "_sandbox_profile_path", lambda args, env: tmp_path / "pi-readonly.sb")
-    monkeypatch.setattr(e_agent, "supervisor_tracking_step", lambda **kwargs: {"status": "idle"})
+    monkeypatch.setattr(e_agent, "run_due_tracking_step", lambda **kwargs: {"status": "idle"})
 
     exit_code = e_agent.main(
         [
@@ -94,7 +94,7 @@ def test_main_can_enable_pi_sandbox(monkeypatch, tmp_path) -> None:
         lambda command, env: _FakeProcess(captured, command, env),
     )
     monkeypatch.setattr(e_agent, "_sandbox_profile_path", lambda args, env: tmp_path / "pi-readonly.sb")
-    monkeypatch.setattr(e_agent, "supervisor_tracking_step", lambda **kwargs: {"status": "idle"})
+    monkeypatch.setattr(e_agent, "run_due_tracking_step", lambda **kwargs: {"status": "idle"})
 
     exit_code = e_agent.main(
         [
@@ -122,7 +122,7 @@ def test_main_respects_explicit_thinking_passthrough(monkeypatch, tmp_path) -> N
         lambda command, env: _FakeProcess(captured, command, env),
     )
     monkeypatch.setattr(e_agent, "_sandbox_profile_path", lambda args, env: tmp_path / "pi-readonly.sb")
-    monkeypatch.setattr(e_agent, "supervisor_tracking_step", lambda **kwargs: {"status": "idle"})
+    monkeypatch.setattr(e_agent, "run_due_tracking_step", lambda **kwargs: {"status": "idle"})
 
     exit_code = e_agent.main(
         [
@@ -141,4 +141,3 @@ def test_main_respects_explicit_thinking_passthrough(monkeypatch, tmp_path) -> N
     command = captured["command"]
     assert command.count("--thinking") == 1
     assert command[command.index("--thinking") + 1] == "high"
-
