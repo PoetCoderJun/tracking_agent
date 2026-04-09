@@ -160,7 +160,6 @@ def run_notify_turn(
     *,
     session_id: str | None,
     state_root: Path,
-    frame_buffer_size: int | None = None,
     title: str | None,
     message: str | None,
     event_type: str,
@@ -173,10 +172,7 @@ def run_notify_turn(
     if resolved_session_id is None:
         raise ValueError("No active session found. Pass --session-id or create one first.")
 
-    store = AgentSessionStore(
-        state_root=state_root,
-        frame_buffer_size=frame_buffer_size,
-    )
+    store = AgentSessionStore(state_root=state_root)
     resolved_message = str(message or _default_message(store, resolved_session_id)).strip()
     resolved_event_type = str(event_type).strip()
     resolved_title = str(title or _default_title(resolved_message, resolved_event_type)).strip()

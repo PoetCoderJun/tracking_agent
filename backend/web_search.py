@@ -166,16 +166,12 @@ def run_web_search_turn(
     query: str,
     session_id: str | None,
     state_root: Path,
-    frame_buffer_size: int | None = None,
     env_file: Path,
     max_results: int,
     include_answer: bool,
 ) -> Dict[str, Any]:
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
-    sessions = AgentSessionStore(
-        state_root=state_root,
-        frame_buffer_size=frame_buffer_size,
-    )
+    sessions = AgentSessionStore(state_root=state_root)
     resolved_query = str(query).strip() or _default_query(
         state_root=state_root,
         session_id=resolved_session_id,

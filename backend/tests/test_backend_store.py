@@ -17,7 +17,7 @@ def _tiny_jpeg_base64() -> str:
 
 
 def test_ingest_robot_event_saves_generic_session_state(tmp_path: Path) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=2)
+    store = LiveSessionStore(tmp_path / "state")
 
     session = store.ingest_robot_event(
         session_id="sess_001",
@@ -43,7 +43,7 @@ def test_ingest_robot_event_saves_generic_session_state(tmp_path: Path) -> None:
 
 
 def test_ingest_robot_event_does_not_persist_recent_frames_or_frame_files(tmp_path: Path) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=2)
+    store = LiveSessionStore(tmp_path / "state")
 
     for index in range(3):
         store.ingest_robot_event(
@@ -65,7 +65,7 @@ def test_ingest_robot_event_does_not_persist_recent_frames_or_frame_files(tmp_pa
 
 
 def test_apply_agent_result_preserves_generic_payload_shape(tmp_path: Path) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=3)
+    store = LiveSessionStore(tmp_path / "state")
     store.ingest_robot_event(
         session_id="sess_001",
         device_id="robot_01",
@@ -113,7 +113,7 @@ def test_apply_agent_result_preserves_generic_payload_shape(tmp_path: Path) -> N
 
 
 def test_session_payload_stays_generic(tmp_path: Path) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=3)
+    store = LiveSessionStore(tmp_path / "state")
     store.ingest_robot_event(
         session_id="sess_001",
         device_id="robot_01",
@@ -148,7 +148,7 @@ def test_session_payload_stays_generic(tmp_path: Path) -> None:
 
 
 def test_conversation_history_keeps_full_chat_log(tmp_path: Path) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=3)
+    store = LiveSessionStore(tmp_path / "state")
     store.ingest_robot_event(
         session_id="sess_chat",
         device_id="robot_01",
@@ -188,7 +188,7 @@ def test_conversation_history_keeps_full_chat_log(tmp_path: Path) -> None:
 
 
 def test_patch_latest_result_updates_current_result_and_history(tmp_path: Path) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=3)
+    store = LiveSessionStore(tmp_path / "state")
     store.ingest_robot_event(
         session_id="sess_001",
         device_id="robot_01",
@@ -231,7 +231,7 @@ def test_patch_latest_result_updates_current_result_and_history(tmp_path: Path) 
 def test_reset_session_context_clears_result_history_but_keeps_frames_and_dialogue(
     tmp_path: Path,
 ) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=3)
+    store = LiveSessionStore(tmp_path / "state")
     store.ingest_robot_event(
         session_id="sess_001",
         device_id="robot_01",
@@ -265,7 +265,7 @@ def test_reset_session_context_clears_result_history_but_keeps_frames_and_dialog
 
 
 def test_start_fresh_session_replaces_old_session_state_and_cleans_frames(tmp_path: Path) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=3)
+    store = LiveSessionStore(tmp_path / "state")
     store.ingest_robot_event(
         session_id="sess_001",
         device_id="robot_01",

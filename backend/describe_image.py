@@ -78,14 +78,10 @@ def run_describe_turn(
     user_text: str,
     session_id: str | None,
     state_root: Path,
-    frame_buffer_size: int | None = None,
     env_file: Path,
 ) -> Dict[str, object]:
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
-    sessions = AgentSessionStore(
-        state_root=state_root,
-        frame_buffer_size=frame_buffer_size,
-    )
+    sessions = AgentSessionStore(state_root=state_root)
     resolved_image = _resolved_image_path(
         image_path=str(image_path),
         state_root=state_root,

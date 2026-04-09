@@ -90,7 +90,7 @@ def test_build_agent_viewer_payload_includes_current_frame_memory_and_history(
     tmp_path: Path,
 ) -> None:
     state_root = tmp_path / "state"
-    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store = LiveSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
     perception.write_observation(
@@ -165,7 +165,7 @@ def test_build_agent_viewer_payload_uses_active_session_when_session_id_is_omitt
     tmp_path: Path,
 ) -> None:
     state_root = tmp_path / "state"
-    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store = LiveSessionStore(state_root)
     frame_path = _frame_image(tmp_path / "frame_active.jpg")
     _write_environment_frame(
         state_root=state_root,
@@ -199,7 +199,7 @@ def test_build_agent_viewer_payload_hides_raw_perception_frames_before_target_co
     tmp_path: Path,
 ) -> None:
     state_root = tmp_path / "state"
-    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store = LiveSessionStore(state_root)
     frame_path = _frame_image(tmp_path / "frame_waiting.jpg")
     _write_environment_frame(
         state_root=state_root,
@@ -237,7 +237,7 @@ def test_build_agent_viewer_payload_follows_latest_perception_frame_after_confir
     tmp_path: Path,
 ) -> None:
     state_root = tmp_path / "state"
-    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store = LiveSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
     frame_a = _frame_image(tmp_path / "frame_a.jpg")
     frame_b = _frame_image(tmp_path / "frame_b.jpg")
@@ -320,7 +320,7 @@ def test_build_agent_viewer_payload_follows_latest_perception_frame_after_confir
 
 def test_build_agent_viewer_payload_marks_completed_stream(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
-    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store = LiveSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
     perception.write_observation(
@@ -374,7 +374,7 @@ def test_build_agent_viewer_payload_marks_completed_stream(tmp_path: Path) -> No
 
 def test_build_agent_viewer_payload_keeps_display_frame_during_wait(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
-    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store = LiveSessionStore(state_root)
     frame_path = _frame_image(tmp_path / "frame_wait.jpg")
     _write_environment_frame(
         state_root=state_root,
@@ -445,7 +445,7 @@ def test_build_agent_viewer_payload_handles_missing_active_session(tmp_path: Pat
 
 def test_build_agent_viewer_payload_marks_wait_result_as_seeking(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
-    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store = LiveSessionStore(state_root)
     frame_path = _frame_image(tmp_path / "frame_wait_result.jpg")
     _write_environment_frame(
         state_root=state_root,
@@ -493,7 +493,7 @@ def test_build_agent_viewer_payload_marks_wait_result_as_seeking(tmp_path: Path)
 
 def test_build_agent_viewer_payload_exposes_recent_conversation_window(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
-    store = LiveSessionStore(state_root, frame_buffer_size=3)
+    store = LiveSessionStore(state_root)
     store.ingest_robot_event(
         session_id="sess_history",
         device_id="robot_01",

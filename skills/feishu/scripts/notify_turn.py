@@ -12,7 +12,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Write one Feishu notification turn from persisted session state.")
     parser.add_argument("--session-id", default=None)
     parser.add_argument("--state-root", default="./.runtime/agent-runtime")
-    parser.add_argument("--frame-buffer-size", type=int, default=3)
     parser.add_argument("--title", default=None)
     parser.add_argument("--message", default=None)
     parser.add_argument("--event-type", default="")
@@ -25,7 +24,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     payload = run_notify_turn(
         session_id=args.session_id,
         state_root=resolve_project_path(args.state_root),
-        frame_buffer_size=int(args.frame_buffer_size),
         title=args.title,
         message=args.message,
         event_type=str(args.event_type),
