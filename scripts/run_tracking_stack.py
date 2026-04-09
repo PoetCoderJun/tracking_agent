@@ -22,7 +22,7 @@ Current recommended flow:
   1. Start the stack to launch the environment writer workflow.
   2. Start the main runner with `e-agent`.
   3. Let `pi` run the conversation loop and call project skills directly.
-  4. Start `robot-agent-tracking-loop` separately only if you want continuous tracking.
+  4. Successful `tracking-init` in `pi` will activate continuous tracking inside the same `e-agent` session supervisor.
   5. Use `robot-agent tracking-init` / `robot-agent tracking-track` only for deterministic backend checks.
 """
 

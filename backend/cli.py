@@ -19,13 +19,9 @@ def bootstrap_runner_session(
     state_root: Path,
     device_id: str = "robot_01",
     session_id: str | None = None,
-    frame_buffer_size: int = 3,
     fresh: bool = False,
 ):
-    sessions = AgentSessionStore(
-        state_root=state_root,
-        frame_buffer_size=frame_buffer_size,
-    )
+    sessions = AgentSessionStore(state_root=state_root)
     requested_session_id = str(session_id or "").strip()
     resolved_session_id = requested_session_id or generate_session_id(prefix="runtime")
     session = (
@@ -50,7 +46,6 @@ def parse_args() -> argparse.Namespace:
     runner_bootstrap.add_argument("--session-id", default=None)
     runner_bootstrap.add_argument("--device-id", default="robot_01")
     runner_bootstrap.add_argument("--state-root", default="./.runtime/agent-runtime")
-    runner_bootstrap.add_argument("--frame-buffer-size", type=int, default=3)
     runner_bootstrap.add_argument("--fresh", action="store_true")
 
     session_show = subparsers.add_parser(
@@ -60,7 +55,6 @@ def parse_args() -> argparse.Namespace:
     session_show.add_argument("--session-id", default=None)
     session_show.add_argument("--device-id", default="robot_01")
     session_show.add_argument("--state-root", default="./.runtime/agent-runtime")
-    session_show.add_argument("--frame-buffer-size", type=int, default=3)
 
     tracking_track = subparsers.add_parser(
         "tracking-track",
@@ -70,7 +64,6 @@ def parse_args() -> argparse.Namespace:
     tracking_track.add_argument("--text", default="继续跟踪")
     tracking_track.add_argument("--device-id", default="robot_01")
     tracking_track.add_argument("--state-root", default="./.runtime/agent-runtime")
-    tracking_track.add_argument("--frame-buffer-size", type=int, default=3)
     tracking_track.add_argument("--env-file", default=".ENV")
     tracking_track.add_argument("--artifacts-root", default="./.runtime/pi-agent")
     tracking_track.add_argument("--request-id", default=None)
@@ -83,7 +76,6 @@ def parse_args() -> argparse.Namespace:
     tracking_init.add_argument("--text", required=True)
     tracking_init.add_argument("--device-id", default="robot_01")
     tracking_init.add_argument("--state-root", default="./.runtime/agent-runtime")
-    tracking_init.add_argument("--frame-buffer-size", type=int, default=3)
     tracking_init.add_argument("--env-file", default=".ENV")
     tracking_init.add_argument("--artifacts-root", default="./.runtime/pi-agent")
     tracking_init.add_argument("--request-id", default=None)
@@ -95,7 +87,6 @@ def parse_args() -> argparse.Namespace:
     apply_payload.add_argument("--session-id", default=None)
     apply_payload.add_argument("--device-id", default="robot_01")
     apply_payload.add_argument("--state-root", default="./.runtime/agent-runtime")
-    apply_payload.add_argument("--frame-buffer-size", type=int, default=3)
     apply_payload.add_argument("--env-file", default=".ENV")
     apply_payload.add_argument("--payload-file", default=None)
 
@@ -103,10 +94,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _session_store_from_args(args: argparse.Namespace) -> AgentSessionStore:
-    return AgentSessionStore(
-        state_root=resolve_project_path(args.state_root),
-        frame_buffer_size=args.frame_buffer_size,
-    )
+    return AgentSessionStore(state_root=resolve_project_path(args.state_root))
 
 
 def _resolved_active_or_explicit_session_id(args: argparse.Namespace) -> str:
@@ -127,6 +115,7 @@ def _session_payload(session) -> dict:
         "latest_result": session.latest_result,
         "environment_map": session.environment_map,
         "perception_cache": session.perception_cache,
+        "runner_state": session.runner_state,
         "skill_cache": session.skill_cache,
     }
 
@@ -149,7 +138,6 @@ def main() -> int:
             state_root=state_root,
             device_id=args.device_id,
             session_id=args.session_id,
-            frame_buffer_size=args.frame_buffer_size,
             fresh=bool(args.fresh),
         )
         print(

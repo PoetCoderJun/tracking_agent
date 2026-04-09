@@ -23,7 +23,6 @@ def test_skill_package_contains_expected_files() -> None:
         SKILL_ROOT / "references" / "output-contracts.md",
         SKILL_ROOT / "references" / "interaction-policy.md",
         RUNTIME_SESSION_PATH,
-        BACKEND_TRACKING_ROOT / "cli.py",
         BACKEND_TRACKING_ROOT / "context.py",
         BACKEND_TRACKING_ROOT / "crop.py",
         BACKEND_TRACKING_ROOT / "memory.py",
@@ -39,8 +38,6 @@ def test_skill_package_contains_expected_files() -> None:
         BACKEND_DESCRIBE_IMAGE_PATH,
         ROOT / "scripts" / "write_environment.py",
         ROOT / "scripts" / "run_tracking_perception.py",
-        ROOT / "scripts" / "run_tracking_loop.py",
-        ROOT / "scripts" / "run_tracking_viewer_stream.py",
         ROOT / "scripts" / "run_tracking_stack.sh",
         ROOT / "scripts" / "run_tracking_frontend.sh",
         TRACKING_VIEWER_ROOT / "package.json",
@@ -72,7 +69,10 @@ def test_legacy_turn_runner_artifacts_are_removed() -> None:
     assert not (ROOT / "terminal" / "pi_agent_tui.mjs").exists()
     assert not (ROOT / "terminal" / "package.json").exists()
     assert not (ROOT / "scripts" / "run_tracking_agent.py").exists()
+    assert not (ROOT / "scripts" / "run_tracking_loop.py").exists()
+    assert not (ROOT / "scripts" / "run_tracking_viewer_stream.py").exists()
     assert not (BACKEND_TRACKING_ROOT / "service.py").exists()
+    assert not (BACKEND_TRACKING_ROOT / "cli.py").exists()
     assert not (BACKEND_TRACKING_ROOT / "rewrite_worker.py").exists()
 
 
@@ -82,6 +82,8 @@ def test_tracking_skill_contract_is_pi_native() -> None:
     assert "route_context" not in skill
     assert "python -m backend.cli tracking-init" in skill
     assert "--session-id <session-id>" in skill
+    assert "请跟踪穿黑衣服的人" in skill
+    assert "Do not inspect repository files" in skill
 
 
 def test_web_search_skill_contract_is_pi_native() -> None:

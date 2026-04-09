@@ -17,7 +17,6 @@ def _resolved_image_path(
     image_path: str,
     state_root: Path,
     session_id: str | None,
-    frame_buffer_size: int,
 ) -> Optional[Path]:
     explicit = str(image_path or "").strip()
     if explicit:
@@ -29,10 +28,7 @@ def _resolved_image_path(
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
     if resolved_session_id is None:
         return None
-    latest_frame = LocalPerceptionService(
-        state_root=state_root,
-        frame_buffer_size=frame_buffer_size,
-    ).read_latest_frame()
+    latest_frame = LocalPerceptionService(state_root=state_root).read_latest_frame()
     if not isinstance(latest_frame, dict):
         return None
     candidate = Path(str(latest_frame.get("image_path", "")).strip())
@@ -82,16 +78,18 @@ def run_describe_turn(
     user_text: str,
     session_id: str | None,
     state_root: Path,
-    frame_buffer_size: int,
+    frame_buffer_size: int | None = None,
     env_file: Path,
 ) -> Dict[str, object]:
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
-    sessions = AgentSessionStore(state_root=state_root, frame_buffer_size=int(frame_buffer_size))
+    sessions = AgentSessionStore(
+        state_root=state_root,
+        frame_buffer_size=frame_buffer_size,
+    )
     resolved_image = _resolved_image_path(
         image_path=str(image_path),
         state_root=state_root,
         session_id=resolved_session_id,
-        frame_buffer_size=int(frame_buffer_size),
     )
     if resolved_image is None:
         payload = build_describe_payload(

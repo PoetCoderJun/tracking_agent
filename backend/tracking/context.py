@@ -4,14 +4,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.runtime_session import AgentSession
-from backend.session_frames import tracking_recent_frames
+from backend.session_frames import observation_recent_frames
 from backend.tracking.memory import (
-    normalize_tracking_memory,
+    read_tracking_memory_snapshot,
     tracking_memory_display_text,
     tracking_memory_summary,
 )
 
 TRACKING_DIALOGUE_LIMIT = 6
+TRACKING_LIFECYCLE_INACTIVE = "inactive"
+TRACKING_LIFECYCLE_SCHEDULED = "scheduled"
+TRACKING_LIFECYCLE_RUNNING = "running"
+TRACKING_LIFECYCLE_BOUND = "bound"
+TRACKING_LIFECYCLE_SEEKING = "seeking"
+TRACKING_LIFECYCLE_STOPPED = "stopped"
 
 
 def _normalized_dialogue(history: Any, *, limit: int) -> List[Dict[str, str]]:
@@ -34,10 +40,8 @@ def _tracking_frames(
     *,
     excluded_track_ids: Optional[List[int]] = None,
 ) -> List[Dict[str, Any]]:
-    return tracking_recent_frames(
+    return observation_recent_frames(
         state_root=Path(session.state_paths["state_root"]),
-        session_id=session.session_id,
-        raw_session=session.session,
         excluded_track_ids=excluded_track_ids,
     )
 
@@ -58,21 +62,25 @@ def tracking_state_snapshot(raw_tracking_state: Any) -> Dict[str, Any]:
     if latest_target_id not in (None, ""):
         latest_target_id = int(latest_target_id)
 
-    latest_memory = normalize_tracking_memory(raw.get("latest_memory", {}))
+    lifecycle_status = str(raw.get("lifecycle_status", "") or "").strip()
+    if not lifecycle_status:
+        if str(raw.get("pending_question", "") or "").strip():
+            lifecycle_status = TRACKING_LIFECYCLE_SEEKING
+        elif latest_target_id is not None:
+            lifecycle_status = TRACKING_LIFECYCLE_BOUND
+        else:
+            lifecycle_status = TRACKING_LIFECYCLE_INACTIVE
     return {
         "target_description": str(raw.get("target_description", "")).strip(),
         "latest_target_id": latest_target_id,
-        "latest_target_crop": str(raw.get("latest_target_crop", "")).strip(),
-        "latest_front_target_crop": str(raw.get("latest_front_target_crop", "")).strip(),
-        "latest_back_target_crop": str(raw.get("latest_back_target_crop", "")).strip(),
-        "latest_confirmed_frame_path": str(raw.get("latest_confirmed_frame_path", "")).strip(),
-        "identity_target_crop": str(raw.get("identity_target_crop", "")).strip(),
-        "latest_confirmed_bbox": raw.get("latest_confirmed_bbox"),
-        "init_frame_snapshot": raw.get("init_frame_snapshot"),
         "pending_question": str(raw.get("pending_question", "") or "").strip(),
-        "latest_memory": latest_memory,
-        "latest_memory_text": tracking_memory_display_text(latest_memory),
-        "memory_summary": tracking_memory_summary(latest_memory),
+        "lifecycle_status": lifecycle_status,
+        "generation": int(raw.get("generation", 0) or 0),
+        "next_tracking_turn_at": raw.get("next_tracking_turn_at"),
+        "last_seen_frame_id": str(raw.get("last_seen_frame_id", "") or "").strip(),
+        "last_completed_frame_id": str(raw.get("last_completed_frame_id", "") or "").strip(),
+        "last_trigger": str(raw.get("last_trigger", "") or "").strip(),
+        "stop_reason": str(raw.get("stop_reason", "") or "").strip(),
     }
 
 
@@ -83,20 +91,22 @@ def build_tracking_context(
     excluded_track_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
+    memory_snapshot = read_tracking_memory_snapshot(
+        state_root=Path(session.state_paths["state_root"]),
+        session_id=session.session_id,
+    )
+    latest_memory = memory_snapshot["memory"]
     normalized_excluded_track_ids = sorted(_normalized_track_id_set(excluded_track_ids))
     return {
         "session_id": session.session_id,
         "request_id": request_id,
         "target_description": tracking_state.get("target_description", ""),
-        "memory": tracking_state.get("latest_memory", ""),
+        "memory": latest_memory,
+        "front_crop_path": memory_snapshot["front_crop_path"] or None,
+        "back_crop_path": memory_snapshot["back_crop_path"] or None,
+        "memory_text": tracking_memory_display_text(latest_memory),
+        "memory_summary": tracking_memory_summary(latest_memory),
         "latest_target_id": tracking_state.get("latest_target_id"),
-        "latest_target_crop": tracking_state.get("latest_target_crop") or None,
-        "latest_front_target_crop": tracking_state.get("latest_front_target_crop") or None,
-        "latest_back_target_crop": tracking_state.get("latest_back_target_crop") or None,
-        "latest_confirmed_frame_path": tracking_state.get("latest_confirmed_frame_path") or None,
-        "identity_target_crop": tracking_state.get("identity_target_crop") or None,
-        "latest_confirmed_bbox": tracking_state.get("latest_confirmed_bbox"),
-        "init_frame_snapshot": tracking_state.get("init_frame_snapshot"),
         "chat_history": _normalized_dialogue(
             session.session.get("conversation_history"),
             limit=TRACKING_DIALOGUE_LIMIT,

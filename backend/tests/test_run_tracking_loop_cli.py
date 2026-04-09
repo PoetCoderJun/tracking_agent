@@ -104,7 +104,7 @@ def test_parse_args_accepts_runtime_paths(monkeypatch) -> None:
 def test_has_active_target_detects_tracking_state() -> None:
     assert _has_active_target({"latest_target_id": 7, "latest_confirmed_frame_path": "/tmp/frame.jpg"}) is True
     assert _has_active_target({"latest_memory": "foo"}) is False
-    assert _has_active_target({"latest_target_id": 7}) is False
+    assert _has_active_target({"latest_target_id": 7}) is True
     assert _has_active_target({"initialized_frame": "frame_000000"}) is False
     assert _has_active_target({}) is False
 

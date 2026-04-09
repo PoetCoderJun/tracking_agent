@@ -9,12 +9,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, Iterator, List, Tuple, Union
 
 from PIL import Image
 
 
 SourceValue = Union[int, str]
+DEFAULT_CAMERA_SOURCE = "0"
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,115 @@ def video_timestamp_seconds(frame_index: int, fps: float) -> float:
 
 def current_timestamp_ms() -> int:
     return round(time.time() * 1000)
+
+
+def _load_cv2():
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing robot-side dependencies. Install opencv-python before running the environment writer workflow."
+        ) from exc
+    return cv2
+
+
+def probe_camera_indices(max_index: int = 5) -> list[int]:
+    cv2 = _load_cv2()
+    available: list[int] = []
+    for index in range(max_index):
+        capture = cv2.VideoCapture(index)
+        try:
+            if capture.isOpened():
+                ok, _frame = capture.read()
+                if ok:
+                    available.append(index)
+        finally:
+            capture.release()
+    return available
+
+
+def assert_camera_source(source: int) -> None:
+    cv2 = _load_cv2()
+    capture = cv2.VideoCapture(source)
+    try:
+        if not capture.isOpened():
+            available_cameras = probe_camera_indices()
+            raise RuntimeError(
+                "Failed to open camera source index "
+                f"{source}. On macOS this is often caused by camera permission denied or another app holding the device. "
+                f"Available readable indices from 0..4: {available_cameras}. "
+                "Try another index such as 1 or 2, or pass a file path to --source for debugging."
+            )
+
+        ready = False
+        for _ in range(5):
+            ok, frame = capture.read()
+            if ok and frame is not None:
+                ready = True
+                break
+            time.sleep(0.2)
+        if not ready:
+            raise RuntimeError(
+                "Opened camera source but failed to read a frame. "
+                "The device might be blocked by another process or not initialized yet."
+            )
+    finally:
+        capture.release()
+
+
+def should_emit_event(
+    frame_index: int,
+    sample_every: int,
+    now_monotonic: float,
+    next_emit_at: float,
+) -> bool:
+    if frame_index % sample_every != 0:
+        return False
+    return now_monotonic >= next_emit_at
+
+
+def should_emit_video_sample(
+    frame_index: int,
+    sample_every: int,
+    fps: float,
+    next_video_emit_at: float,
+) -> bool:
+    if frame_index % sample_every != 0:
+        return False
+    return video_timestamp_seconds(frame_index, fps) >= next_video_emit_at
+
+
+def target_video_emit_at(
+    *,
+    next_video_emit_at: float,
+    realtime_playback: bool,
+    source_started_monotonic: float,
+    now_monotonic: float,
+    paused_seconds: float = 0.0,
+) -> float:
+    if not realtime_playback:
+        return next_video_emit_at
+    return max(next_video_emit_at, max(0.0, now_monotonic - source_started_monotonic - paused_seconds))
+
+
+def iter_frames(source: Any, *, vid_stride: int) -> Iterator[Tuple[int, Any]]:
+    cv2 = _load_cv2()
+    capture = cv2.VideoCapture(source)
+    if not capture.isOpened():
+        raise RuntimeError(f"Unable to open video source: {source}")
+
+    frame_index = 0
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                break
+            frame_index += 1
+            if vid_stride > 1 and frame_index % vid_stride != 0:
+                continue
+            yield frame_index, frame
+    finally:
+        capture.release()
 
 
 def save_frame_image(frame_bgr: Any, output_path: Path) -> Path:

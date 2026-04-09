@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -57,10 +58,6 @@ class AgentSession:
         return str(self.payload["session_id"])
 
     @property
-    def raw_session(self) -> Dict[str, Any]:
-        return self.payload
-
-    @property
     def session(self) -> Dict[str, Any]:
         return self.payload
 
@@ -85,6 +82,10 @@ class AgentSession:
         return self.perception_cache
 
     @property
+    def runner_state(self) -> Dict[str, Any]:
+        return dict(self.payload.get("runner_state", {}))
+
+    @property
     def skill_cache(self) -> Dict[str, Any]:
         return dict(self.payload.get("skill_cache", {}))
 
@@ -101,15 +102,10 @@ class AgentSession:
     def conversation_history(self) -> List[Dict[str, Any]]:
         return list(self.payload.get("conversation_history", []))
 
-    @property
-    def recent_frames(self) -> List[Dict[str, Any]]:
-        return list(self.payload.get("recent_frames", []))
-
-
 class AgentSessionStore:
-    def __init__(self, state_root: Path, frame_buffer_size: int = 3):
+    def __init__(self, state_root: Path):
         self._state_root = state_root
-        self._store = LiveSessionStore(state_root=state_root, frame_buffer_size=frame_buffer_size)
+        self._store = LiveSessionStore(state_root=state_root)
 
     @property
     def state_root(self) -> Path:
@@ -228,6 +224,11 @@ class AgentSessionStore:
         self._store.patch_agent_state(session_id, perception_cache=patch)
         return self.load(session_id)
 
+    def patch_runner_state(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
+        self._ensure_session(session_id)
+        self._store.patch_agent_state(session_id, runner_state=patch)
+        return self.load(session_id)
+
     def patch_skill_state(
         self,
         session_id: str,
@@ -238,3 +239,48 @@ class AgentSessionStore:
         self._ensure_session(session_id)
         self._store.patch_agent_state(session_id, skill_cache={skill_name: patch})
         return self.load(session_id)
+
+    def acquire_turn(
+        self,
+        *,
+        session_id: str,
+        owner_id: str,
+        turn_kind: str,
+        request_id: str,
+        device_id: str = "",
+        wait: bool = False,
+        timeout_seconds: float = 5.0,
+        poll_interval_seconds: float = 0.05,
+        stale_after_seconds: float = 30.0,
+    ) -> AgentSession | None:
+        deadline = time.time() + max(0.0, timeout_seconds)
+        while True:
+            acquired = self._store.try_acquire_turn(
+                session_id=session_id,
+                owner_id=owner_id,
+                turn_kind=turn_kind,
+                request_id=request_id,
+                device_id=device_id,
+                stale_after_seconds=stale_after_seconds,
+            )
+            if acquired is not None:
+                return self.load(session_id, device_id=device_id)
+            if not wait or time.time() >= deadline:
+                return None
+            time.sleep(max(0.01, poll_interval_seconds))
+
+    def release_turn(
+        self,
+        *,
+        session_id: str,
+        owner_id: str,
+        request_id: str | None = None,
+        device_id: str = "",
+    ) -> AgentSession:
+        self._store.release_turn(
+            session_id=session_id,
+            owner_id=owner_id,
+            request_id=request_id,
+            device_id=device_id,
+        )
+        return self.load(session_id, device_id=device_id)

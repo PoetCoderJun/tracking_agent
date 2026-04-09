@@ -18,12 +18,20 @@ from backend.perception.stream import generate_request_id
 from backend.persistence import resolve_session_id
 from backend.project_paths import resolve_project_path
 from backend.runtime_session import AgentSessionStore
-from backend.tracking.context import tracking_state_snapshot
+from backend.tracking.context import (
+    TRACKING_LIFECYCLE_BOUND,
+    TRACKING_LIFECYCLE_INACTIVE,
+    TRACKING_LIFECYCLE_RUNNING,
+    TRACKING_LIFECYCLE_SEEKING,
+    TRACKING_LIFECYCLE_STOPPED,
+    tracking_state_snapshot,
+)
 
 TRACKING_SKILL_NAME = "tracking"
 BOUND_REVIEW_FAST_WINDOW_FRAMES = 3
 BOUND_REVIEW_SLOW_INTERVAL_FRAMES = 8
 BOUND_REWRITE_MIN_STABLE_FRAMES = 3
+DEFAULT_SUPERVISOR_POLL_SECONDS = 0.25
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,8 +42,7 @@ def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Tracking loop. Polls tracking session state and dispatches periodic deterministic "
-            "track turns when an active target already exists."
+            "Tracking debug adapter. Runs one supervisor-style tracking step against the current session."
         )
     )
     parser.add_argument(
@@ -45,7 +52,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device-id", default="robot_01")
     parser.add_argument("--state-root", default="./.runtime/agent-runtime")
-    parser.add_argument("--frame-buffer-size", type=int, default=3)
     parser.add_argument("--env-file", default=bootstrap_args.env_file)
     parser.add_argument("--artifacts-root", default="./.runtime/pi-agent")
     parser.add_argument("--continue-text", default="继续跟踪")
@@ -84,10 +90,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _sessions_from_args(args: argparse.Namespace) -> AgentSessionStore:
-    return AgentSessionStore(
-        state_root=resolve_project_path(args.state_root),
-        frame_buffer_size=args.frame_buffer_size,
-    )
+    return AgentSessionStore(state_root=resolve_project_path(args.state_root))
 
 
 def _tracking_state(context: Any) -> Dict[str, Any]:
@@ -95,10 +98,7 @@ def _tracking_state(context: Any) -> Dict[str, Any]:
 
 
 def _has_active_target(tracking_state: Dict[str, Any]) -> bool:
-    return (
-        tracking_state.get("latest_target_id") not in (None, "", [])
-        and tracking_state.get("latest_confirmed_frame_path") not in (None, "", [])
-    )
+    return tracking_state.get("latest_target_id") not in (None, "", [])
 
 
 def _waiting_for_user(tracking_state: Dict[str, Any]) -> bool:
@@ -232,9 +232,12 @@ def _should_schedule_rewrite(
 def _next_rewrite_delay_seconds(
     *,
     rewrite_interval_seconds: float,
+    state_root: Path,
+    session_id: str,
     tracking_state: Dict[str, Any],
 ) -> float:
-    if tracking_missing_reference_views(tracking_state):
+    _ = tracking_state
+    if tracking_missing_reference_views(state_root=state_root, session_id=session_id):
         return min(rewrite_interval_seconds, 1.0)
     return rewrite_interval_seconds
 
@@ -276,6 +279,173 @@ def _schedule_bound_memory_rewrite(
     )
 
 
+def _tracking_status_patch(
+    *,
+    lifecycle_status: str,
+    latest_frame_id: str | None = None,
+    next_tracking_turn_at: float | None = None,
+    last_trigger: str | None = None,
+    stop_reason: str | None = None,
+) -> Dict[str, Any]:
+    patch: Dict[str, Any] = {"lifecycle_status": lifecycle_status}
+    if latest_frame_id not in (None, ""):
+        patch["last_seen_frame_id"] = latest_frame_id
+    if next_tracking_turn_at is not None:
+        patch["next_tracking_turn_at"] = next_tracking_turn_at
+    if last_trigger not in (None, ""):
+        patch["last_trigger"] = last_trigger
+    if stop_reason not in (None, ""):
+        patch["stop_reason"] = stop_reason
+    return patch
+
+
+def supervisor_tracking_step(
+    *,
+    sessions: AgentSessionStore,
+    session_id: str,
+    device_id: str,
+    env_file: Path,
+    artifacts_root: Path,
+    owner_id: str,
+    continue_text: str = "继续跟踪",
+    interval_seconds: float = 3.0,
+) -> Dict[str, Any]:
+    context = sessions.load(session_id, device_id=device_id)
+    tracking_state = _tracking_state(context)
+    stream_status = _perception_stream_status(context)
+    latest_frame = _latest_frame(context)
+    latest_frame_id = str(latest_frame.get("frame_id", "")).strip() or None
+    current_target_id = _latest_target_id(tracking_state)
+    last_completed_frame_id = str(tracking_state.get("last_completed_frame_id", "") or "").strip()
+    due_at = tracking_state.get("next_tracking_turn_at")
+    try:
+        due_at_seconds = float(due_at)
+    except (TypeError, ValueError):
+        due_at_seconds = 0.0
+    now_seconds = time.time()
+
+    if not _has_active_target(tracking_state):
+        sessions.patch_skill_state(
+            session_id,
+            skill_name=TRACKING_SKILL_NAME,
+            patch=_tracking_status_patch(
+                lifecycle_status=TRACKING_LIFECYCLE_INACTIVE,
+                latest_frame_id=latest_frame_id,
+                stop_reason="no_active_target",
+            ),
+        )
+        return {"status": "idle", "reason": "no_active_target", "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS}
+
+    if _waiting_for_user(tracking_state):
+        sessions.patch_skill_state(
+            session_id,
+            skill_name=TRACKING_SKILL_NAME,
+            patch=_tracking_status_patch(
+                lifecycle_status=TRACKING_LIFECYCLE_SEEKING,
+                latest_frame_id=latest_frame_id,
+                stop_reason="waiting_for_user",
+            ),
+        )
+        return {"status": "waiting", "reason": "waiting_for_user", "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS}
+
+    target_present = _track_id_present_in_frame(latest_frame, current_target_id)
+    should_track = False
+    trigger = ""
+    if latest_frame_id is not None and not target_present and latest_frame_id != last_completed_frame_id:
+        should_track = True
+        trigger = "missing"
+    elif latest_frame_id is not None and now_seconds >= due_at_seconds and latest_frame_id != last_completed_frame_id:
+        should_track = True
+        trigger = "cadence"
+
+    if not should_track:
+        sessions.patch_skill_state(
+            session_id,
+            skill_name=TRACKING_SKILL_NAME,
+            patch=_tracking_status_patch(
+                lifecycle_status=TRACKING_LIFECYCLE_BOUND if target_present else TRACKING_LIFECYCLE_SEEKING,
+                latest_frame_id=latest_frame_id,
+            ),
+        )
+        return {
+            "status": "bound" if target_present else "seeking",
+            "target_present": target_present,
+            "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS,
+        }
+
+    request_id = generate_request_id(prefix="track_supervisor")
+    acquired = sessions.acquire_turn(
+        session_id=session_id,
+        owner_id=owner_id,
+        turn_kind="tracking",
+        request_id=request_id,
+        device_id=device_id,
+        wait=False,
+    )
+    if acquired is None:
+        return {"status": "busy", "reason": "lease_held", "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS}
+
+    sessions.patch_skill_state(
+        session_id,
+        skill_name=TRACKING_SKILL_NAME,
+        patch=_tracking_status_patch(
+            lifecycle_status=TRACKING_LIFECYCLE_RUNNING,
+            latest_frame_id=latest_frame_id,
+            last_trigger=trigger,
+        ),
+    )
+    try:
+        payload = process_tracking_request_direct(
+            sessions=sessions,
+            session_id=session_id,
+            device_id=device_id,
+            text=continue_text,
+            request_id=request_id,
+            env_file=env_file,
+            artifacts_root=artifacts_root,
+            append_chat_request=False,
+            apply_processed_payload=lambda *, session_id, pi_payload, env_file: apply_processed_tracking_payload(
+                sessions=sessions,
+                session_id=session_id,
+                pi_payload=pi_payload,
+                env_file=env_file,
+            ),
+            acquire_turn=False,
+            turn_owner_id=owner_id,
+            wait_for_turn=False,
+            turn_kind="tracking",
+        )
+    finally:
+        sessions.release_turn(
+            session_id=session_id,
+            owner_id=owner_id,
+            request_id=request_id,
+            device_id=device_id,
+        )
+
+    result = dict(payload.get("session_result") or {})
+    sessions.patch_skill_state(
+        session_id,
+        skill_name=TRACKING_SKILL_NAME,
+        patch={
+            "last_completed_frame_id": str(result.get("frame_id", "") or latest_frame_id or ""),
+            "last_trigger": trigger,
+            "next_tracking_turn_at": time.time() + interval_seconds,
+            "lifecycle_status": TRACKING_LIFECYCLE_BOUND if bool(result.get("found", False)) else TRACKING_LIFECYCLE_SEEKING,
+        },
+    )
+    status = "tracked" if bool(result.get("found", False)) else "waiting"
+    if _stream_completed(stream_status):
+        status = "completed"
+    return {
+        "status": status,
+        "request_id": request_id,
+        "trigger": trigger,
+        "payload": payload,
+        "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS,
+    }
+
+
 def main() -> int:
     args = parse_args()
     if args.interval_seconds <= 0:
@@ -294,297 +464,36 @@ def main() -> int:
     sessions = _sessions_from_args(args)
     env_file = resolve_project_path(args.env_file)
     artifacts_root = resolve_project_path(args.artifacts_root)
-    dispatched_turns = 0
-    next_dispatch_at: float | None = None
-    next_rewrite_at: float | None = None
-    missing_target_id_for_track: int | None = None
-    last_bound_signature: tuple[str | None, int | None] | None = None
-    last_track_frame_id: str | None = None
-    last_review_frame_id: str | None = None
-    last_bound_target_id: int | None = None
-    stable_bound_frames = 0
-
-    while True:
-        if _stop_requested(args.stop_file):
-            return 0
-
-        session_id = resolve_session_id(
-            state_root=resolve_project_path(args.state_root),
-            session_id=args.session_id,
-        )
-        if session_id is None:
-            print(
-                json.dumps(
-                    {
-                        "session_id": None,
-                        "status": "idle",
-                        "reason": "No active session.",
-                    },
-                    ensure_ascii=True,
-                ),
-                flush=True,
-            )
-            time.sleep(args.idle_sleep_seconds)
-            continue
-
-        context = sessions.load(session_id, device_id=args.device_id)
-        tracking_state = _tracking_state(context)
-        stream_status = _perception_stream_status(context)
-        if not _has_active_target(tracking_state):
-            next_dispatch_at = None
-            next_rewrite_at = None
-            missing_target_id_for_track = None
-            last_bound_signature = None
-            last_track_frame_id = None
-            last_review_frame_id = None
-            last_bound_target_id = None
-            stable_bound_frames = 0
-            print(
-                json.dumps(
-                    {
-                        "session_id": session_id,
-                        "status": "idle",
-                        "reason": "No active tracking target.",
-                    },
-                    ensure_ascii=True,
-                ),
-                flush=True,
-            )
-            time.sleep(args.idle_sleep_seconds)
-            continue
-
-        if _waiting_for_user(tracking_state):
-            next_dispatch_at = None
-            next_rewrite_at = None
-            missing_target_id_for_track = None
-            last_bound_signature = None
-            last_track_frame_id = None
-            last_review_frame_id = None
-            last_bound_target_id = None
-            stable_bound_frames = 0
-            print(
-                json.dumps(
-                    {
-                        "session_id": session_id,
-                        "status": "idle",
-                        "reason": "Tracking is waiting for user clarification.",
-                    },
-                    ensure_ascii=True,
-                ),
-                flush=True,
-            )
-            time.sleep(args.idle_sleep_seconds)
-            continue
-
-        latest_frame = _latest_frame(context)
-        current_target_id = _latest_target_id(tracking_state)
-        bound_detection = _bound_detection(latest_frame, current_target_id)
-        if bound_detection is not None:
-            next_dispatch_at = None
-            missing_target_id_for_track = None
-            last_track_frame_id = None
-            if current_target_id != last_bound_target_id:
-                stable_bound_frames = 0
-                last_review_frame_id = None
-                last_bound_target_id = current_target_id
-            stable_bound_frames += 1
-            review_confirmed = not _has_competing_detections(latest_frame, current_target_id)
-            latest_frame_id = str(latest_frame.get("frame_id", "")).strip() or None
-            if _should_review_bound_target(
-                has_competing_detections=not review_confirmed,
-                stable_bound_frames=stable_bound_frames,
-                latest_frame_id=latest_frame_id,
-                last_review_frame_id=last_review_frame_id,
-            ):
-                request_id = generate_request_id(prefix="track_review")
-                payload = process_tracking_request_direct(
-                    sessions=sessions,
-                    session_id=session_id,
-                    device_id=args.device_id,
-                    text=args.continue_text,
-                    request_id=request_id,
-                    env_file=env_file,
-                    artifacts_root=artifacts_root,
-                    append_chat_request=False,
-                    apply_processed_payload=lambda *, session_id, pi_payload, env_file: apply_processed_tracking_payload(
-                        sessions=sessions,
-                        session_id=session_id,
-                        pi_payload=pi_payload,
-                        env_file=env_file,
-                    ),
-                )
-                last_review_frame_id = latest_frame_id
-                context = sessions.load(session_id, device_id=args.device_id)
-                tracking_state = _tracking_state(context)
-                current_target_id = _latest_target_id(tracking_state)
-                latest_frame = _latest_frame(context)
-                bound_detection = _bound_detection(latest_frame, current_target_id)
-                review_confirmed = (
-                    dict(payload.get("session_result") or {}).get("target_id") not in (None, "", [])
-                    and bound_detection is not None
-                )
-                print(
-                    json.dumps(
-                        {
-                            "session_id": session_id,
-                            "request_id": request_id,
-                            "status": payload.get("status"),
-                            "skill_name": payload.get("skill_name"),
-                            "tool": payload.get("tool"),
-                            "robot_response": payload.get("robot_response"),
-                        },
-                        ensure_ascii=True,
-                    ),
-                    flush=True,
-                )
-            current_signature = _bound_status_signature(latest_frame, current_target_id)
-            if current_signature != last_bound_signature:
-                print(
-                    json.dumps(
-                        {
-                            "session_id": session_id,
-                            "status": "tracking_bound",
-                            "target_id": current_target_id,
-                            "frame_id": latest_frame.get("frame_id"),
-                        },
-                        ensure_ascii=True,
-                    ),
-                    flush=True,
-                )
-                last_bound_signature = current_signature
-            if _stream_completed(stream_status):
-                print(
-                    json.dumps(
-                        {
-                            "session_id": session_id,
-                            "status": "completed",
-                            "reason": "Perception stream completed.",
-                            "frame_id": latest_frame.get("frame_id"),
-                        },
-                        ensure_ascii=True,
-                    ),
-                    flush=True,
-                )
-                return 0
-            now = time.monotonic()
-            if _should_schedule_rewrite(
-                next_rewrite_at=next_rewrite_at,
-                now=now,
-            ):
-                if _should_allow_bound_rewrite(
-                    review_confirmed=review_confirmed,
-                    stable_bound_frames=stable_bound_frames,
-                ) and _schedule_bound_memory_rewrite(
-                    sessions=sessions,
-                    session_id=session_id,
-                    tracking_state=tracking_state,
-                    frame=latest_frame,
-                    detection=bound_detection,
-                    env_file=env_file,
-                    artifacts_root=artifacts_root,
-                ):
-                    next_rewrite_at = now + _next_rewrite_delay_seconds(
-                        rewrite_interval_seconds=args.rewrite_interval_seconds,
-                        tracking_state=tracking_state,
-                    )
-            time.sleep(min(args.idle_sleep_seconds, args.presence_check_seconds))
-            continue
-
-        now = time.monotonic()
-        last_bound_signature = None
-        next_rewrite_at = None
-        last_review_frame_id = None
-        last_bound_target_id = None
-        stable_bound_frames = 0
-        latest_frame_id = str(latest_frame.get("frame_id", "")).strip() or None
-        stream_completed = _stream_completed(stream_status)
-        if stream_completed and latest_frame_id is not None and latest_frame_id == last_track_frame_id:
-            print(
-                json.dumps(
-                    {
-                        "session_id": session_id,
-                        "status": "completed",
-                        "reason": "Perception stream completed.",
-                        "frame_id": latest_frame_id,
-                    },
-                    ensure_ascii=True,
-                ),
-                flush=True,
-            )
-            return 0
-        if missing_target_id_for_track != current_target_id:
-            missing_target_id_for_track = current_target_id
-            next_dispatch_at = now
-            last_track_frame_id = None
-        elif next_dispatch_at is None:
-            next_dispatch_at = now
-        if now < next_dispatch_at:
-            time.sleep(min(args.recovery_interval_seconds, args.presence_check_seconds, next_dispatch_at - now))
-            continue
-        if latest_frame_id is None:
-            time.sleep(min(args.recovery_interval_seconds, args.presence_check_seconds))
-            continue
-        if not _should_request_track_for_frame(
-            latest_frame_id=latest_frame_id,
-            last_track_frame_id=last_track_frame_id,
-        ):
-            if stream_completed:
-                print(
-                    json.dumps(
-                        {
-                            "session_id": session_id,
-                            "status": "completed",
-                            "reason": "Perception stream completed.",
-                            "frame_id": latest_frame_id,
-                        },
-                        ensure_ascii=True,
-                    ),
-                    flush=True,
-                )
-                return 0
-            time.sleep(min(args.recovery_interval_seconds, args.presence_check_seconds))
-            continue
-
-        request_id = generate_request_id(prefix="track_loop")
-        payload = process_tracking_request_direct(
-            sessions=sessions,
-            session_id=session_id,
-            device_id=args.device_id,
-            text=args.continue_text,
-            request_id=request_id,
-            env_file=env_file,
-            artifacts_root=artifacts_root,
-            apply_processed_payload=lambda *, session_id, pi_payload, env_file: apply_processed_tracking_payload(
-                sessions=sessions,
-                session_id=session_id,
-                pi_payload=pi_payload,
-                env_file=env_file,
-            ),
-        )
+    session_id = resolve_session_id(
+        state_root=resolve_project_path(args.state_root),
+        session_id=args.session_id,
+    )
+    if session_id is None:
         print(
             json.dumps(
                 {
-                    "session_id": session_id,
-                    "request_id": request_id,
-                    "status": payload.get("status"),
-                    "skill_name": payload.get("skill_name"),
-                    "tool": payload.get("tool"),
-                    "robot_response": payload.get("robot_response"),
+                    "session_id": None,
+                    "status": "idle",
+                    "reason": "No active session.",
                 },
                 ensure_ascii=True,
             ),
             flush=True,
         )
+        return 0
 
-        dispatched_turns += 1
-        last_track_frame_id = latest_frame_id
-        if args.max_turns is not None and dispatched_turns >= args.max_turns:
-            return 0
-        next_dispatch_at = _next_dispatch_deadline(
-            next_dispatch_at,
-            interval_seconds=args.recovery_interval_seconds,
-            now=time.monotonic(),
-        )
+    payload = supervisor_tracking_step(
+        sessions=sessions,
+        session_id=session_id,
+        device_id=args.device_id,
+        env_file=env_file,
+        artifacts_root=artifacts_root,
+        owner_id=f"tracking-loop-debug:{session_id}",
+        continue_text=args.continue_text,
+        interval_seconds=args.interval_seconds,
+    )
+    print(json.dumps(payload, ensure_ascii=True), flush=True)
+    return 0
 
 
 if __name__ == "__main__":

@@ -184,7 +184,7 @@ printf '[stack] target selection is now handled by pi via project skills.\n'
 printf '[stack] environment writer captures frames, writes perception, and runs system1 inline.\n'
 printf '[stack] stack starts the environment writer and viewer.\n'
 printf '[stack] use e-agent to bootstrap the main runner session and enter pi.\n'
-printf '[stack] start robot-agent-tracking-loop separately only if you want continuous tracking.\n'
+printf '[stack] successful tracking-init inside e-agent now enables continuous tracking in the same session.\n'
 printf '[stack] backend ws: ws://%s:%s\n' "${BACKEND_HOST}" "${BACKEND_PORT}"
 if [[ "${START_FRONTEND}" == "1" ]]; then
   printf '[stack] frontend: http://%s:%s\n' "${FRONTEND_HOST}" "${FRONTEND_PORT}"

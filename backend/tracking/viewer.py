@@ -6,7 +6,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.project_paths import resolve_project_path
-from backend.tracking.context import tracking_state_snapshot
+from backend.tracking.context import (
+    TRACKING_LIFECYCLE_BOUND,
+    TRACKING_LIFECYCLE_RUNNING,
+    TRACKING_LIFECYCLE_SCHEDULED,
+    TRACKING_LIFECYCLE_SEEKING,
+    tracking_state_snapshot,
+)
+from backend.tracking.memory import read_tracking_memory_snapshot, tracking_memory_display_text
 
 
 def _image_data_url(path_value: Any) -> Optional[str]:
@@ -68,9 +75,19 @@ def _tracking_status(
     )
     if action in (None, ""):
         action = latest_result.get("decision") or latest_result.get("behavior")
-
     if action == "wait":
         return {"kind": "seeking", "label": "寻找中"}
+
+    lifecycle_status = str(tracking_state.get("lifecycle_status", "") or "").strip()
+    if lifecycle_status in {
+        TRACKING_LIFECYCLE_SCHEDULED,
+        TRACKING_LIFECYCLE_RUNNING,
+        TRACKING_LIFECYCLE_BOUND,
+    }:
+        return {"kind": "tracking", "label": "跟踪中"}
+    if lifecycle_status == TRACKING_LIFECYCLE_SEEKING:
+        return {"kind": "seeking", "label": "寻找中"}
+
     if (
         action in {"track", "init"}
         or latest_result.get("behavior") in {"init", "track"}
@@ -87,8 +104,11 @@ def build_viewer_module(
     perception_snapshot: Dict[str, Any],
     recent_frames: list[Dict[str, Any]],
 ) -> Dict[str, Any] | None:
-    _ = state_root
     tracking_state = tracking_state_snapshot((session.get("skill_cache") or {}).get("tracking"))
+    memory_snapshot = read_tracking_memory_snapshot(
+        state_root=state_root,
+        session_id=str(session.get("session_id", "")).strip(),
+    )
     if not tracking_state and not (session.get("latest_result") or {}):
         return None
 
@@ -125,9 +145,10 @@ def build_viewer_module(
         "enabled": True,
         "target_id": tracking_state.get("latest_target_id"),
         "pending_question": tracking_state.get("pending_question"),
+        "lifecycle_status": tracking_state.get("lifecycle_status"),
         "status_kind": status["kind"],
         "status_label": status["label"],
-        "current_memory": tracking_state.get("latest_memory_text", ""),
+        "current_memory": tracking_memory_display_text(memory_snapshot.get("memory", {})),
         "memory_history": [],
         "display_frame": display_frame_payload,
     }

@@ -5,7 +5,8 @@ The canonical tracking memory content is a small JSON object.
 The skill uses two layers:
 
 - Model output: one JSON object with fixed fields
-- Stored file: the runtime persists that JSON object under `skill_cache["tracking"]["latest_memory"]`
+- Stored mirror: the runtime persists that JSON object in `state_root/tracking_memory/<session_id>/memory.json`
+- Image memory mirror: the paired front/back crops live beside it as `front.jpg` and `back.jpg` when available
 
 The JSON object is the real contract. Any formatted text shown in the viewer is a presentation detail.
 

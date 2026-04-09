@@ -20,4 +20,5 @@
 - tracking 只保留 `backend.tracking.loop` 这一条 runner 路径，不再保留独立 service 包装层或 detached rewrite worker。
 - perception CLI 负责把感知快照暴露成 runner 易于读取的命令行接口。
 - 若需要 skill 专属 perception writer、loop 或 query-plan 脚本，应放在对应 `skills/<skill>/scripts/`。
-- 新代码统一从 `agent`、`backend.perception`、`backend.tracking`、`backend.persistence`、`backend.actions`、`backend.cli` 和 `viewer` 导入。
+- 新代码统一从 `backend.perception`、`backend.tracking`、`backend.persistence`、`backend.actions`、`backend.cli` 和 `viewer` 导入。
+- 非入口脚本不应再复制 `backend.tracking.loop` 或 `viewer.stream` 的 wrapper。

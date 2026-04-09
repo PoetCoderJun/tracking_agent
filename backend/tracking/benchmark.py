@@ -129,7 +129,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--env-file", default=".ENV")
     parser.add_argument("--device-id", default="robot_01")
-    parser.add_argument("--frame-buffer-size", type=int, default=3)
     parser.add_argument("--continue-text", default="继续跟踪")
     parser.add_argument(
         "--benchmark-run-root",
@@ -688,7 +687,6 @@ def run_sequence_benchmark(
     max_frames: int | None,
     env_file: Path,
     device_id: str,
-    frame_buffer_size: int,
     continue_text: str,
     observation_interval_seconds: float,
     benchmark_run_root: Path,
@@ -735,7 +733,6 @@ def run_sequence_benchmark(
             max_frames=max_frames,
             env_file=env_file,
             device_id=device_id,
-            frame_buffer_size=frame_buffer_size,
             continue_text=continue_text,
             observation_interval_seconds=observation_interval_seconds,
             benchmark_run_root=benchmark_run_root,
@@ -753,7 +750,6 @@ def run_sequence_benchmark(
             max_frames=max_frames,
             env_file=env_file,
             device_id=device_id,
-            frame_buffer_size=frame_buffer_size,
             continue_text=continue_text,
             benchmark_run_root=benchmark_run_root,
             tracker_fps=tracker_fps,
@@ -918,7 +914,6 @@ def run_sequence_benchmark_stack_chain(
     max_frames: int | None,
     env_file: Path,
     device_id: str,
-    frame_buffer_size: int,
     continue_text: str,
     observation_interval_seconds: float,
     benchmark_run_root: Path,
@@ -939,7 +934,7 @@ def run_sequence_benchmark_stack_chain(
 
     perception_service = LocalPerceptionService(state_root=state_root)
     perception_service.prepare(fresh_state=True)
-    sessions = AgentSessionStore(state_root=state_root, frame_buffer_size=frame_buffer_size)
+    sessions = AgentSessionStore(state_root=state_root)
 
     ground_truth_by_frame = load_sequence_ground_truth(sequence.labels_path)
     YOLO = load_yolo()
@@ -1093,7 +1088,6 @@ def run_sequence_benchmark_rebind_fsm(
     max_frames: int | None,
     env_file: Path,
     device_id: str,
-    frame_buffer_size: int,
     continue_text: str,
     benchmark_run_root: Path,
     tracker_fps: float,
@@ -1115,7 +1109,7 @@ def run_sequence_benchmark_rebind_fsm(
 
     perception_service = LocalPerceptionService(state_root=state_root)
     perception_service.prepare(fresh_state=True)
-    sessions = AgentSessionStore(state_root=state_root, frame_buffer_size=frame_buffer_size)
+    sessions = AgentSessionStore(state_root=state_root)
 
     label_map = load_sequence_label_map(sequence.labels_path)
     first_visible_frame = _first_visible_frame_index(label_map)
@@ -1325,7 +1319,10 @@ def run_sequence_benchmark_rebind_fsm(
                 )
 
             if initialized and bound_detection is not None:
-                missing_views = tracking_missing_reference_views(tracking_state)
+                missing_views = tracking_missing_reference_views(
+                    state_root=sessions.state_root,
+                    session_id=session_id,
+                )
                 rewrite_gap_frames = max(1, round(tracker_fps if missing_views else tracker_fps * 2))
                 if _should_allow_bound_rewrite_benchmark(
                     review_confirmed=review_confirmed,
@@ -1453,7 +1450,6 @@ def benchmark_dataset(
     max_frames: int | None,
     env_file: Path,
     device_id: str,
-    frame_buffer_size: int,
     continue_text: str,
     observation_interval_seconds: float,
     benchmark_run_root: Path,
@@ -1476,7 +1472,6 @@ def benchmark_dataset(
             max_frames=max_frames,
             env_file=env_file,
             device_id=device_id,
-            frame_buffer_size=frame_buffer_size,
             continue_text=continue_text,
             observation_interval_seconds=observation_interval_seconds,
             benchmark_run_root=benchmark_run_root,
@@ -1566,7 +1561,6 @@ def main() -> int:
         max_frames=args.max_frames,
         env_file=resolve_project_path(args.env_file),
         device_id=str(args.device_id),
-        frame_buffer_size=int(args.frame_buffer_size),
         continue_text=str(args.continue_text),
         observation_interval_seconds=float(args.observation_interval_seconds),
         benchmark_run_root=resolve_project_path(args.benchmark_run_root),

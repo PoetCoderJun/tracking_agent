@@ -8,6 +8,10 @@ Do not force every message into this skill.
 
 Use this skill only when the user is identifying which current candidate person should become the target.
 
+Natural-language requests like `请跟踪穿黑衣服的人` should be treated as target-selection requests.
+Do not inspect repository files or runtime directories before deciding whether this skill applies.
+If this runtime already provides `ROBOT_AGENT_SESSION_ID` / `ROBOT_AGENT_STATE_ROOT`, use them directly instead of discovering the active session by reading `.runtime`.
+
 ## For each applicable user message
 
 1. Read the current turn context.

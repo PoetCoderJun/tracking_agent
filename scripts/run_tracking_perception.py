@@ -15,18 +15,22 @@ if str(ROOT) not in sys.path:
 
 from backend.perception import LocalPerceptionService
 from backend.perception.stream import (
+    DEFAULT_CAMERA_SOURCE,
     RobotFrame,
     RobotIngestEvent,
+    assert_camera_source,
     current_timestamp_ms,
+    iter_frames,
     is_camera_source,
     normalize_source,
     probe_video_fps,
     save_frame_image,
+    should_emit_event,
+    should_emit_video_sample,
+    target_video_emit_at,
     video_timestamp_seconds,
 )
 from backend.project_paths import resolve_project_path
-
-DEFAULT_CAMERA_SOURCE = "0"
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,103 +97,6 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-
-def _load_cv2():
-    try:
-        import cv2
-    except ImportError as exc:
-        raise RuntimeError(
-            "Missing robot-side dependencies. Install opencv-python before running the environment writer workflow."
-        ) from exc
-    return cv2
-
-
-def _probe_camera_indices(max_index: int = 5) -> list[int]:
-    cv2 = _load_cv2()
-    available: list[int] = []
-    for index in range(max_index):
-        capture = cv2.VideoCapture(index)
-        try:
-            if capture.isOpened():
-                ok, _frame = capture.read()
-                if ok:
-                    available.append(index)
-        finally:
-            capture.release()
-    return available
-
-
-def _assert_camera_source(source: int) -> None:
-    cv2 = _load_cv2()
-    capture = cv2.VideoCapture(source)
-    try:
-        if not capture.isOpened():
-            available_cameras = _probe_camera_indices()
-            raise RuntimeError(
-                "Failed to open camera source index "
-                f"{source}. On macOS this is often caused by camera permission denied or another app holding the device. "
-                f"Available readable indices from 0..4: {available_cameras}. "
-                "Try another index such as 1 or 2, or pass a file path to --source for debugging."
-            )
-
-        ready = False
-        for _ in range(5):
-            ok, frame = capture.read()
-            if ok and frame is not None:
-                ready = True
-                break
-            time.sleep(0.2)
-        if not ready:
-            raise RuntimeError(
-                "Opened camera source but failed to read a frame. "
-                "The device might be blocked by another process or not initialized yet."
-            )
-    finally:
-        capture.release()
-
-
-def _should_emit_event(
-    frame_index: int,
-    sample_every: int,
-    now_monotonic: float,
-    next_emit_at: float,
-) -> bool:
-    if frame_index % sample_every != 0:
-        return False
-    return now_monotonic >= next_emit_at
-
-
-def _should_emit_video_sample(
-    frame_index: int,
-    sample_every: int,
-    fps: float,
-    next_video_emit_at: float,
-) -> bool:
-    if frame_index % sample_every != 0:
-        return False
-    return video_timestamp_seconds(frame_index, fps) >= next_video_emit_at
-
-
-def _iter_frames(source: Any, *, vid_stride: int) -> Iterator[Tuple[int, Any]]:
-    cv2 = _load_cv2()
-    capture = cv2.VideoCapture(source)
-    if not capture.isOpened():
-        raise RuntimeError(f"Unable to open video source: {source}")
-
-    frame_index = 0
-    try:
-        while True:
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                break
-            frame_index += 1
-            if vid_stride > 1 and frame_index % vid_stride != 0:
-                continue
-            yield frame_index, frame
-    finally:
-        capture.release()
-
-
 def _prepare_perception_writer(*, perception_service: LocalPerceptionService) -> None:
     perception_service.prepare(fresh_state=True)
 
@@ -206,8 +113,9 @@ async def _run_perception_writer(
     last_timestamp_ms: int | None = None
     next_emit_at = 0.0
     next_video_emit_at = 0.0
-    next_wall_emit_at: float | None = None
     source_started_at_ms = current_timestamp_ms()
+    source_started_monotonic = time.monotonic()
+    paused_seconds = 0.0
     state_root = resolve_project_path(args.state_root)
     incoming_dir = state_root / "perception" / "incoming"
     incoming_dir.mkdir(parents=True, exist_ok=True)
@@ -223,7 +131,7 @@ async def _run_perception_writer(
     for frame_index, frame_bgr in frame_stream:
         now_monotonic = time.monotonic()
         if source_is_camera:
-            if not _should_emit_event(
+            if not should_emit_event(
                 frame_index=frame_index,
                 sample_every=args.sample_every,
                 now_monotonic=now_monotonic,
@@ -233,11 +141,18 @@ async def _run_perception_writer(
         else:
             if video_fps is None:
                 raise RuntimeError("Video FPS must be available for file playback mode")
-            if not _should_emit_video_sample(
+            scheduled_video_emit_at = target_video_emit_at(
+                next_video_emit_at=next_video_emit_at,
+                realtime_playback=bool(args.realtime_playback),
+                source_started_monotonic=source_started_monotonic,
+                now_monotonic=now_monotonic,
+                paused_seconds=paused_seconds,
+            )
+            if not should_emit_video_sample(
                 frame_index=frame_index,
                 sample_every=args.sample_every,
                 fps=video_fps,
-                next_video_emit_at=next_video_emit_at,
+                next_video_emit_at=scheduled_video_emit_at,
             ):
                 continue
 
@@ -282,19 +197,20 @@ async def _run_perception_writer(
         )
 
         if emitted_events == 0 and pause_after_first_event_file is not None:
+            pause_started_at = time.monotonic()
             while pause_after_first_event_file.exists():
                 await asyncio.sleep(0.1)
+            paused_seconds += max(0.0, time.monotonic() - pause_started_at)
 
         emitted_events += 1
         next_emit_at = now_monotonic + args.interval_seconds
         if not source_is_camera:
-            next_video_emit_at += args.interval_seconds
+            next_video_emit_at = video_timestamp_seconds(frame_index, video_fps) + args.interval_seconds
             if args.realtime_playback:
-                if next_wall_emit_at is None:
-                    next_wall_emit_at = now_monotonic + args.interval_seconds
-                else:
-                    next_wall_emit_at += args.interval_seconds
-                remaining_sleep = max(0.0, next_wall_emit_at - time.monotonic())
+                remaining_sleep = max(
+                    0.0,
+                    (source_started_monotonic + paused_seconds + next_video_emit_at) - time.monotonic(),
+                )
                 if remaining_sleep > 0:
                     await asyncio.sleep(remaining_sleep)
         if args.max_events is not None and emitted_events >= args.max_events:
@@ -338,8 +254,8 @@ async def _async_main() -> int:
     video_fps = None if source_is_camera else probe_video_fps(Path(str(source)))
 
     if source_is_camera:
-        _assert_camera_source(int(source))
-    frame_stream = _iter_frames(source, vid_stride=args.vid_stride)
+        assert_camera_source(int(source))
+    frame_stream = iter_frames(source, vid_stride=args.vid_stride)
 
     return await _run_perception_writer(
         args,

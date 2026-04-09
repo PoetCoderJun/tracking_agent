@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 from typing import Any, Dict
 
 
 DEFAULT_MEMORY_TEXT = "等待根据最新确认画面继续补充目标特征，并说明和周围人的区分点。"
+TRACKING_MEMORY_DIRNAME = "tracking_memory"
+TRACKING_MEMORY_FILENAME = "memory.json"
+TRACKING_FRONT_CROP_FILENAME = "front.jpg"
+TRACKING_BACK_CROP_FILENAME = "back.jpg"
 MEMORY_KEYS = (
     "core",
     "front_view",
@@ -26,6 +32,22 @@ MEMORY_LABELS = {
 
 def empty_tracking_memory() -> Dict[str, Any]:
     return {key: "" for key in MEMORY_KEYS}
+
+
+def tracking_memory_dir(*, state_root: Path, session_id: str) -> Path:
+    return Path(state_root) / TRACKING_MEMORY_DIRNAME / str(session_id)
+
+
+def tracking_memory_file(*, state_root: Path, session_id: str) -> Path:
+    return tracking_memory_dir(state_root=state_root, session_id=session_id) / TRACKING_MEMORY_FILENAME
+
+
+def tracking_front_crop_file(*, state_root: Path, session_id: str) -> Path:
+    return tracking_memory_dir(state_root=state_root, session_id=session_id) / TRACKING_FRONT_CROP_FILENAME
+
+
+def tracking_back_crop_file(*, state_root: Path, session_id: str) -> Path:
+    return tracking_memory_dir(state_root=state_root, session_id=session_id) / TRACKING_BACK_CROP_FILENAME
 
 
 def _normalized_text(value: Any) -> str:
@@ -153,3 +175,68 @@ def tracking_memory_sections(memory_value: Any) -> Dict[str, str]:
 
 def memory_history_key(memory_value: Any) -> str:
     return json.dumps(normalize_tracking_memory(memory_value), ensure_ascii=False, sort_keys=True)
+
+
+def read_tracking_memory_snapshot(
+    *,
+    state_root: Path,
+    session_id: str,
+) -> Dict[str, Any]:
+    memory_path = tracking_memory_file(state_root=state_root, session_id=session_id)
+    memory_payload: Dict[str, Any]
+    if memory_path.exists():
+        memory_payload = normalize_tracking_memory(json.loads(memory_path.read_text(encoding="utf-8")))
+    else:
+        memory_payload = empty_tracking_memory()
+
+    front_crop_path = tracking_front_crop_file(state_root=state_root, session_id=session_id)
+    back_crop_path = tracking_back_crop_file(state_root=state_root, session_id=session_id)
+    return {
+        "memory": memory_payload,
+        "front_crop_path": str(front_crop_path) if front_crop_path.exists() else "",
+        "back_crop_path": str(back_crop_path) if back_crop_path.exists() else "",
+    }
+
+
+def reset_tracking_memory_snapshot(
+    *,
+    state_root: Path,
+    session_id: str,
+) -> Dict[str, Any]:
+    memory_dir = tracking_memory_dir(state_root=state_root, session_id=session_id)
+    if memory_dir.exists():
+        shutil.rmtree(memory_dir)
+    return read_tracking_memory_snapshot(state_root=state_root, session_id=session_id)
+
+
+def write_tracking_memory_snapshot(
+    *,
+    state_root: Path,
+    session_id: str,
+    memory: Any,
+    crop_path: Any = None,
+    reference_view: Any = None,
+    reset: bool = False,
+) -> Dict[str, Any]:
+    memory_dir = tracking_memory_dir(state_root=state_root, session_id=session_id)
+    if reset and memory_dir.exists():
+        shutil.rmtree(memory_dir)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+
+    normalized_memory = normalize_tracking_memory(memory)
+    tracking_memory_file(state_root=state_root, session_id=session_id).write_text(
+        json.dumps(normalized_memory, indent=2, ensure_ascii=True),
+        encoding="utf-8",
+    )
+
+    normalized_reference_view = str(reference_view or "").strip().lower()
+    normalized_crop_path = str(crop_path or "").strip()
+    if normalized_crop_path:
+        source_path = Path(normalized_crop_path)
+        if source_path.exists():
+            if normalized_reference_view == "front":
+                shutil.copy2(source_path, tracking_front_crop_file(state_root=state_root, session_id=session_id))
+            elif normalized_reference_view == "back":
+                shutil.copy2(source_path, tracking_back_crop_file(state_root=state_root, session_id=session_id))
+
+    return read_tracking_memory_snapshot(state_root=state_root, session_id=session_id)

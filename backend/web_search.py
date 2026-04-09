@@ -31,15 +31,11 @@ def _default_query(
     *,
     state_root: Path,
     session_id: str | None,
-    frame_buffer_size: int,
 ) -> str:
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
     if resolved_session_id is None:
         return ""
-    session = AgentSessionStore(
-        state_root=state_root,
-        frame_buffer_size=frame_buffer_size,
-    ).load(resolved_session_id)
+    session = AgentSessionStore(state_root=state_root).load(resolved_session_id)
     history = list(session.session.get("conversation_history") or [])
     for entry in reversed(history):
         if str(entry.get("role", "")).strip() != "user":
@@ -170,17 +166,19 @@ def run_web_search_turn(
     query: str,
     session_id: str | None,
     state_root: Path,
-    frame_buffer_size: int,
+    frame_buffer_size: int | None = None,
     env_file: Path,
     max_results: int,
     include_answer: bool,
 ) -> Dict[str, Any]:
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
-    sessions = AgentSessionStore(state_root=state_root, frame_buffer_size=int(frame_buffer_size))
+    sessions = AgentSessionStore(
+        state_root=state_root,
+        frame_buffer_size=frame_buffer_size,
+    )
     resolved_query = str(query).strip() or _default_query(
         state_root=state_root,
         session_id=resolved_session_id,
-        frame_buffer_size=int(frame_buffer_size),
     )
     if not resolved_query:
         payload = build_web_search_payload(

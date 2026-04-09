@@ -38,13 +38,11 @@ def test_ingest_robot_event_saves_generic_session_state(tmp_path: Path) -> None:
     assert session.latest_request_id == "req_001"
     assert session.latest_request_function == "event"
     assert session.latest_result is None
-    assert len(session.recent_frames) == 1
-    assert Path(session.recent_frames[0].image_path).exists()
     assert session.conversation_history[0]["role"] == "user"
     assert session.conversation_history[0]["text"] == "look around"
 
 
-def test_ingest_robot_event_truncates_recent_frames_buffer(tmp_path: Path) -> None:
+def test_ingest_robot_event_does_not_persist_recent_frames_or_frame_files(tmp_path: Path) -> None:
     store = LiveSessionStore(tmp_path / "state", frame_buffer_size=2)
 
     for index in range(3):
@@ -61,103 +59,9 @@ def test_ingest_robot_event_truncates_recent_frames_buffer(tmp_path: Path) -> No
         )
 
     session = store.load_session("sess_001")
-    assert [frame.frame_id for frame in session.recent_frames] == [
-        "frame_000001",
-        "frame_000002",
-    ]
-
-
-def test_ingest_robot_event_cleans_up_expired_frame_files(tmp_path: Path) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=2)
-
-    for index in range(3):
-        store.ingest_robot_event(
-            session_id="sess_001",
-            device_id="robot_01",
-            frame={
-                "frame_id": f"frame_{index:06d}",
-                "timestamp_ms": 1710000000000 + index,
-                "image_base64": _tiny_jpeg_base64(),
-            },
-            detections=[],
-            text="",
-        )
-
-    frames_dir = tmp_path / "state" / "sessions" / "sess_001" / "frames"
-    assert sorted(path.name for path in frames_dir.iterdir() if path.is_file()) == [
-        "frame_000001.jpg",
-        "frame_000002.jpg",
-    ]
-
-
-def test_ingest_robot_event_prunes_to_frame_buffer_without_tracking_memory_special_case(tmp_path: Path) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=2)
-
-    for index in range(2):
-        store.ingest_robot_event(
-            session_id="sess_001",
-            device_id="robot_01",
-            frame={
-                "frame_id": f"frame_{index:06d}",
-                "timestamp_ms": 1710000000000 + index,
-                "image_base64": _tiny_jpeg_base64(),
-            },
-            detections=[],
-            text="",
-        )
-
-    session_dir = tmp_path / "state" / "sessions" / "sess_001"
-    confirmed_path = session_dir / "frames" / "frame_000000.jpg"
-    session_payload = json.loads((session_dir / "session.json").read_text(encoding="utf-8"))
-    session_payload["skill_cache"] = {
-        "tracking": {
-            "latest_confirmed_frame_path": str(confirmed_path),
-        }
-    }
-    (session_dir / "session.json").write_text(
-        json.dumps(session_payload, indent=2, ensure_ascii=True),
-        encoding="utf-8",
-    )
-
-    store.ingest_robot_event(
-        session_id="sess_001",
-        device_id="robot_01",
-        frame={
-            "frame_id": "frame_000002",
-            "timestamp_ms": 1710000000002,
-            "image_base64": _tiny_jpeg_base64(),
-        },
-        detections=[],
-        text="",
-    )
-
-    frames_dir = session_dir / "frames"
-    assert sorted(path.name for path in frames_dir.iterdir() if path.is_file()) == [
-        "frame_000001.jpg",
-        "frame_000002.jpg",
-    ]
-
-
-def test_ingest_robot_event_reuses_existing_session_frame_without_copying(tmp_path: Path) -> None:
-    store = LiveSessionStore(tmp_path / "state", frame_buffer_size=2)
-    session_frames_dir = tmp_path / "state" / "sessions" / "sess_001" / "frames"
-    session_frames_dir.mkdir(parents=True, exist_ok=True)
-    source_path = session_frames_dir / "frame_000001.jpg"
-    source_path.write_bytes(base64.b64decode(_tiny_jpeg_base64()))
-
-    session = store.ingest_robot_event(
-        session_id="sess_001",
-        device_id="robot_01",
-        frame={
-            "frame_id": "frame_000001",
-            "timestamp_ms": 1710000000000,
-            "image_path": str(source_path),
-        },
-        detections=[],
-        text="",
-    )
-
-    assert Path(session.recent_frames[0].image_path).resolve() == source_path.resolve()
+    payload = json.loads((tmp_path / "state" / "sessions" / "sess_001" / "session.json").read_text(encoding="utf-8"))
+    assert "recent_frames" not in payload
+    assert not (tmp_path / "state" / "sessions" / "sess_001" / "frames").exists()
 
 
 def test_apply_agent_result_preserves_generic_payload_shape(tmp_path: Path) -> None:
@@ -184,6 +88,7 @@ def test_apply_agent_result_preserves_generic_payload_shape(tmp_path: Path) -> N
             "request_id": "req_001",
             "function": "inspect",
             "behavior": "reply",
+            "frame_id": "frame_000001",
             "text": "scene looks clear",
             "summary": {"objects": 1},
             "robot_response": {"action": "speak", "text": "scene looks clear"},
@@ -239,7 +144,7 @@ def test_session_payload_stays_generic(tmp_path: Path) -> None:
     assert "latest_memory" not in payload
     assert payload["latest_result"]["function"] == "inspect"
     assert "memory" not in payload["latest_result"]
-    assert payload["recent_frames"][-1]["detections"][0]["track_id"] == 15
+    assert "recent_frames" not in payload
 
 
 def test_conversation_history_keeps_full_chat_log(tmp_path: Path) -> None:
@@ -353,11 +258,9 @@ def test_reset_session_context_clears_result_history_but_keeps_frames_and_dialog
 
     updated = store.reset_session_context("sess_001")
 
-    assert updated.latest_result is not None
-    assert updated.latest_result["behavior"] == "reset_context"
-    assert updated.latest_result["frame_id"] == "frame_000001"
+    assert updated.latest_result is None
     assert updated.result_history == []
-    assert len(updated.recent_frames) == 1
+    assert "recent_frames" not in store.session_payload("sess_001")
     assert updated.conversation_history[0]["text"] == "inspect the scene"
 
 
@@ -394,5 +297,5 @@ def test_start_fresh_session_replaces_old_session_state_and_cleans_frames(tmp_pa
     assert updated.latest_result is None
     assert updated.result_history == []
     assert updated.conversation_history == []
-    assert updated.recent_frames == []
+    assert "recent_frames" not in store.session_payload("sess_001")
     assert not frames_dir.exists()

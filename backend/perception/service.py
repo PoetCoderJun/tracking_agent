@@ -13,7 +13,6 @@ class LocalPerceptionService:
     def __init__(
         self,
         state_root: Path,
-        frame_buffer_size: int = 3,
         *,
         observation_window_seconds: float = 5.0,
         recorder_root: Optional[Path] = None,

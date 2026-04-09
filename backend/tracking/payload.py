@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from backend.skill_payload import processed_skill_payload
+from backend.tracking.context import (
+    TRACKING_LIFECYCLE_BOUND,
+    TRACKING_LIFECYCLE_INACTIVE,
+    TRACKING_LIFECYCLE_SCHEDULED,
+    TRACKING_LIFECYCLE_SEEKING,
+)
 
 
 def _optional_text(value: Any) -> Optional[str]:
@@ -12,17 +17,6 @@ def _optional_text(value: Any) -> Optional[str]:
         return None
     text = str(value).strip()
     return text or None
-
-
-def _confirmed_frame_path(select_output: Dict[str, Any]) -> Optional[str]:
-    explicit = _optional_text(select_output.get("confirmed_frame_path"))
-    if explicit is not None:
-        return explicit
-    rewrite_memory_input = dict(select_output.get("rewrite_memory_input") or {})
-    frame_paths = list(rewrite_memory_input.get("frame_paths") or [])
-    if not frame_paths:
-        return None
-    return _optional_text(frame_paths[-1])
 
 
 def _wait_feedback_text(select_output: Dict[str, Any]) -> str:
@@ -54,9 +48,6 @@ def _session_result(select_output: Dict[str, Any]) -> Dict[str, Any]:
     reject_reason = _optional_text(select_output.get("reject_reason"))
     if reject_reason is not None:
         result["reject_reason"] = reject_reason
-    latest_target_crop = _optional_text(select_output.get("latest_target_crop"))
-    if latest_target_crop is not None:
-        result["latest_target_crop"] = latest_target_crop
     clarification_question = _optional_text(select_output.get("clarification_question"))
     if clarification_question is not None:
         result["needs_clarification"] = bool(select_output.get("needs_clarification", False))
@@ -74,32 +65,23 @@ def _skill_state_patch(select_output: Dict[str, Any]) -> Dict[str, Any]:
     clarification_question = _optional_text(select_output.get("clarification_question"))
     if decision == "ask" and clarification_question is not None and bool(select_output.get("needs_clarification", False)):
         patch["pending_question"] = clarification_question
+        patch["lifecycle_status"] = TRACKING_LIFECYCLE_SEEKING
         return patch
 
     if not bool(select_output.get("found", False)):
         patch["pending_question"] = None
+        patch["lifecycle_status"] = TRACKING_LIFECYCLE_SEEKING if decision == "wait" else TRACKING_LIFECYCLE_INACTIVE
         return patch
 
-    if bool(select_output.get("reset_reference_crops", False)):
-        patch["latest_front_target_crop"] = None
-        patch["latest_back_target_crop"] = None
-
-    confirmed_frame_path = _confirmed_frame_path(select_output)
-    if confirmed_frame_path is not None:
-        patch["latest_confirmed_frame_path"] = confirmed_frame_path
-    confirmed_bbox = select_output.get("confirmed_bbox")
-    if isinstance(confirmed_bbox, list) and len(confirmed_bbox) == 4:
-        patch["latest_confirmed_bbox"] = [int(value) for value in confirmed_bbox]
-    latest_target_crop = _optional_text(select_output.get("latest_target_crop"))
-    if latest_target_crop is not None:
-        patch["latest_target_crop"] = latest_target_crop
-    identity_target_crop = _optional_text(select_output.get("identity_target_crop"))
-    if identity_target_crop is not None:
-        patch["identity_target_crop"] = identity_target_crop
     target_id = select_output.get("target_id")
     if target_id not in (None, ""):
         patch["latest_target_id"] = int(target_id)
     patch["pending_question"] = None
+    patch["lifecycle_status"] = (
+        TRACKING_LIFECYCLE_SCHEDULED
+        if str(select_output.get("behavior", "")).strip() == "init"
+        else TRACKING_LIFECYCLE_BOUND
+    )
     return patch
 
 
@@ -151,18 +133,19 @@ def ensure_rewrite_paths_exist(payload: Dict[str, Any]) -> Dict[str, Any]:
         return payload
 
     crop_path = _optional_text(rewrite_memory_input.get("crop_path"))
+    if crop_path is None:
+        payload["rewrite_memory_input"] = None
+        return payload
+
     frame_paths = [
-        str(Path(path))
-        for path in rewrite_memory_input.get("frame_paths", [])
-        if _optional_text(path) is not None
+        str(path).strip()
+        for path in list(rewrite_memory_input.get("frame_paths") or [])
+        if str(path).strip()
     ]
-    if crop_path is None or not Path(crop_path).exists():
+    if not frame_paths:
         payload["rewrite_memory_input"] = None
         return payload
-    existing_frame_paths = [path for path in frame_paths if Path(path).exists()]
-    if not existing_frame_paths:
-        payload["rewrite_memory_input"] = None
-        return payload
-    rewrite_memory_input["frame_paths"] = existing_frame_paths
+
+    rewrite_memory_input["frame_paths"] = frame_paths
     payload["rewrite_memory_input"] = rewrite_memory_input
     return payload

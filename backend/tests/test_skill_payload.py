@@ -59,3 +59,43 @@ def test_apply_processed_payload_returns_compact_response(tmp_path: Path) -> Non
     assert "perception_cache_patch" not in applied
     assert "rewrite_output" not in applied
     assert "rewrite_memory_input" not in applied
+
+
+def test_apply_processed_payload_delegates_tracking_to_tracking_module(tmp_path: Path, monkeypatch) -> None:
+    sessions = AgentSessionStore(tmp_path / "state")
+    sessions.start_fresh_session("sess_001", device_id="robot_01")
+    payload = {
+        "skill_name": "tracking",
+        "session_result": {
+            "request_id": "req_001",
+            "behavior": "init",
+            "text": "开始跟踪",
+        },
+    }
+    delegated: dict[str, object] = {}
+
+    def fake_apply_processed_tracking_payload(*, sessions, session_id, pi_payload, env_file):
+        delegated["sessions"] = sessions
+        delegated["session_id"] = session_id
+        delegated["pi_payload"] = pi_payload
+        delegated["env_file"] = env_file
+        return {"status": "processed", "skill_name": "tracking"}
+
+    monkeypatch.setattr(
+        "backend.tracking.deterministic.apply_processed_tracking_payload",
+        fake_apply_processed_tracking_payload,
+    )
+
+    applied = apply_processed_payload(
+        sessions=sessions,
+        session_id="sess_001",
+        pi_payload=payload,
+        env_file=tmp_path / ".ENV",
+    )
+
+    assert applied == {"status": "processed", "skill_name": "tracking"}
+    assert delegated["sessions"] is sessions
+    assert delegated["session_id"] == "sess_001"
+    assert delegated["pi_payload"] == payload
+    assert delegated["env_file"] == tmp_path / ".ENV"
+    assert sessions.load("sess_001").runner_state["turn_in_flight"] is False

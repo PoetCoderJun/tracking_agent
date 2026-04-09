@@ -14,13 +14,19 @@ if str(ROOT) not in sys.path:
 
 from backend.perception import LocalPerceptionService
 from backend.perception.stream import (
+    DEFAULT_CAMERA_SOURCE,
     RobotFrame,
     RobotIngestEvent,
+    assert_camera_source,
     current_timestamp_ms,
+    iter_frames,
     is_camera_source,
     normalize_source,
     probe_video_fps,
     save_frame_image,
+    should_emit_event,
+    should_emit_video_sample,
+    target_video_emit_at,
     video_timestamp_seconds,
 )
 from backend.project_paths import resolve_project_path
@@ -31,13 +37,12 @@ from backend.system1 import (
     LocalSystem1Service,
     System1Tracker,
 )
-from scripts.run_tracking_perception import (
-    DEFAULT_CAMERA_SOURCE,
-    _assert_camera_source,
-    _iter_frames,
-    _should_emit_event,
-    _should_emit_video_sample,
-)
+
+_assert_camera_source = assert_camera_source
+_iter_frames = iter_frames
+_should_emit_event = should_emit_event
+_should_emit_video_sample = should_emit_video_sample
+_target_video_emit_at = target_video_emit_at
 
 
 def parse_args() -> argparse.Namespace:
@@ -121,8 +126,9 @@ async def _run_environment_writer(
     last_timestamp_ms: int | None = None
     next_emit_at = 0.0
     next_video_emit_at = 0.0
-    next_wall_emit_at: float | None = None
     source_started_at_ms = current_timestamp_ms()
+    source_started_monotonic = time.monotonic()
+    paused_seconds = 0.0
     state_root = resolve_project_path(args.state_root)
     incoming_dir = state_root / "perception" / "incoming"
     incoming_dir.mkdir(parents=True, exist_ok=True)
@@ -138,7 +144,7 @@ async def _run_environment_writer(
     for frame_index, frame_bgr in frame_stream:
         now_monotonic = time.monotonic()
         if source_is_camera:
-            if not _should_emit_event(
+            if not should_emit_event(
                 frame_index=frame_index,
                 sample_every=args.sample_every,
                 now_monotonic=now_monotonic,
@@ -148,11 +154,18 @@ async def _run_environment_writer(
         else:
             if video_fps is None:
                 raise RuntimeError("Video FPS must be available for file playback mode")
-            if not _should_emit_video_sample(
+            scheduled_video_emit_at = target_video_emit_at(
+                next_video_emit_at=next_video_emit_at,
+                realtime_playback=bool(args.realtime_playback),
+                source_started_monotonic=source_started_monotonic,
+                now_monotonic=now_monotonic,
+                paused_seconds=paused_seconds,
+            )
+            if not should_emit_video_sample(
                 frame_index=frame_index,
                 sample_every=args.sample_every,
                 fps=video_fps,
-                next_video_emit_at=next_video_emit_at,
+                next_video_emit_at=scheduled_video_emit_at,
             ):
                 continue
 
@@ -207,19 +220,20 @@ async def _run_environment_writer(
         )
 
         if emitted_events == 0 and pause_after_first_event_file is not None:
+            pause_started_at = time.monotonic()
             while pause_after_first_event_file.exists():
                 await asyncio.sleep(0.1)
+            paused_seconds += max(0.0, time.monotonic() - pause_started_at)
 
         emitted_events += 1
         next_emit_at = now_monotonic + args.interval_seconds
         if not source_is_camera:
-            next_video_emit_at += args.interval_seconds
+            next_video_emit_at = video_timestamp_seconds(frame_index, video_fps) + args.interval_seconds
             if args.realtime_playback:
-                if next_wall_emit_at is None:
-                    next_wall_emit_at = now_monotonic + args.interval_seconds
-                else:
-                    next_wall_emit_at += args.interval_seconds
-                remaining_sleep = max(0.0, next_wall_emit_at - time.monotonic())
+                remaining_sleep = max(
+                    0.0,
+                    (source_started_monotonic + paused_seconds + next_video_emit_at) - time.monotonic(),
+                )
                 if remaining_sleep > 0:
                     await asyncio.sleep(remaining_sleep)
         if args.max_events is not None and emitted_events >= args.max_events:
@@ -324,8 +338,8 @@ async def _async_main() -> int:
     video_fps = None if source_is_camera else probe_video_fps(Path(str(source)))
 
     if source_is_camera:
-        _assert_camera_source(int(source))
-    frame_stream = _iter_frames(source, vid_stride=args.vid_stride)
+        assert_camera_source(int(source))
+    frame_stream = iter_frames(source, vid_stride=args.vid_stride)
 
     return await _run_environment_writer(
         args,

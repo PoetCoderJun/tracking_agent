@@ -13,7 +13,12 @@ if str(ROOT) not in sys.path:
 
 from backend.config import load_settings
 from backend.llm_client import call_model
-from backend.tracking.memory import empty_tracking_memory, normalize_tracking_memory, tracking_memory_prompt_text
+from backend.tracking.memory import (
+    empty_tracking_memory,
+    normalize_tracking_memory,
+    read_tracking_memory_snapshot,
+    tracking_memory_prompt_text,
+)
 
 
 TRACKING_ROOT = ROOT / "backend" / "tracking"
@@ -53,8 +58,12 @@ def load_agent_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]
 
 def _load_previous_memory(session_file: Path) -> Any:
     payload = json.loads(session_file.read_text(encoding="utf-8"))
-    tracking_state = dict(((payload.get("skill_cache") or {}).get("tracking") or {}))
-    latest_memory = tracking_state.get("latest_memory", {})
+    session_id = str(payload.get("session_id", "")).strip()
+    if not session_id:
+        return empty_tracking_memory()
+    state_root = session_file.resolve().parents[2]
+    snapshot = read_tracking_memory_snapshot(state_root=state_root, session_id=session_id)
+    latest_memory = snapshot.get("memory", {})
     if latest_memory in (None, "", {}):
         return empty_tracking_memory()
     return normalize_tracking_memory(latest_memory)

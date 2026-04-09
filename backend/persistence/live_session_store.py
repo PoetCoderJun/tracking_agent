@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import base64
 import json
 import shutil
 import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -34,7 +34,6 @@ ALLOWED_RESULT_FIELDS = frozenset(
         "needs_clarification",
         "clarification_question",
         "available_targets",
-        "latest_target_crop",
         "summary",
         "sources",
         "search_query",
@@ -84,20 +83,18 @@ def _merge_nested(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]
     return merged
 
 
+def _session_payload_dict(session: "BackendSession") -> Dict[str, Any]:
+    payload = asdict(session)
+    payload.pop("recent_frames", None)
+    return payload
+
+
 @dataclass(frozen=True)
 class BackendDetection:
     track_id: int
     bbox: List[int]
     score: float
     label: str = "person"
-
-
-@dataclass(frozen=True)
-class BackendFrame:
-    frame_id: str
-    timestamp_ms: int
-    image_path: str
-    detections: List[BackendDetection]
 
 
 @dataclass(frozen=True)
@@ -109,21 +106,18 @@ class BackendSession:
     latest_result: Optional[Dict[str, Any]]
     result_history: List[Dict[str, Any]]
     conversation_history: List[Dict[str, str]]
-    recent_frames: List[BackendFrame]
     user_preferences: Dict[str, Any]
     environment_map: Dict[str, Any]
     perception_cache: Dict[str, Any]
+    runner_state: Dict[str, Any]
     skill_cache: Dict[str, Any]
     created_at: str
     updated_at: str
 
 
 class BackendStore:
-    def __init__(self, state_root: Path, frame_buffer_size: int = 3):
-        if frame_buffer_size <= 0:
-            raise ValueError("frame_buffer_size must be positive")
+    def __init__(self, state_root: Path):
         self._state_root = state_root
-        self._frame_buffer_size = frame_buffer_size
         self._state_root.mkdir(parents=True, exist_ok=True)
         registry_key = str(self._state_root.resolve())
         self._lock = _SESSION_STORE_LOCKS.setdefault(registry_key, threading.RLock())
@@ -156,23 +150,6 @@ class BackendStore:
             return self._session_from_payload(payload)
 
     def _session_from_payload(self, payload: Dict[str, Any]) -> BackendSession:
-        recent_frames = [
-            BackendFrame(
-                frame_id=str(frame["frame_id"]),
-                timestamp_ms=int(frame["timestamp_ms"]),
-                image_path=str(frame["image_path"]),
-                detections=[
-                    BackendDetection(
-                        track_id=int(detection["track_id"]),
-                        bbox=[int(value) for value in detection["bbox"]],
-                        score=float(detection.get("score", 1.0)),
-                        label=str(detection.get("label", "person")),
-                    )
-                    for detection in frame.get("detections", [])
-                ],
-            )
-            for frame in payload.get("recent_frames", [])
-        ]
         return BackendSession(
             session_id=str(payload["session_id"]),
             device_id=str(payload.get("device_id", "")),
@@ -188,10 +165,10 @@ class BackendStore:
                 }
                 for entry in payload.get("conversation_history", [])
             ],
-            recent_frames=recent_frames,
             user_preferences=_normalized_section(payload.get("user_preferences")),
             environment_map=_normalized_section(payload.get("environment_map")),
             perception_cache=_normalized_section(payload.get("perception_cache")),
+            runner_state=_normalized_section(payload.get("runner_state")),
             skill_cache=_normalized_section(payload.get("skill_cache")),
             created_at=str(payload["created_at"]),
             updated_at=str(payload["updated_at"]),
@@ -216,10 +193,10 @@ class BackendStore:
                 latest_result=None,
                 result_history=[],
                 conversation_history=[],
-                recent_frames=[],
                 user_preferences={},
                 environment_map={},
                 perception_cache={},
+                runner_state={},
                 skill_cache={},
                 created_at=now,
                 updated_at=now,
@@ -245,10 +222,10 @@ class BackendStore:
                 latest_result=None,
                 result_history=[],
                 conversation_history=[],
-                recent_frames=[],
                 user_preferences={},
                 environment_map={},
                 perception_cache={},
+                runner_state={},
                 skill_cache={},
                 created_at=now,
                 updated_at=now,
@@ -257,7 +234,7 @@ class BackendStore:
             return session
 
     def session_payload(self, session_id: str) -> Dict[str, Any]:
-        return asdict(self.load_session(session_id))
+        return _session_payload_dict(self.load_session(session_id))
 
     def list_sessions(self) -> List[Dict[str, Any]]:
         with self._lock:
@@ -284,19 +261,6 @@ class BackendStore:
             sessions.sort(key=lambda item: item["updated_at"], reverse=True)
             return sessions
 
-    def latest_frame(self, session_id: str) -> Optional[BackendFrame]:
-        session = self.load_session(session_id)
-        if not session.recent_frames:
-            return None
-        return session.recent_frames[-1]
-
-    def frame_image_path(self, session_id: str, frame_id: str) -> Path:
-        session = self.load_session(session_id)
-        for frame in session.recent_frames:
-            if frame.frame_id == frame_id:
-                return Path(frame.image_path)
-        raise FileNotFoundError(f"Unknown frame {frame_id} in session {session_id}")
-
     def ingest_robot_event(
         self,
         session_id: str,
@@ -309,27 +273,14 @@ class BackendStore:
         record_conversation: bool = True,
     ) -> BackendSession:
         with self._lock:
+            # Perception owns observation/frame state; the session keeps only runner/chat state.
+            del frame
+            del detections
             cleaned_text = text.strip()
             session = self.load_or_create_session(
                 session_id=session_id,
                 device_id=device_id,
             )
-            stored_image_path = self._store_frame_image(session_id, frame)
-            stored_frame = BackendFrame(
-                frame_id=str(frame["frame_id"]),
-                timestamp_ms=int(frame["timestamp_ms"]),
-                image_path=str(stored_image_path),
-                detections=[
-                    BackendDetection(
-                        track_id=int(detection["track_id"]),
-                        bbox=[int(value) for value in detection["bbox"]],
-                        score=float(detection.get("score", 1.0)),
-                        label=str(detection.get("label", "person")),
-                    )
-                    for detection in detections
-                ],
-            )
-            updated_frames = [*session.recent_frames, stored_frame][-self._frame_buffer_size :]
             updated = BackendSession(
                 session_id=session.session_id,
                 device_id=session.device_id or device_id,
@@ -348,16 +299,15 @@ class BackendStore:
                     if record_conversation
                     else list(session.conversation_history)
                 ),
-                recent_frames=updated_frames,
                 user_preferences=session.user_preferences,
                 environment_map=session.environment_map,
                 perception_cache=session.perception_cache,
+                runner_state=session.runner_state,
                 skill_cache=session.skill_cache,
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
             self._write_session(updated)
-            self._cleanup_session_frames(updated)
             return updated
 
     def append_chat_request(
@@ -385,10 +335,10 @@ class BackendStore:
                     role="user",
                     text=cleaned_text,
                 ),
-                recent_frames=session.recent_frames,
                 user_preferences=session.user_preferences,
                 environment_map=session.environment_map,
                 perception_cache=session.perception_cache,
+                runner_state=session.runner_state,
                 skill_cache=session.skill_cache,
                 created_at=session.created_at,
                 updated_at=_utc_now(),
@@ -409,7 +359,6 @@ class BackendStore:
                 if isinstance(session_payload, dict)
                 else self.load_session(session_id)
             )
-            latest_frame = session.recent_frames[-1] if session.recent_frames else None
             request_id = (
                 None
                 if result.get("request_id") in (None, "")
@@ -435,11 +384,7 @@ class BackendStore:
             latest_result = _normalized_session_result(result)
             latest_result["request_id"] = request_id
             latest_result["function"] = request_function
-            latest_result["frame_id"] = (
-                result_frame_id
-                if result_frame_id is not None
-                else (None if latest_frame is None else latest_frame.frame_id)
-            )
+            latest_result["frame_id"] = result_frame_id
             latest_result["behavior"] = str(result.get("behavior", "result")).strip() or "result"
             latest_result["text"] = _normalized_result_text(result)
             if isinstance(latest_result.get("robot_response"), dict):
@@ -465,10 +410,10 @@ class BackendStore:
                 latest_result=latest_result,
                 result_history=result_history,
                 conversation_history=conversation_history,
-                recent_frames=session.recent_frames,
                 user_preferences=session.user_preferences,
                 environment_map=session.environment_map,
                 perception_cache=session.perception_cache,
+                runner_state=session.runner_state,
                 skill_cache=session.skill_cache,
                 created_at=session.created_at,
                 updated_at=updated_at,
@@ -530,10 +475,10 @@ class BackendStore:
                 latest_result=updated_latest_result,
                 result_history=updated_history,
                 conversation_history=session.conversation_history,
-                recent_frames=session.recent_frames,
                 user_preferences=session.user_preferences,
                 environment_map=session.environment_map,
                 perception_cache=session.perception_cache,
+                runner_state=session.runner_state,
                 skill_cache=session.skill_cache,
                 created_at=session.created_at,
                 updated_at=_utc_now(),
@@ -549,6 +494,7 @@ class BackendStore:
         user_preferences: Optional[Dict[str, Any]] = None,
         environment_map: Optional[Dict[str, Any]] = None,
         perception_cache: Optional[Dict[str, Any]] = None,
+        runner_state: Optional[Dict[str, Any]] = None,
         skill_cache: Optional[Dict[str, Any]] = None,
     ) -> BackendSession:
         with self._lock:
@@ -561,7 +507,6 @@ class BackendStore:
                 latest_result=session.latest_result,
                 result_history=session.result_history,
                 conversation_history=session.conversation_history,
-                recent_frames=session.recent_frames,
                 user_preferences=(
                     session.user_preferences
                     if user_preferences is None
@@ -576,6 +521,11 @@ class BackendStore:
                     session.perception_cache
                     if perception_cache is None
                     else _merge_nested(session.perception_cache, _normalized_section(perception_cache))
+                ),
+                runner_state=(
+                    session.runner_state
+                    if runner_state is None
+                    else _merge_nested(session.runner_state, _normalized_section(runner_state))
                 ),
                 skill_cache=(
                     session.skill_cache
@@ -596,6 +546,7 @@ class BackendStore:
         user_preferences: Optional[Dict[str, Any]] = None,
         environment_map: Optional[Dict[str, Any]] = None,
         perception_cache: Optional[Dict[str, Any]] = None,
+        runner_state: Optional[Dict[str, Any]] = None,
         skill_cache: Optional[Dict[str, Any]] = None,
     ) -> BackendSession:
         with self._lock:
@@ -608,7 +559,6 @@ class BackendStore:
                 latest_result=session.latest_result,
                 result_history=session.result_history,
                 conversation_history=session.conversation_history,
-                recent_frames=session.recent_frames,
                 user_preferences=_normalized_section(
                     session.user_preferences if user_preferences is None else user_preferences
                 ),
@@ -618,6 +568,7 @@ class BackendStore:
                 perception_cache=_normalized_section(
                     session.perception_cache if perception_cache is None else perception_cache
                 ),
+                runner_state=_normalized_section(session.runner_state if runner_state is None else runner_state),
                 skill_cache=_normalized_section(session.skill_cache if skill_cache is None else skill_cache),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
@@ -632,23 +583,15 @@ class BackendStore:
             user_preferences={},
             environment_map={},
             perception_cache={},
+            runner_state={},
             skill_cache={},
         )
 
     def reset_session_context(self, session_id: str) -> BackendSession:
         with self._lock:
             session = self.load_session(session_id)
-            latest_frame = session.recent_frames[-1] if session.recent_frames else None
             updated_at = _utc_now()
             latest_result = None
-            if latest_frame is not None:
-                latest_result = {
-                    "request_id": session.latest_request_id,
-                    "function": session.latest_request_function,
-                    "frame_id": latest_frame.frame_id,
-                    "behavior": "reset_context",
-                    "text": "Session context cleared.",
-                }
 
             updated = BackendSession(
                 session_id=session.session_id,
@@ -658,13 +601,121 @@ class BackendStore:
                 latest_result=latest_result,
                 result_history=[],
                 conversation_history=session.conversation_history,
-                recent_frames=session.recent_frames,
                 user_preferences=session.user_preferences,
                 environment_map=session.environment_map,
                 perception_cache=session.perception_cache,
+                runner_state=session.runner_state,
                 skill_cache=session.skill_cache,
                 created_at=session.created_at,
                 updated_at=updated_at,
+            )
+            self._write_session(updated)
+            return updated
+
+    def try_acquire_turn(
+        self,
+        session_id: str,
+        *,
+        owner_id: str,
+        turn_kind: str,
+        request_id: str,
+        device_id: str = "",
+        stale_after_seconds: float = 30.0,
+    ) -> BackendSession | None:
+        with self._lock:
+            session = self.load_or_create_session(session_id=session_id, device_id=device_id)
+            runner_state = _normalized_section(session.runner_state)
+            now = time.time()
+
+            current_owner_id = str(runner_state.get("owner_id", "") or "").strip()
+            current_request_id = str(runner_state.get("turn_request_id", "") or "").strip()
+            turn_in_flight = bool(runner_state.get("turn_in_flight", False))
+            turn_started_at = runner_state.get("turn_started_at")
+            is_stale = False
+            if turn_in_flight and turn_started_at not in (None, "") and stale_after_seconds > 0:
+                with suppress(TypeError, ValueError):
+                    is_stale = (now - float(turn_started_at)) >= stale_after_seconds
+
+            same_turn = (
+                turn_in_flight
+                and current_owner_id == str(owner_id).strip()
+                and current_request_id == str(request_id).strip()
+            )
+            if turn_in_flight and not is_stale and not same_turn:
+                return None
+
+            updated_runner_state = _merge_nested(
+                runner_state,
+                {
+                    "owner_id": str(owner_id).strip(),
+                    "turn_in_flight": True,
+                    "turn_kind": str(turn_kind).strip(),
+                    "turn_request_id": str(request_id).strip(),
+                    "turn_started_at": now,
+                },
+            )
+            updated = BackendSession(
+                session_id=session.session_id,
+                device_id=session.device_id or device_id,
+                latest_request_id=session.latest_request_id,
+                latest_request_function=session.latest_request_function,
+                latest_result=session.latest_result,
+                result_history=session.result_history,
+                conversation_history=session.conversation_history,
+                user_preferences=session.user_preferences,
+                environment_map=session.environment_map,
+                perception_cache=session.perception_cache,
+                runner_state=updated_runner_state,
+                skill_cache=session.skill_cache,
+                created_at=session.created_at,
+                updated_at=_utc_now(),
+            )
+            self._write_session(updated)
+            return updated
+
+    def release_turn(
+        self,
+        session_id: str,
+        *,
+        owner_id: str,
+        request_id: str | None = None,
+        device_id: str = "",
+    ) -> BackendSession:
+        with self._lock:
+            session = self.load_or_create_session(session_id=session_id, device_id=device_id)
+            runner_state = _normalized_section(session.runner_state)
+            current_owner_id = str(runner_state.get("owner_id", "") or "").strip()
+            current_request_id = str(runner_state.get("turn_request_id", "") or "").strip()
+            if current_owner_id != str(owner_id).strip():
+                return session
+            if request_id not in (None, "") and current_request_id != str(request_id).strip():
+                return session
+
+            updated_runner_state = _merge_nested(
+                runner_state,
+                {
+                    "owner_id": "",
+                    "turn_in_flight": False,
+                    "turn_kind": None,
+                    "turn_request_id": None,
+                    "turn_started_at": None,
+                },
+            )
+            updated = BackendSession(
+                session_id=session.session_id,
+                device_id=session.device_id or device_id,
+                latest_request_id=session.latest_request_id,
+                latest_request_function=session.latest_request_function,
+                latest_result=session.latest_result,
+                result_history=session.result_history,
+                conversation_history=session.conversation_history,
+                user_preferences=session.user_preferences,
+                environment_map=session.environment_map,
+                perception_cache=session.perception_cache,
+                runner_state=updated_runner_state,
+                skill_cache=session.skill_cache,
+                created_at=session.created_at,
+                updated_at=_utc_now(),
             )
             self._write_session(updated)
             return updated
@@ -690,67 +741,6 @@ class BackendStore:
             limit = CONVERSATION_HISTORY_LIMIT
         return updated_history[-limit:]
 
-    def _frame_by_id(
-        self,
-        session: BackendSession,
-        frame_id: Optional[str],
-    ) -> Optional[BackendFrame]:
-        if not frame_id:
-            return None
-        for frame in session.recent_frames:
-            if frame.frame_id == frame_id:
-                return frame
-        return None
-
-    def _store_frame_image(self, session_id: str, frame: Dict[str, Any]) -> Path:
-        frames_dir = self.session_dir(session_id) / "frames"
-        frames_dir.mkdir(parents=True, exist_ok=True)
-        frame_id = str(frame["frame_id"])
-
-        image_base64 = frame.get("image_base64")
-        if image_base64:
-            output_path = frames_dir / f"{frame_id}.jpg"
-            output_path.write_bytes(base64.b64decode(image_base64))
-            return output_path
-
-        image_path = frame.get("image_path")
-        if image_path:
-            source = Path(str(image_path))
-            if source.exists():
-                output_path = frames_dir / f"{frame_id}{source.suffix or '.jpg'}"
-                if source.resolve() == output_path.resolve():
-                    return output_path
-                shutil.copyfile(source, output_path)
-                return output_path
-            return source
-
-        image_url = frame.get("image_url")
-        if image_url:
-            return Path(str(image_url))
-
-        raise ValueError("frame must include one of image_base64, image_path, or image_url")
-
-    def _cleanup_session_frames(self, session: BackendSession) -> None:
-        frames_dir = self.session_dir(session.session_id) / "frames"
-        if not frames_dir.exists():
-            return
-
-        pinned_paths: set[Path] = set()
-        for frame in session.recent_frames:
-            try:
-                frame_path = Path(str(frame.image_path)).resolve()
-            except OSError:
-                continue
-            if frame_path.parent == frames_dir.resolve():
-                pinned_paths.add(frame_path)
-
-        for candidate in frames_dir.iterdir():
-            if not candidate.is_file():
-                continue
-            if candidate.resolve() in pinned_paths:
-                continue
-            candidate.unlink(missing_ok=True)
-
     def _write_session(self, session: BackendSession) -> None:
         with self._lock:
             session_dir = self.session_dir(session.session_id)
@@ -758,7 +748,7 @@ class BackendStore:
             session_path = self.session_path(session.session_id)
             tmp_path = session_path.with_suffix(".json.tmp")
             tmp_path.write_text(
-                json.dumps(asdict(session), indent=2, ensure_ascii=True),
+                json.dumps(_session_payload_dict(session), indent=2, ensure_ascii=True),
                 encoding="utf-8",
             )
             tmp_path.replace(session_path)

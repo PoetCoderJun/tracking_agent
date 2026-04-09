@@ -28,11 +28,19 @@ set -a && source .ENV && set +a
 
 - `environment writer`：唯一常驻组件，持续写入 perception，并对同一帧同步写入 system1 结果。
 - `active session`：主 runner 创建并持有的会话标识。skills 和 runtime 都从这里读写 agent state，但不负责偷偷创建或切换它。
-- `pi`：聊天入口。它进入项目 skill 后，skill 再通过 `backend.cli` 访问当前 active session。
+- `pi`：聊天入口。`e-agent` 现在会以前台 supervisor 的形式拉起 `pi` 子进程，并在同一条 session 上接管 tracking 的持续 follow-up turn。
 
-如果你需要 tracking 的持续轮询与自动继续跟踪，还要再单独启动一次：
+## 当前内核结构
 
-- `tracking.loop`：唯一的 tracking runner，负责对已绑定目标做持续 track turn。
+当前代码结构按 `2025 Q1答辩.pptx` 第 8/9 页收口为：
+
+- 触发层：`e-agent` / `pi` / 脚本入口负责触发 turn。
+- 环境层：`backend/perception/` 持续写入世界快照，`backend/system1/` 只保存同帧推理结果。
+- Runner + 状态层：`backend/cli.py`、`backend/runtime_session.py`、`backend/persistence/` 负责唯一 turn 路径和唯一 `session.json` 真相源。
+- 能力层：`backend/tracking/`、`backend/actions/`、`skills/` 作为普通 capability 被 runner 调用。
+- 展示层：`viewer/` 只读取共享状态，不参与调度。
+
+当前主路径不再保留额外的 tracking CLI 包装层，也不再依赖脚本级 loop/viewer wrapper 来进入核心运行逻辑。
 
 ## 只启动 PI
 
@@ -52,9 +60,9 @@ uv run e-agent
 
 说明：
 
-- `e-agent` 会先 bootstrap 主 runner session，然后直接 `exec` 进 `pi`。
+- `e-agent` 会先 bootstrap 主 runner session，然后保持为前台 supervisor，并拉起 `pi` 子进程。
 - 会显式关闭 `pi` 的默认 skills 发现，只加载仓库内 `skills/` 和你额外传入的 `--skill`。
-- `e-agent` 默认直接进入 `pi`，避免交互 TUI 在 macOS 沙箱里触发终端 raw mode 错误。
+- `e-agent` 默认直接拉起 `pi`，避免交互 TUI 在 macOS 沙箱里触发终端 raw mode 错误。
 - 如果你明确要把 `pi` 放进 macOS `sandbox-exec`，再显式传 `--pi-sandbox`。
 - 开启 `--pi-sandbox` 后，如果某个 workflow 还需要额外写目录，可以追加 `--pi-writable-dir /abs/path`。
 - 如果你要固定 session id：
@@ -69,9 +77,9 @@ uv run e-agent --session-id sess_001
 uv run e-agent --fresh
 ```
 
-- 这条流程不会自动拉起 `tracking.loop`。
-- 所以用户在 `pi` 里仍然可以做目标选择、问状态、调用 skill。
-- 但“绑定目标后自动持续继续跟踪”不在这条最小流程里。
+- 在 `pi` 里成功执行 `tracking-init` 后，会自动激活同 session 的 tracking follow-up。
+- follow-up 默认按 3 秒 cadence 继续做 `tracking-track`，如果当前目标 `track id` 丢失，也会立即触发一次恢复判断。
+- 如果在 `pi` 里重新指定了新的跟踪对象，当前 session 的 tracking memory/runtime 标记会被重置，并切到新的目标继续 follow-up。
 
 ## 完整 Tracking 启动
 
@@ -106,13 +114,7 @@ stack 启动后，再执行：
 uv run e-agent
 ```
 
-如果你还需要持续 tracking loop，再单独开一个终端：
-
-```bash
-uv run robot-agent-tracking-loop \
-  --state-root ./.runtime/agent-runtime \
-  --artifacts-root ./.runtime/pi-agent
-```
+viewer 会跟随当前 active session，显示 tracking 状态、当前 memory、最新回复和展示帧。
 
 ## 手动分开启动 Tracking
 
@@ -124,18 +126,16 @@ uv run robot-agent-tracking-loop \
 uv run robot-agent-environment-writer --source 0
 ```
 
-2. tracking runner：
-
-```bash
-uv run robot-agent-tracking-loop \
-  --state-root ./.runtime/agent-runtime \
-  --artifacts-root ./.runtime/pi-agent
-```
-
-3. 主 runner：
+2. 主 runner：
 
 ```bash
 uv run e-agent
+```
+
+如果你要 viewer websocket：
+
+```bash
+uv run python -m viewer.stream --state-root ./.runtime/agent-runtime
 ```
 
 ## 常用调试命令
@@ -186,3 +186,8 @@ uv run robot-agent tracking-track \
   --state-root ./.runtime/agent-runtime \
   --artifacts-root ./.runtime/pi-agent
 ```
+
+说明：
+
+- 上面这条只用于后端确定性检查。
+- 正常主路径下，不需要再手动启动单独的 `robot-agent-tracking-loop` 来保持持续跟踪。

@@ -2,25 +2,46 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import List
 
 from backend.cli import bootstrap_runner_session
 from backend.project_paths import resolve_project_path
+from backend.runtime_session import AgentSessionStore
 from backend.skills import project_skill_paths
+from backend.tracking.context import TRACKING_LIFECYCLE_STOPPED
+from backend.tracking.loop import DEFAULT_SUPERVISOR_POLL_SECONDS, supervisor_tracking_step
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TRACKING_ROUTING_SYSTEM_PROMPT = (
+    "This repository is a chat-first embodied-agent runtime, not a default code-review task. "
+    "When the user is asking the robot to start tracking or replace the tracked person, "
+    "treat that as an immediate tracking skill routing decision, not as a cue to inspect the repository. "
+    "Examples that should directly route to the tracking skill: "
+    "'请跟踪穿黑衣服的人', '跟踪前面那个黑衣服的人', '切换到右边那个人', '跟踪 ID 为 3'. "
+    "For those turns, your first move should be a single backend tracking-init call if the request is a target-selection request. "
+    "Do not browse repository files or runtime directories before that first decision. "
+    "The active session id and state root are already available in environment variables "
+    "ROBOT_AGENT_SESSION_ID and ROBOT_AGENT_STATE_ROOT. "
+    "Use them directly; do not browse .runtime files just to discover the active session. "
+    "The canonical backend command shape is: "
+    "python -m backend.cli tracking-init --session-id \"$ROBOT_AGENT_SESSION_ID\" "
+    "--state-root \"$ROBOT_AGENT_STATE_ROOT\" --artifacts-root ./.runtime/pi-agent --text \"<user text>\". "
+    "Do not browse project files, runtime directories, or explain the codebase before making that routing decision "
+    "unless the user explicitly asks a coding or architecture question."
+)
 
 
 def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Bootstrap the main runner session, then exec into pi with project skills loaded."
+        description="Bootstrap the main runner session, then supervise a pi child with project skills loaded."
     )
     parser.add_argument("--session-id", default=None)
     parser.add_argument("--device-id", default="robot_01")
     parser.add_argument("--state-root", default="./.runtime/agent-runtime")
-    parser.add_argument("--frame-buffer-size", type=int, default=3)
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--pi-bin", default="pi")
     parser.add_argument(
@@ -44,6 +65,12 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[],
         help="Optional extra skill path to append after the default project skills.",
+    )
+    parser.add_argument(
+        "--supervisor-poll-seconds",
+        type=float,
+        default=DEFAULT_SUPERVISOR_POLL_SECONDS,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("pi_args", nargs=argparse.REMAINDER)
     return parser.parse_args(argv)
@@ -71,12 +98,18 @@ def _skill_args(extra_skills: List[str]) -> List[str]:
     return args
 
 
-def _pi_command(args: argparse.Namespace) -> List[str]:
+def _pi_command(args: argparse.Namespace, *, resolved_pi_args: List[str] | None = None) -> List[str]:
+    raw_pi_args = list(resolved_pi_args if resolved_pi_args is not None else _resolved_pi_args(list(args.pi_args or [])))
+    has_explicit_thinking = "--thinking" in raw_pi_args
+    default_thinking_args = [] if has_explicit_thinking else ["--thinking", "minimal"]
     return [
         str(args.pi_bin),
+        *default_thinking_args,
         "--no-skills",
+        "--append-system-prompt",
+        TRACKING_ROUTING_SYSTEM_PROMPT,
         *_skill_args(list(args.skill or [])),
-        *_resolved_pi_args(list(args.pi_args or [])),
+        *raw_pi_args,
     ]
 
 
@@ -165,6 +198,100 @@ def _sandboxed_command(command: List[str], args: argparse.Namespace, env: dict[s
     return ["/usr/bin/sandbox-exec", "-f", str(profile_path), *command]
 
 
+def _supervisor_owner_id(session_id: str) -> str:
+    return f"e-agent:{session_id}:{os.getpid()}"
+
+
+def _prime_supervisor_state(*, sessions: AgentSessionStore, session_id: str, owner_id: str) -> None:
+    sessions.patch_runner_state(
+        session_id,
+        {
+            "owner_id": "",
+            "supervisor_owner_id": owner_id,
+            "turn_in_flight": False,
+            "turn_kind": None,
+            "turn_request_id": None,
+            "turn_started_at": None,
+        },
+    )
+
+
+def _cleanup_supervisor_state(
+    *,
+    sessions: AgentSessionStore,
+    session_id: str,
+    reason: str,
+) -> None:
+    sessions.patch_runner_state(
+        session_id,
+        {
+            "owner_id": "",
+            "supervisor_owner_id": "",
+            "turn_in_flight": False,
+            "turn_kind": None,
+            "turn_request_id": None,
+            "turn_started_at": None,
+        },
+    )
+    tracking_state = dict((sessions.load(session_id).skills.get("tracking") or {}))
+    if tracking_state.get("latest_target_id") not in (None, "", []):
+        sessions.patch_skill_state(
+            session_id,
+            skill_name="tracking",
+            patch={
+                "lifecycle_status": TRACKING_LIFECYCLE_STOPPED,
+                "stop_reason": reason,
+            },
+        )
+
+
+def _child_env(base_env: dict[str, str], *, state_root: Path, session_id: str) -> dict[str, str]:
+    env = dict(base_env)
+    env["ROBOT_AGENT_STATE_ROOT"] = str(state_root)
+    env["ROBOT_AGENT_SESSION_ID"] = str(session_id)
+    env["ROBOT_AGENT_TURN_OWNER_ID"] = "pi"
+    return env
+
+
+def _supervise_pi(
+    *,
+    args: argparse.Namespace,
+    sessions: AgentSessionStore,
+    session_id: str,
+    owner_id: str,
+    env: dict[str, str],
+    resolved_pi_args: List[str],
+) -> int:
+    command = _sandboxed_command(_pi_command(args, resolved_pi_args=resolved_pi_args), args, env)
+    try:
+        child = subprocess.Popen(command, env=env)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"pi executable not found: {command[0]}") from exc
+
+    try:
+        while True:
+            return_code = child.poll()
+            if return_code is not None:
+                return int(return_code)
+            supervisor_tracking_step(
+                sessions=sessions,
+                session_id=session_id,
+                device_id=str(args.device_id),
+                env_file=resolve_project_path(".ENV"),
+                artifacts_root=resolve_project_path("./.runtime/pi-agent"),
+                owner_id=owner_id,
+            )
+            time.sleep(max(0.05, float(args.supervisor_poll_seconds)))
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=5)
+
+
 def main(argv: List[str] | None = None) -> int:
     args = parse_args(argv)
     state_root = resolve_project_path(args.state_root)
@@ -172,18 +299,28 @@ def main(argv: List[str] | None = None) -> int:
         state_root=state_root,
         device_id=str(args.device_id),
         session_id=args.session_id,
-        frame_buffer_size=int(args.frame_buffer_size),
         fresh=bool(args.fresh),
     )
-    env = dict(os.environ)
-    env["ROBOT_AGENT_STATE_ROOT"] = str(state_root)
-    env["ROBOT_AGENT_SESSION_ID"] = str(session.session_id)
-    command = _sandboxed_command(_pi_command(args), args, env)
+    sessions = AgentSessionStore(state_root=state_root)
+    owner_id = _supervisor_owner_id(session.session_id)
+    _prime_supervisor_state(sessions=sessions, session_id=session.session_id, owner_id=owner_id)
+    resolved_pi_args = _resolved_pi_args(list(args.pi_args or []))
+    env = _child_env(dict(os.environ), state_root=state_root, session_id=session.session_id)
     try:
-        os.execvpe(command[0], command, env)
-        return 0
-    except FileNotFoundError as exc:
-        raise RuntimeError(f"pi executable not found: {command[0]}") from exc
+        return _supervise_pi(
+            args=args,
+            sessions=sessions,
+            session_id=session.session_id,
+            owner_id=owner_id,
+            env=env,
+            resolved_pi_args=resolved_pi_args,
+        )
+    finally:
+        _cleanup_supervisor_state(
+            sessions=sessions,
+            session_id=session.session_id,
+            reason="supervisor_exit",
+        )
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from pathlib import Path
 from PIL import Image
 
 from backend.runtime_session import AgentSessionStore
+from backend.system1 import LocalSystem1Service
 from backend.tracking.context import build_tracking_context
 from backend.perception import (
     CAMERA_SENSOR_NAME,
@@ -219,24 +220,34 @@ def test_local_perception_service_reset_clears_snapshot_and_saved_keyframes(tmp_
 def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
+    perception = LocalPerceptionService(state_root)
+    system1 = LocalSystem1Service(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
     runtime.patch_skill_state(
         "sess_001",
         skill_name="tracking",
         patch={"latest_target_id": 7, "target_description": "黑衣服的人"},
     )
-    context = runtime.load("sess_001")
-    context.session["recent_frames"] = [
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_001",
+            device_id="robot_01",
+            frame=RobotFrame(frame_id="frame_000001", timestamp_ms=1710000000000, image_path=str(frame_path)),
+            detections=[],
+            text="跟踪穿黑衣服的人",
+        ),
+    )
+    system1.write_result(
         {
             "frame_id": "frame_000001",
             "timestamp_ms": 1710000000000,
             "image_path": str(frame_path),
             "detections": [{"track_id": 7, "bbox": [10, 20, 30, 40], "score": 0.95, "label": "person"}],
         }
-    ]
+    )
 
     tracking_context = build_tracking_context(
-        context,
+        runtime.load("sess_001"),
         request_id="req_001",
     )
 
@@ -244,10 +255,11 @@ def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -
     assert tracking_context["frames"][0]["detections"][0]["track_id"] == 7
 
 
-def test_tracking_context_helpers_fall_back_to_session_frames_when_snapshot_has_no_detections(tmp_path: Path) -> None:
+def test_tracking_context_ignores_session_recent_frames_and_uses_environment_truth(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
+    system1 = LocalSystem1Service(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
 
     perception.write_observation(
@@ -258,6 +270,14 @@ def test_tracking_context_helpers_fall_back_to_session_frames_when_snapshot_has_
             detections=[],
             text="继续跟踪",
         ),
+    )
+    system1.write_result(
+        {
+            "frame_id": "frame_000009",
+            "timestamp_ms": 1710000000000,
+            "image_path": str(frame_path),
+            "detections": [{"track_id": 9, "bbox": [10, 20, 30, 40], "score": 0.95, "label": "person"}],
+        }
     )
     context = runtime.load("sess_001")
     context.session["recent_frames"] = [
@@ -275,15 +295,66 @@ def test_tracking_context_helpers_fall_back_to_session_frames_when_snapshot_has_
     )
 
     assert tracking_context["frames"][0]["frame_id"] == "frame_000009"
-    assert tracking_context["frames"][0]["detections"][0]["track_id"] == 42
+    assert tracking_context["frames"][0]["detections"][0]["track_id"] == 9
+
+
+def test_tracking_context_uses_system1_detections_for_matching_perception_frame(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    runtime = AgentSessionStore(state_root)
+    perception = LocalPerceptionService(state_root)
+    system1 = LocalSystem1Service(state_root)
+    frame_path = _frame_image(tmp_path / "frame_system1.jpg")
+
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_sys1",
+            device_id="robot_01",
+            frame=RobotFrame(frame_id="frame_000123", timestamp_ms=1710000000000, image_path=str(frame_path)),
+            detections=[],
+            text="初始化目标",
+        ),
+    )
+    system1.write_result(
+        {
+            "frame_id": "frame_000123",
+            "timestamp_ms": 1710000000000,
+            "image_path": str(frame_path),
+            "detections": [
+                {
+                    "track_id": 9,
+                    "bbox": [11, 21, 31, 41],
+                    "score": 0.93,
+                    "label": "person",
+                }
+            ],
+        }
+    )
+
+    tracking_context = build_tracking_context(
+        runtime.load("sess_sys1"),
+        request_id="req_sys1",
+    )
+
+    assert tracking_context["frames"][0]["frame_id"] == "frame_000123"
+    assert tracking_context["frames"][0]["detections"][0]["track_id"] == 9
 
 
 def test_tracking_context_filters_excluded_track_ids(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
+    perception = LocalPerceptionService(state_root)
+    system1 = LocalSystem1Service(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
-    context = runtime.load("sess_001")
-    context.session["recent_frames"] = [
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_001",
+            device_id="robot_01",
+            frame=RobotFrame(frame_id="frame_000011", timestamp_ms=1710000000000, image_path=str(frame_path)),
+            detections=[],
+            text="继续跟踪",
+        ),
+    )
+    system1.write_result(
         {
             "frame_id": "frame_000011",
             "timestamp_ms": 1710000000000,
@@ -294,10 +365,10 @@ def test_tracking_context_filters_excluded_track_ids(tmp_path: Path) -> None:
                 {"track_id": 21, "bbox": [50, 20, 70, 40], "score": 0.90, "label": "person"},
             ],
         }
-    ]
+    )
 
     tracking_context = build_tracking_context(
-        context,
+        runtime.load("sess_001"),
         request_id="req_011",
         excluded_track_ids=[12],
     )

@@ -18,9 +18,13 @@ if str(ROOT) not in sys.path:
 
 from backend.config import load_settings
 from backend.llm_client import call_model, parse_json_block
-from backend.session_frames import tracking_recent_frames
+from backend.session_frames import observation_recent_frames
+from backend.tracking.memory import (
+    empty_tracking_memory,
+    read_tracking_memory_snapshot,
+    tracking_memory_flash_prompt_text,
+)
 from backend.tracking.visualization import save_detection_visualization
-from backend.tracking.memory import tracking_memory_flash_prompt_text
 from backend.tracking.crop import save_target_crop
 
 
@@ -106,29 +110,23 @@ def load_tracking_context(session_file: Path) -> Dict[str, Any]:
     excluded_track_ids = normalized_track_ids(tracking_state.get("excluded_track_ids"))
     state_root = session_file.resolve().parents[2]
     session_id = str(raw_session["session_id"])
-    frames = tracking_recent_frames(
+    frames = observation_recent_frames(
         state_root=state_root,
-        session_id=session_id,
-        raw_session=raw_session,
         excluded_track_ids=excluded_track_ids,
     )
 
     latest_target_id = tracking_state.get("latest_target_id")
     if latest_target_id is not None:
         latest_target_id = int(latest_target_id)
+    memory_snapshot = read_tracking_memory_snapshot(state_root=state_root, session_id=session_id)
 
     return {
         "session_id": session_id,
         "target_description": str(tracking_state.get("target_description", "")),
-        "memory": tracking_state.get("latest_memory", ""),
+        "memory": memory_snapshot.get("memory", empty_tracking_memory()),
         "latest_target_id": latest_target_id,
-        "latest_target_crop": optional_text(tracking_state.get("latest_target_crop")),
-        "latest_front_target_crop": optional_text(tracking_state.get("latest_front_target_crop")),
-        "latest_back_target_crop": optional_text(tracking_state.get("latest_back_target_crop")),
-        "latest_confirmed_frame_path": optional_text(tracking_state.get("latest_confirmed_frame_path")),
-        "identity_target_crop": optional_text(tracking_state.get("identity_target_crop")),
-        "latest_confirmed_bbox": tracking_state.get("latest_confirmed_bbox"),
-        "init_frame_snapshot": normalized_frame(tracking_state.get("init_frame_snapshot")),
+        "front_crop_path": optional_text(memory_snapshot.get("front_crop_path")),
+        "back_crop_path": optional_text(memory_snapshot.get("back_crop_path")),
         "excluded_track_ids": excluded_track_ids,
         "chat_history": [
             {
@@ -150,13 +148,8 @@ def load_tracking_context_file(tracking_context_file: Path) -> Dict[str, Any]:
         "target_description": str(payload.get("target_description", "")),
         "memory": payload.get("memory", ""),
         "latest_target_id": payload.get("latest_target_id"),
-        "latest_target_crop": optional_text(payload.get("latest_target_crop")),
-        "latest_front_target_crop": optional_text(payload.get("latest_front_target_crop")),
-        "latest_back_target_crop": optional_text(payload.get("latest_back_target_crop")),
-        "latest_confirmed_frame_path": optional_text(payload.get("latest_confirmed_frame_path")),
-        "identity_target_crop": optional_text(payload.get("identity_target_crop")),
-        "latest_confirmed_bbox": payload.get("latest_confirmed_bbox"),
-        "init_frame_snapshot": normalized_frame(payload.get("init_frame_snapshot")),
+        "front_crop_path": optional_text(payload.get("front_crop_path")),
+        "back_crop_path": optional_text(payload.get("back_crop_path")),
         "recovery_mode": bool(payload.get("recovery_mode", False)),
         "missing_target_id": payload.get("missing_target_id"),
         "excluded_track_ids": excluded_track_ids,
@@ -185,10 +178,6 @@ def latest_frame(context: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def frame_for_behavior(context: Dict[str, Any], behavior: str) -> Dict[str, Any]:
-    if behavior == "init":
-        snapshot = context.get("init_frame_snapshot")
-        if isinstance(snapshot, dict):
-            return snapshot
     return latest_frame(context)
 
 
@@ -203,7 +192,7 @@ def track_note(context: Dict[str, Any]) -> str:
 
 
 def session_has_active_target(context: Dict[str, Any]) -> bool:
-    return bool(context.get("latest_target_id") is not None and context.get("latest_confirmed_frame_path"))
+    return context.get("latest_target_id") not in (None, "", [])
 
 
 def candidate_summary(detections: List[Dict[str, Any]]) -> str:
@@ -284,14 +273,9 @@ def rewrite_memory_frame_paths(
     *,
     behavior: str,
     current_frame_path: Path,
-    latest_confirmed_frame_path: Any,
 ) -> List[str]:
-    if behavior == "init":
-        return [str(current_frame_path)]
-    latest_reference = optional_text(latest_confirmed_frame_path)
-    if latest_reference is None:
-        return [str(current_frame_path)]
-    return [latest_reference, str(current_frame_path)]
+    del behavior
+    return [str(current_frame_path)]
 
 
 def persist_reference_frame(frame_path: Path, output_path: Path) -> Path:
@@ -575,27 +559,10 @@ def reference_crop_assets(context: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     return collect(
         (
-            ("latest_front_target_crop", "最近保存的目标正面 crop"),
-            ("latest_back_target_crop", "最近保存的目标背面 crop"),
+            ("front_crop_path", "当前 memory 的正面 crop"),
+            ("back_crop_path", "当前 memory 的背面 crop"),
         )
     )
-
-
-def should_reset_reference_crops(
-    *,
-    behavior: str,
-    context: Dict[str, Any],
-    target_id: Optional[int],
-) -> bool:
-    if target_id is None:
-        return False
-    if behavior == "init":
-        return True
-    previous_target_id = context.get("latest_target_id")
-    if previous_target_id in (None, ""):
-        return False
-    return int(previous_target_id) != int(target_id)
-
 
 def reference_crops_note(reference_assets: List[Dict[str, Any]]) -> str:
     if not reference_assets:
@@ -783,32 +750,22 @@ def execute_select_tool(
 
     crop_path = None
     rewrite_memory_input = None
-    confirmed_frame_path = None
-    confirmed_bbox = None
-    identity_target_crop = None
     if normalized["found"]:
         for detection in detections:
             if int(detection.track_id) != int(normalized["target_id"]):
                 continue
             crop_path = session_dirs["crops_dir"] / f"{frame_path.stem}_id_{normalized['target_id']}.jpg"
             save_target_crop(persisted_current_frame_path, detection.bbox, crop_path)
-            confirmed_frame_path = persist_reference_frame(
+            current_frame_reference_path = persist_reference_frame(
                 persisted_current_frame_path,
                 session_dirs["frames_dir"] / f"{frame_path.stem}.jpg",
-            )
-            confirmed_bbox = [int(value) for value in detection.bbox]
-            identity_target_crop = (
-                str(crop_path)
-                if behavior == "init" or not optional_text(context.get("identity_target_crop"))
-                else optional_text(context.get("identity_target_crop"))
             )
             rewrite_memory_input = build_rewrite_memory_input(
                 behavior=behavior,
                 crop_path=crop_path,
                 frame_paths=rewrite_memory_frame_paths(
                     behavior=behavior,
-                    current_frame_path=confirmed_frame_path,
-                    latest_confirmed_frame_path=context.get("latest_confirmed_frame_path"),
+                    current_frame_path=current_frame_reference_path,
                 ),
                 frame_id=str(frame["frame_id"]),
                 target_id=int(normalized["target_id"]),
@@ -831,15 +788,6 @@ def execute_select_tool(
         "reject_reason": str(normalized.get("reject_reason", "")).strip(),
         "candidate_checks": list(normalized.get("candidate_checks") or []),
         "decision": normalized["decision"],
-        "latest_target_crop": None if crop_path is None else str(crop_path),
-        "identity_target_crop": identity_target_crop,
-        "confirmed_frame_path": None if confirmed_frame_path is None else str(confirmed_frame_path),
-        "confirmed_bbox": confirmed_bbox,
-        "reset_reference_crops": should_reset_reference_crops(
-            behavior=behavior,
-            context=context,
-            target_id=normalized["target_id"],
-        ),
         "target_description": (
             str(arguments.get("target_description", "")).strip()
             if behavior == "init"

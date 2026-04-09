@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
 from backend.perception import LocalPerceptionService
 from backend.system1 import LocalSystem1Service
@@ -17,6 +18,7 @@ from scripts.write_environment import (
     _system1_log_line,
     _should_emit_event,
     _should_emit_video_sample,
+    _target_video_emit_at,
     parse_args,
 )
 
@@ -136,6 +138,159 @@ def test_should_emit_event_respects_frame_and_time_gates() -> None:
 def test_should_emit_video_sample_uses_video_timeline_only() -> None:
     assert _should_emit_video_sample(frame_index=91, sample_every=1, fps=30.0, next_video_emit_at=3.0)
     assert not _should_emit_video_sample(frame_index=90, sample_every=1, fps=30.0, next_video_emit_at=3.0)
+
+
+def test_target_video_emit_at_catches_up_to_wall_time_for_realtime_video() -> None:
+    assert _target_video_emit_at(
+        next_video_emit_at=1.0,
+        realtime_playback=True,
+        source_started_monotonic=10.0,
+        now_monotonic=15.4,
+        paused_seconds=0.0,
+    ) == 5.4
+    assert _target_video_emit_at(
+        next_video_emit_at=1.0,
+        realtime_playback=False,
+        source_started_monotonic=10.0,
+        now_monotonic=15.4,
+        paused_seconds=0.0,
+    ) == 1.0
+    assert _target_video_emit_at(
+        next_video_emit_at=1.0,
+        realtime_playback=True,
+        source_started_monotonic=10.0,
+        now_monotonic=15.4,
+        paused_seconds=4.0,
+    ) == pytest.approx(1.4)
+
+
+def test_run_environment_writer_realtime_video_skips_stale_video_seconds_after_stall(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_root = tmp_path / "state"
+    perception = LocalPerceptionService(state_root)
+    _prepare_environment_writer(
+        perception_service=perception,
+        system1_service=None,
+        system1_tracker=None,
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "state_root": str(state_root),
+            "sample_every": 1,
+            "interval_seconds": 1.0,
+            "realtime_playback": True,
+            "pause_after_first_event_file": None,
+            "max_events": 2,
+            "observation_text": "",
+        },
+    )()
+
+    def fake_save_frame_image(_frame: object, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"frame")
+
+    monotonic_values = iter([0.0, 0.0, 0.0, 5.0, 5.0])
+
+    def fake_monotonic() -> float:
+        try:
+            return next(monotonic_values)
+        except StopIteration:
+            return 5.0
+
+    monkeypatch.setattr("scripts.write_environment.save_frame_image", fake_save_frame_image)
+    monkeypatch.setattr("scripts.write_environment.current_timestamp_ms", lambda: 1000)
+    monkeypatch.setattr("scripts.write_environment.time.monotonic", fake_monotonic)
+
+    async def fake_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("scripts.write_environment.asyncio.sleep", fake_sleep)
+
+    exit_code = asyncio.run(
+        _run_environment_writer(
+            args,
+            perception_service=perception,
+            system1_service=None,
+            system1_tracker=None,
+            frame_stream=((index, object()) for index in range(1, 80)),
+            video_fps=10.0,
+            source_is_camera=False,
+        )
+    )
+
+    latest_frame = perception.read_snapshot()["latest_frame"]
+    assert exit_code == 0
+    assert latest_frame["frame_id"] == "frame_000001"
+    assert latest_frame["timestamp_ms"] >= 6000
+
+
+def test_run_environment_writer_pause_window_does_not_count_toward_realtime_catchup(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_root = tmp_path / "state"
+    perception = LocalPerceptionService(state_root)
+    _prepare_environment_writer(
+        perception_service=perception,
+        system1_service=None,
+        system1_tracker=None,
+    )
+    pause_file = tmp_path / "pause.flag"
+    pause_file.write_text("hold", encoding="utf-8")
+    args = type(
+        "Args",
+        (),
+        {
+            "state_root": str(state_root),
+            "sample_every": 1,
+            "interval_seconds": 1.0,
+            "realtime_playback": True,
+            "pause_after_first_event_file": str(pause_file),
+            "max_events": 2,
+            "observation_text": "",
+        },
+    )()
+
+    def fake_save_frame_image(_frame: object, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"frame")
+
+    def fake_monotonic() -> float:
+        return 0.0 if pause_file.exists() else 5.0
+
+    sleep_calls = {"count": 0}
+
+    async def fake_sleep(_seconds: float) -> None:
+        sleep_calls["count"] += 1
+        if sleep_calls["count"] == 1:
+            pause_file.unlink(missing_ok=True)
+        return None
+
+    monkeypatch.setattr("scripts.write_environment.save_frame_image", fake_save_frame_image)
+    monkeypatch.setattr("scripts.write_environment.current_timestamp_ms", lambda: 1000)
+    monkeypatch.setattr("scripts.write_environment.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("scripts.write_environment.asyncio.sleep", fake_sleep)
+
+    exit_code = asyncio.run(
+        _run_environment_writer(
+            args,
+            perception_service=perception,
+            system1_service=None,
+            system1_tracker=None,
+            frame_stream=((index, object()) for index in range(1, 80)),
+            video_fps=10.0,
+            source_is_camera=False,
+        )
+    )
+
+    latest_frame = perception.read_snapshot()["latest_frame"]
+    assert exit_code == 0
+    assert latest_frame["frame_id"] == "frame_000001"
+    assert latest_frame["timestamp_ms"] == 2000
 
 
 def test_environment_log_lines_use_human_readable_chinese_labels(tmp_path: Path) -> None:
