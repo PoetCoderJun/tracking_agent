@@ -36,13 +36,16 @@ def _latest_user_text(session: Dict[str, Any]) -> str:
 
 
 def _recent_dialogue(session: Dict[str, Any], *, limit: int) -> List[Dict[str, Any]]:
+    normalized_limit = max(0, int(limit))
+    if normalized_limit == 0:
+        return []
     return [
         {
             "role": str(entry.get("role", "")).strip(),
             "text": str(entry.get("text", "")).strip(),
             "timestamp": str(entry.get("timestamp", "")).strip(),
         }
-        for entry in list(session.get("conversation_history") or [])[-max(0, int(limit)) :]
+        for entry in list(session.get("conversation_history") or [])[-normalized_limit:]
         if isinstance(entry, dict)
     ]
 

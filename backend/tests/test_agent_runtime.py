@@ -213,3 +213,28 @@ def test_agent_session_exposes_canonical_language_context(tmp_path: Path) -> Non
     assert context.language_context["recent_dialogue"][-1]["text"] == "收到，先观察左边。"
     assert context.perception["language"]["latest_user_text"] == "先看左边的人"
     assert context.perception["language"]["recent_dialogue"][-1]["role"] == "assistant"
+
+
+def test_agent_session_recent_dialogue_respects_zero_limit(tmp_path: Path) -> None:
+    runtime = AgentSessionStore(tmp_path / "state")
+    runtime.start_fresh_session("sess_dialogue", device_id="robot_01")
+    runtime.append_chat_request(
+        session_id="sess_dialogue",
+        device_id="robot_01",
+        text="你好",
+        request_id="req_001",
+    )
+    runtime.apply_skill_result(
+        "sess_dialogue",
+        {
+            "request_id": "req_001",
+            "function": "chat",
+            "behavior": "reply",
+            "text": "收到",
+        },
+    )
+
+    context = runtime.load("sess_dialogue", device_id="robot_01")
+
+    assert context.recent_dialogue(limit=0) == []
+    assert context.recent_dialogue(limit=-1) == []
