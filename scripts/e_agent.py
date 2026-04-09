@@ -234,7 +234,7 @@ def _cleanup_supervisor_state(
             "turn_started_at": None,
         },
     )
-    tracking_state = dict((sessions.load(session_id).skills.get("tracking") or {}))
+    tracking_state = dict((sessions.load(session_id).capabilities.get("tracking") or {}))
     if tracking_state.get("latest_target_id") not in (None, "", []):
         sessions.patch_skill_state(
             session_id,

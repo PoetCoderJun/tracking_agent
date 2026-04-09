@@ -93,14 +93,6 @@ class AgentSession:
         return dict(self.state.get("capabilities", {}))
 
     @property
-    def skill_cache(self) -> Dict[str, Any]:
-        return self.capabilities
-
-    @property
-    def skills(self) -> Dict[str, Any]:
-        return self.capabilities
-
-    @property
     def latest_result(self) -> Dict[str, Any] | None:
         latest_result = self.payload.get("latest_result")
         return None if not isinstance(latest_result, dict) else dict(latest_result)
