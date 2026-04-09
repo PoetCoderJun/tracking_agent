@@ -145,15 +145,6 @@ def _state_with_updates(
     return updated
 
 
-def _session_payload_dict(session: "BackendSession") -> Dict[str, Any]:
-    payload = _session_storage_dict(session)
-    payload["user_preferences"] = _copy_jsonish(session.user_preferences)
-    payload["environment_map"] = _copy_jsonish(session.environment_map)
-    payload["runner_state"] = _copy_jsonish(session.runner_state)
-    payload["skill_cache"] = _copy_jsonish(session.skill_cache)
-    return payload
-
-
 def _session_storage_dict(session: "BackendSession") -> Dict[str, Any]:
     payload = asdict(session)
     payload.pop("recent_frames", None)
@@ -307,7 +298,7 @@ class BackendStore:
             return session
 
     def session_payload(self, session_id: str) -> Dict[str, Any]:
-        return _session_payload_dict(self.load_session(session_id))
+        return _session_storage_dict(self.load_session(session_id))
 
     def list_sessions(self) -> List[Dict[str, Any]]:
         with self._lock:

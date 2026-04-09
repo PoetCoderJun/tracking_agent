@@ -94,7 +94,7 @@ def _sessions_from_args(args: argparse.Namespace) -> AgentSessionStore:
 
 
 def _tracking_state(context: Any) -> Dict[str, Any]:
-    return tracking_state_snapshot((context.skills.get(TRACKING_SKILL_NAME) or {}))
+    return tracking_state_snapshot((context.capabilities.get(TRACKING_SKILL_NAME) or {}))
 
 
 def _has_active_target(tracking_state: Dict[str, Any]) -> bool:

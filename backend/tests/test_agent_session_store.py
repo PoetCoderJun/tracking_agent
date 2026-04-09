@@ -39,7 +39,7 @@ def test_agent_session_store_keeps_perception_out_of_session_state(tmp_path: Pat
     )
 
     assert "memory" not in (updated.session.get("state") or {})
-    assert updated.skill_cache["tracking"]["last_tool"] == "track"
+    assert updated.capabilities["tracking"]["last_tool"] == "track"
 
 
 def test_agent_session_store_reset_clears_all_sections(tmp_path: Path) -> None:
@@ -54,7 +54,7 @@ def test_agent_session_store_reset_clears_all_sections(tmp_path: Path) -> None:
     assert reset.user_preferences == {}
     assert reset.environment_map == {}
     assert "memory" not in (reset.session.get("state") or {})
-    assert reset.skill_cache == {}
+    assert reset.capabilities == {}
 
 
 def test_agent_session_store_round_trips_runner_state_and_turn_lease(tmp_path: Path) -> None:

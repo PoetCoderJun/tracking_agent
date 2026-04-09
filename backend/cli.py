@@ -115,11 +115,6 @@ def _session_payload(session) -> dict:
         "session_id": session.session_id,
         "state_paths": dict(session.state_paths),
         "session": session.session,
-        "latest_result": session.latest_result,
-        "environment_map": session.environment_map,
-        "state": dict(session.session.get("state") or {}),
-        "runner_state": session.runner_state,
-        "skill_cache": session.skill_cache,
     }
 
 

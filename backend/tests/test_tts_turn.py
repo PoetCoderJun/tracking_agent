@@ -28,7 +28,7 @@ def test_run_tts_turn_writes_mock_outbox_and_updates_session(tmp_path: Path) -> 
     assert payload["session_result"]["robot_response"]["action"] == "speak"
     assert payload["tool_output"]["mode"] == "mock"
     assert session.latest_result["robot_response"]["action"] == "speak"
-    assert session.skill_cache["tts"]["last_text"] == "请注意安全。"
+    assert session.capabilities["tts"]["last_text"] == "请注意安全。"
     assert len(lines) == 1
     assert json.loads(lines[0])["text"] == "请注意安全。"
 
@@ -54,4 +54,4 @@ def test_run_tts_turn_defaults_to_latest_user_text(tmp_path: Path) -> None:
     )
 
     assert payload["session_result"]["robot_response"]["text"] == "请播报实验开始。"
-    assert store.load("sess_tts_default").skill_cache["tts"]["last_text"] == "请播报实验开始。"
+    assert store.load("sess_tts_default").capabilities["tts"]["last_text"] == "请播报实验开始。"

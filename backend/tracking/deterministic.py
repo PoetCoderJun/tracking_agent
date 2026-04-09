@@ -244,7 +244,7 @@ def _apply_tracking_lifecycle_patch_after_payload(
     session_id: str,
     session_result: Dict[str, Any],
 ) -> None:
-    tracking_state = tracking_state_snapshot(sessions.load(session_id).skills.get(TRACKING_SKILL_NAME))
+    tracking_state = tracking_state_snapshot(sessions.load(session_id).capabilities.get(TRACKING_SKILL_NAME))
     behavior = str(session_result.get("behavior", "")).strip()
     frame_id = str(session_result.get("frame_id", "") or "").strip()
     found = bool(session_result.get("found", False))
@@ -302,7 +302,7 @@ def tracking_rewrite_still_relevant(
     target_id: int,
 ) -> bool:
     session = sessions.load(session_id)
-    tracking_state = dict(session.skills.get(TRACKING_SKILL_NAME) or {})
+    tracking_state = dict(session.capabilities.get(TRACKING_SKILL_NAME) or {})
     current_target_id = tracking_state.get("latest_target_id")
     if current_target_id in (None, "", []):
         return False
@@ -483,7 +483,7 @@ def build_tracking_wait_payload(
     session = sessions.load(session_id, device_id=device_id)
     latest_observation = LocalPerceptionService(sessions.state_root).latest_camera_observation()
     latest_frame_id = None if latest_observation is None else (latest_observation.get("payload") or {}).get("frame_id")
-    tracking_state = dict((session.skills.get(TRACKING_SKILL_NAME) or {}))
+    tracking_state = dict((session.capabilities.get(TRACKING_SKILL_NAME) or {}))
     target_id = tracking_state.get("latest_target_id")
     text = "当前不确定，保持等待。"
     return {

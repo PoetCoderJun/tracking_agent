@@ -90,7 +90,7 @@ def build_tracking_context(
     request_id: str,
     excluded_track_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
-    tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
+    tracking_state = tracking_state_snapshot((session.capabilities.get("tracking") or {}))
     memory_snapshot = read_tracking_memory_snapshot(
         state_root=Path(session.state_paths["state_root"]),
         session_id=session.session_id,

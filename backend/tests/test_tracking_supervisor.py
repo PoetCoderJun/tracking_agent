@@ -62,7 +62,7 @@ def test_supervisor_step_marks_session_inactive_without_active_target(tmp_path: 
     )
 
     assert result["status"] == "idle"
-    assert sessions.load("sess_001").skills["tracking"]["lifecycle_status"] == TRACKING_LIFECYCLE_INACTIVE
+    assert sessions.load("sess_001").capabilities["tracking"]["lifecycle_status"] == TRACKING_LIFECYCLE_INACTIVE
 
 
 def test_supervisor_step_skips_when_pi_lease_is_held(tmp_path: Path) -> None:
@@ -154,7 +154,7 @@ def test_supervisor_step_dispatches_tracking_and_clears_lease(tmp_path: Path, mo
         owner_id="e-agent:sess_001",
     )
 
-    tracking_state = sessions.load("sess_001").skills["tracking"]
+    tracking_state = sessions.load("sess_001").capabilities["tracking"]
     runner_state = sessions.load("sess_001").runner_state
     assert result["status"] == "tracked"
     assert tracking_state["lifecycle_status"] == TRACKING_LIFECYCLE_BOUND

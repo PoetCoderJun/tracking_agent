@@ -133,6 +133,15 @@ def test_main_session_show_returns_state_paths(monkeypatch, tmp_path, capsys) ->
     payload = json.loads(capsys.readouterr().out)
     assert payload["session_id"] == "sess_001"
     assert payload["state_paths"]["session_path"].endswith("sessions/sess_001/session.json")
+    assert payload["session"]["state"] == {
+        "user_preferences": {},
+        "environment": {},
+        "runner": {},
+        "capabilities": {},
+    }
+    assert "state" not in payload
+    assert "runner_state" not in payload
+    assert "skill_cache" not in payload
 
 
 def test_main_tracking_init_calls_deterministic_backend(monkeypatch, tmp_path, capsys) -> None:

@@ -1052,7 +1052,7 @@ def test_turn_payload_no_longer_resets_view_specific_reference_crops_in_session(
         patch=payload["skill_state_patch"],
     )
 
-    tracking_state = runtime.load("sess_reset").skill_cache["tracking"]
+    tracking_state = runtime.load("sess_reset").capabilities["tracking"]
     assert "latest_front_target_crop" not in payload["skill_state_patch"]
     assert "latest_back_target_crop" not in payload["skill_state_patch"]
     assert tracking_state["latest_front_target_crop"] == "/old/front.jpg"
@@ -1185,7 +1185,7 @@ def test_schedule_tracking_memory_rewrite_updates_session_inline(tmp_path: Path,
         env_file=tmp_path / ".ENV",
     )
 
-    tracking_state = runtime.load("sess_worker").skill_cache["tracking"]
+    tracking_state = runtime.load("sess_worker").capabilities["tracking"]
     assert "latest_memory" not in tracking_state
     memory_snapshot = read_tracking_memory_snapshot(state_root=state_root, session_id="sess_worker")
     assert memory_snapshot["memory"] == _structured_memory("新的 memory")
@@ -1244,7 +1244,7 @@ def test_schedule_tracking_memory_rewrite_skips_superseded_state(tmp_path: Path,
     )
 
     context = runtime.load("sess_worker_skip")
-    assert context.skill_cache["tracking"]["latest_memory"] == _structured_memory("旧 memory")
+    assert context.capabilities["tracking"]["latest_memory"] == _structured_memory("旧 memory")
 
 
 def test_select_init_requests_clarification_when_multiple_candidates_match(tmp_path: Path, monkeypatch):

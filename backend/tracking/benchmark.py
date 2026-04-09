@@ -1015,7 +1015,7 @@ def run_sequence_benchmark_stack_chain(
                 initialized = True
             else:
                 session = sessions.load(session_id, device_id=device_id)
-                tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
+                tracking_state = tracking_state_snapshot((session.capabilities.get("tracking") or {}))
                 target_id = tracking_state.get("latest_target_id")
                 bound_detection = _bound_detection_for_target(
                     detections=frame_detections,
@@ -1039,7 +1039,7 @@ def run_sequence_benchmark_stack_chain(
                     )
 
             session = sessions.load(session_id, device_id=device_id)
-            tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
+            tracking_state = tracking_state_snapshot((session.capabilities.get("tracking") or {}))
             target_id = tracking_state.get("latest_target_id")
             selected_detection = _bound_detection_for_target(
                 detections=frame_detections,
@@ -1211,7 +1211,7 @@ def run_sequence_benchmark_rebind_fsm(
                     initialized = True
 
             session = sessions.load(session_id, device_id=device_id)
-            tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
+            tracking_state = tracking_state_snapshot((session.capabilities.get("tracking") or {}))
             current_target_id = tracking_state.get("latest_target_id")
             current_target_id_before = current_target_id
             bound_detection = _bound_detection_for_target(
@@ -1258,7 +1258,7 @@ def run_sequence_benchmark_rebind_fsm(
                         ),
                     )
                     session = sessions.load(session_id, device_id=device_id)
-                    tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
+                    tracking_state = tracking_state_snapshot((session.capabilities.get("tracking") or {}))
                     current_target_id = tracking_state.get("latest_target_id")
                     bound_detection = _bound_detection_for_target(
                         detections=frame_detections,
@@ -1303,7 +1303,7 @@ def run_sequence_benchmark_rebind_fsm(
                     ),
                 )
                 session = sessions.load(session_id, device_id=device_id)
-                tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
+                tracking_state = tracking_state_snapshot((session.capabilities.get("tracking") or {}))
                 current_target_id = tracking_state.get("latest_target_id")
                 bound_detection = _bound_detection_for_target(
                     detections=frame_detections,
@@ -1338,7 +1338,7 @@ def run_sequence_benchmark_rebind_fsm(
                     ):
                         last_bound_rewrite_event_index = event_index
                         session = sessions.load(session_id, device_id=device_id)
-                        tracking_state = tracking_state_snapshot((session.skills.get("tracking") or {}))
+                        tracking_state = tracking_state_snapshot((session.capabilities.get("tracking") or {}))
                         current_target_id = tracking_state.get("latest_target_id")
                         bound_detection = _bound_detection_for_target(
                             detections=frame_detections,

@@ -64,11 +64,13 @@ cat "$STATE_ROOT/system1/snapshot.json"
 cat "$STATE_ROOT/sessions/$SESSION_ID/session.json" | python - <<'PY'
 import json,sys
 payload = json.load(sys.stdin)
-print(json.dumps(payload.get("skill_cache", {}).get("tracking", {}), ensure_ascii=False, indent=2))
+state = payload.get("state", {})
+capabilities = state.get("capabilities", {})
+print(json.dumps(capabilities.get("tracking", {}), ensure_ascii=False, indent=2))
 PY
 ```
 
-内存主要落在：`skill_cache.tracking.latest_memory`
+内存主要落在：`state.capabilities.tracking.latest_memory`
 
 ## 六、如果你要用 MP4 做输入（替代摄像头）
 

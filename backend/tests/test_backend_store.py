@@ -139,12 +139,22 @@ def test_session_payload_stays_generic(tmp_path: Path) -> None:
 
     payload = store.session_payload("sess_001")
 
+    assert "user_preferences" not in payload
+    assert "environment_map" not in payload
+    assert "runner_state" not in payload
+    assert "skill_cache" not in payload
     assert "target_description" not in payload
     assert "latest_target_id" not in payload
     assert "latest_memory" not in payload
     assert payload["latest_result"]["function"] == "inspect"
     assert "memory" not in payload["latest_result"]
     assert "recent_frames" not in payload
+    assert payload["state"] == {
+        "user_preferences": {},
+        "environment": {},
+        "runner": {},
+        "capabilities": {},
+    }
 
 
 def test_conversation_history_keeps_full_chat_log(tmp_path: Path) -> None:

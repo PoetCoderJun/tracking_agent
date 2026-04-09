@@ -62,12 +62,16 @@ class AgentSession:
         return self.payload
 
     @property
+    def state(self) -> Dict[str, Any]:
+        return dict(self.payload.get("state") or {})
+
+    @property
     def user_preferences(self) -> Dict[str, Any]:
-        return dict((self.payload.get("state") or {}).get("user_preferences", {}))
+        return dict(self.state.get("user_preferences", {}))
 
     @property
     def environment_map(self) -> Dict[str, Any]:
-        return dict((self.payload.get("state") or {}).get("environment", {}))
+        return dict(self.state.get("environment", {}))
 
     @property
     def environment(self) -> Dict[str, Any]:
@@ -82,15 +86,19 @@ class AgentSession:
 
     @property
     def runner_state(self) -> Dict[str, Any]:
-        return dict((self.payload.get("state") or {}).get("runner", {}))
+        return dict(self.state.get("runner", {}))
+
+    @property
+    def capabilities(self) -> Dict[str, Any]:
+        return dict(self.state.get("capabilities", {}))
 
     @property
     def skill_cache(self) -> Dict[str, Any]:
-        return dict((self.payload.get("state") or {}).get("capabilities", {}))
+        return self.capabilities
 
     @property
     def skills(self) -> Dict[str, Any]:
-        return self.skill_cache
+        return self.capabilities
 
     @property
     def latest_result(self) -> Dict[str, Any] | None:
