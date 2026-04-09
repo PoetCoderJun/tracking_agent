@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from backend.perception.frames import observation_recent_frames
+from backend.perception.frames import recent_frames
 from backend.runtime_session import AgentSession
 from backend.tracking.memory import (
     read_tracking_memory_snapshot,
@@ -40,7 +40,7 @@ def _tracking_frames(
     *,
     excluded_track_ids: Optional[List[int]] = None,
 ) -> List[Dict[str, Any]]:
-    return observation_recent_frames(
+    return recent_frames(
         state_root=Path(session.state_paths["state_root"]),
         excluded_track_ids=excluded_track_ids,
     )

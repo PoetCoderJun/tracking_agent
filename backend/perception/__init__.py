@@ -12,7 +12,7 @@ from backend.perception.models import (
     Observation,
 )
 from backend.perception.bundle import PerceptionBundle, RobotPerceptionBundle, build_perception_bundle
-from backend.perception.frames import observation_recent_frames, recent_frames
+from backend.perception.frames import recent_frames
 from backend.perception.recorder import PerceptionRecorder
 from backend.perception.service import LocalPerceptionService
 from backend.perception.store import PerceptionStore
@@ -61,7 +61,6 @@ __all__ = [
     "generate_session_id",
     "is_camera_source",
     "normalize_source",
-    "observation_recent_frames",
     "recent_frames",
     "parse_frame_rate",
     "probe_video_fps",

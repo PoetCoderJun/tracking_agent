@@ -18,7 +18,7 @@ if str(ROOT) not in sys.path:
 
 from backend.config import load_settings
 from backend.llm_client import call_model, parse_json_block
-from backend.perception.frames import observation_recent_frames
+from backend.perception.frames import recent_frames
 from backend.tracking.memory import (
     empty_tracking_memory,
     read_tracking_memory_snapshot,
@@ -115,7 +115,7 @@ def load_tracking_context(session_file: Path) -> Dict[str, Any]:
     excluded_track_ids = normalized_track_ids(tracking_state.get("excluded_track_ids"))
     state_root = session_file.resolve().parents[2]
     session_id = str(raw_session["session_id"])
-    frames = observation_recent_frames(
+    frames = recent_frames(
         state_root=state_root,
         excluded_track_ids=excluded_track_ids,
     )
