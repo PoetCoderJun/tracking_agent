@@ -153,13 +153,13 @@ if [[ "${START_FRONTEND}" == "1" ]]; then
   ensure_port_free "${FRONTEND_HOST}" "${FRONTEND_PORT}" "frontend"
 fi
 
-PERCEPTION_CMD=(uv run python -m scripts.run_perception
+ENVIRONMENT_CMD=(uv run python -m scripts.write_environment
   --source "${SOURCE}"
   --state-root "${STATE_ROOT}"
   --interval-seconds "1.0"
 )
 if [[ "${REALTIME_PLAYBACK}" == "1" ]]; then
-  PERCEPTION_CMD+=(--realtime-playback)
+  ENVIRONMENT_CMD+=(--realtime-playback)
 fi
 
 BACKEND_CMD=(uv run python -m viewer.stream
@@ -168,7 +168,7 @@ BACKEND_CMD=(uv run python -m viewer.stream
   --port "${BACKEND_PORT}"
 )
 
-run_component perception "${PERCEPTION_CMD[@]}"
+run_component environment "${ENVIRONMENT_CMD[@]}"
 run_component backend "${BACKEND_CMD[@]}"
 
 if [[ "${START_FRONTEND}" == "1" ]]; then
@@ -181,7 +181,8 @@ if [[ "${START_FRONTEND}" == "1" ]]; then
 fi
 
 printf '[stack] target selection is now handled by pi via project skills.\n'
-printf '[stack] stack only starts perception and viewer.\n'
+printf '[stack] environment writer captures frames, writes perception, and runs system1 inline.\n'
+printf '[stack] stack starts the environment writer and viewer.\n'
 printf '[stack] use e-agent to bootstrap the main runner session and enter pi.\n'
 printf '[stack] start robot-agent-tracking-loop separately only if you want continuous tracking.\n'
 printf '[stack] backend ws: ws://%s:%s\n' "${BACKEND_HOST}" "${BACKEND_PORT}"

@@ -14,7 +14,9 @@ def test_main_prints_help(capsys) -> None:
         run_tracking_stack.sys.argv = original_argv
 
     assert exit_code == 0
-    assert "Usage: robot-agent-tracking-stack" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Usage: robot-agent-tracking-stack" in output
+    assert "environment writer" in output
 
 
 def test_main_execs_stack_script(monkeypatch) -> None:

@@ -22,6 +22,7 @@ from backend.perception.stream import (
 from backend.perception.stream import RobotDetection
 from backend.project_paths import PROJECT_ROOT, resolve_project_path
 from backend.runtime_session import AgentSessionStore
+from backend.system1.runtime import extract_person_detections, load_yolo, results_for_video_file
 from backend.tracking.context import tracking_state_snapshot
 from backend.tracking.deterministic import (
     apply_tracking_rewrite_output,
@@ -774,8 +775,6 @@ def run_sequence_benchmark_paper_stream(
     frame_step: int,
     max_frames: int | None,
 ) -> SequenceBenchmarkResult:
-    from scripts.run_tracking_perception import _extract_person_detections, _load_yolo
-
     if frame_step <= 0:
         raise ValueError("frame_step must be positive")
     if max_frames is not None and max_frames <= 0:
@@ -783,7 +782,7 @@ def run_sequence_benchmark_paper_stream(
 
     ground_truth_by_frame = load_sequence_ground_truth(sequence.labels_path)
     first_labeled_frame = min(int(frame_index) for frame_index in ground_truth_by_frame)
-    YOLO = _load_yolo()
+    YOLO = load_yolo()
     model = YOLO(str(model_path))
     detections_by_frame: Dict[int, List[RobotDetection]] = {}
     sampled_frames_seen = 0
@@ -812,7 +811,7 @@ def run_sequence_benchmark_paper_stream(
             detections_by_frame[frame_index] = (
                 []
                 if result is None
-                else _extract_person_detections(result, person_class_id=person_class_id)
+                else extract_person_detections(result, person_class_id=person_class_id)
             )
             sampled_frames_seen += 1
             if max_frames is not None and sampled_frames_seen >= max_frames:
@@ -846,7 +845,6 @@ def run_sequence_benchmark_project_perception(
     max_frames: int | None,
 ) -> SequenceBenchmarkResult:
     from backend.perception.stream import probe_video_fps
-    from scripts.run_tracking_perception import _extract_person_detections, _load_yolo, _results_for_video_file
 
     if vid_stride <= 0:
         raise ValueError("vid_stride must be positive")
@@ -854,7 +852,7 @@ def run_sequence_benchmark_project_perception(
         raise ValueError("max_frames must be positive when provided")
 
     ground_truth_by_frame = load_sequence_ground_truth(sequence.labels_path)
-    YOLO = _load_yolo()
+    YOLO = load_yolo()
     model = YOLO(str(model_path))
     fps = probe_video_fps(sequence.video_path)
     args = SimpleNamespace(
@@ -868,7 +866,7 @@ def run_sequence_benchmark_project_perception(
 
     detections_by_frame: Dict[int, List[RobotDetection]] = {}
     processed_frame_indices: List[int] = []
-    result_stream = _results_for_video_file(
+    result_stream = results_for_video_file(
         model=model,
         video_path=sequence.video_path,
         fps=fps,
@@ -882,7 +880,7 @@ def run_sequence_benchmark_project_perception(
             detections_by_frame[frame_index] = (
                 []
                 if result is None
-                else _extract_person_detections(result, person_class_id=person_class_id)
+                else extract_person_detections(result, person_class_id=person_class_id)
             )
             processed_frame_indices.append(frame_index)
             if max_frames is not None and len(processed_frame_indices) >= max_frames:
@@ -925,8 +923,6 @@ def run_sequence_benchmark_stack_chain(
     observation_interval_seconds: float,
     benchmark_run_root: Path,
 ) -> SequenceBenchmarkResult:
-    from scripts.run_tracking_perception import _extract_person_detections, _load_yolo, _results_for_video_file
-
     if vid_stride <= 0:
         raise ValueError("vid_stride must be positive")
     if observation_interval_seconds <= 0:
@@ -946,7 +942,7 @@ def run_sequence_benchmark_stack_chain(
     sessions = AgentSessionStore(state_root=state_root, frame_buffer_size=frame_buffer_size)
 
     ground_truth_by_frame = load_sequence_ground_truth(sequence.labels_path)
-    YOLO = _load_yolo()
+    YOLO = load_yolo()
     model = YOLO(str(model_path))
     fps = probe_video_fps(sequence.video_path)
     args = SimpleNamespace(
@@ -966,7 +962,7 @@ def run_sequence_benchmark_stack_chain(
     next_video_emit_at = 0.0
     initialized = False
 
-    result_stream = _results_for_video_file(
+    result_stream = results_for_video_file(
         model=model,
         video_path=sequence.video_path,
         fps=fps,
@@ -986,7 +982,7 @@ def run_sequence_benchmark_stack_chain(
             frame_id = f"frame_{len(processed_frame_indices):06d}"
             frame_path = frames_dir / f"{frame_id}.jpg"
             save_frame_image(result.orig_img, frame_path)
-            frame_detections = _extract_person_detections(result, person_class_id=person_class_id)
+            frame_detections = extract_person_detections(result, person_class_id=person_class_id)
             event = RobotIngestEvent(
                 session_id=session_id,
                 device_id=device_id,
@@ -1103,8 +1099,6 @@ def run_sequence_benchmark_rebind_fsm(
     tracker_fps: float,
     rebind_after_missed_frames: int,
 ) -> SequenceBenchmarkResult:
-    from scripts.run_tracking_perception import _extract_person_detections, _load_yolo
-
     if tracker_fps <= 0:
         raise ValueError("tracker_fps must be positive")
     if rebind_after_missed_frames <= 0:
@@ -1125,7 +1119,7 @@ def run_sequence_benchmark_rebind_fsm(
 
     label_map = load_sequence_label_map(sequence.labels_path)
     first_visible_frame = _first_visible_frame_index(label_map)
-    YOLO = _load_yolo()
+    YOLO = load_yolo()
     model = YOLO(str(model_path))
     source_fps = probe_video_fps(sequence.video_path)
 
@@ -1165,7 +1159,7 @@ def run_sequence_benchmark_rebind_fsm(
             if result is None:
                 break
             save_frame_image(result.orig_img, frame_path)
-            frame_detections = _extract_person_detections(result, person_class_id=person_class_id)
+            frame_detections = extract_person_detections(result, person_class_id=person_class_id)
             perception_service.write_observation(
                 RobotIngestEvent(
                     session_id=session_id,

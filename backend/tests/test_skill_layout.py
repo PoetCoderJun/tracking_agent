@@ -37,7 +37,7 @@ def test_skill_package_contains_expected_files() -> None:
         BACKEND_WEB_SEARCH_PATH,
         BACKEND_FEISHU_PATH,
         BACKEND_DESCRIBE_IMAGE_PATH,
-        ROOT / "scripts" / "run_perception.py",
+        ROOT / "scripts" / "write_environment.py",
         ROOT / "scripts" / "run_tracking_perception.py",
         ROOT / "scripts" / "run_tracking_loop.py",
         ROOT / "scripts" / "run_tracking_viewer_stream.py",

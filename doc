@@ -10,15 +10,15 @@ export STATE_ROOT=./.runtime/agent-runtime
 export ARTIFACTS_ROOT=./.runtime/pi-agent
 ```
 
-## 二、启动感知（摄像头）
+## 二、启动环境写入（摄像头）
 
 ```bash
-uv run python -m scripts.run_perception \
+uv run python -m scripts.write_environment \
   --source 0 \
   --state-root "$STATE_ROOT"
 ```
 
-> 说明：perception writer 启动时会直接 reset 全局 `snapshot.json`，不需要 session 参数。
+> 说明：environment writer 启动时会直接 reset 全局 `perception/snapshot.json` 和 `system1/snapshot.json`，不需要 session 参数。
 
 如果你要加载 `.ENV` 环境变量（可选）：
 
@@ -46,13 +46,17 @@ pi --no-skills --skill ./skills/tracking --skill ./skills/describe-image --skill
 开始跟踪穿黑衣服的人
 ```
 
-## 四、查看 perception snapshot
+## 四、查看 perception / system1 snapshot
 
 ```bash
 cat "$STATE_ROOT/perception/snapshot.json"
 ```
 
 `pi` 直接读这个文件拿世界状态和最新图片路径。
+
+```bash
+cat "$STATE_ROOT/system1/snapshot.json"
+```
 
 ## 五、查看 tracking memory 是否已写入
 
@@ -69,7 +73,7 @@ PY
 ## 六、如果你要用 MP4 做输入（替代摄像头）
 
 ```bash
-uv run python -m scripts.run_perception \
+uv run python -m scripts.write_environment \
   --source "/abs/path/demo.mp4" \
   --state-root "$STATE_ROOT"
 ```

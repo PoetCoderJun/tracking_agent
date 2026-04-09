@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Iterator, Tuple
+from typing import Any, Iterator, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -25,179 +24,95 @@ from backend.perception.stream import (
     video_timestamp_seconds,
 )
 from backend.project_paths import resolve_project_path
-
-DEFAULT_CAMERA_SOURCE = "0"
+from backend.system1 import (
+    DEFAULT_PERSON_CLASS_ID,
+    DEFAULT_SYSTEM1_MODEL,
+    DEFAULT_SYSTEM1_TRACKER,
+    LocalSystem1Service,
+    System1Tracker,
+)
+from scripts.run_tracking_perception import (
+    DEFAULT_CAMERA_SOURCE,
+    _assert_camera_source,
+    _iter_frames,
+    _should_emit_event,
+    _should_emit_video_sample,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Perception writer. Captures frames from a local camera or video source, resets "
-            "global perception state on start, and writes the shared world snapshot."
+            "Environment writer workflow. Captures frames, writes perception state, "
+            "then synchronously runs system1 YOLO + ByteTrack on the same emitted frames."
         )
     )
-    parser.add_argument(
-        "--source",
-        default=DEFAULT_CAMERA_SOURCE,
-        help=(
-            "Video file path or explicit camera index such as 0. "
-            "Defaults to camera index 0."
-        ),
-    )
-    parser.add_argument(
-        "--observation-text",
-        default="",
-        help="Optional observation note stored with each sampled event.",
-    )
-    parser.add_argument(
-        "--state-root",
-        default="./.runtime/agent-runtime",
-        help="Shared state root used by the perception writer and PI reader.",
-    )
-    parser.add_argument(
-        "--vid-stride",
-        type=int,
-        default=1,
-        help="Read every Nth source frame for video files.",
-    )
+    parser.add_argument("--source", default=DEFAULT_CAMERA_SOURCE)
+    parser.add_argument("--observation-text", default="")
+    parser.add_argument("--state-root", default="./.runtime/agent-runtime")
+    parser.add_argument("--vid-stride", type=int, default=1)
     parser.add_argument("--sample-every", type=int, default=1)
-    parser.add_argument(
-        "--interval-seconds",
-        type=float,
-        default=1.0,
-        help="Minimum seconds between emitted observations.",
-    )
-    parser.add_argument(
-        "--realtime-playback",
-        action="store_true",
-        help="For video files, sleep for interval-seconds after each emitted observation.",
-    )
-    parser.add_argument(
-        "--pause-after-first-event-file",
-        default=None,
-        help="Optional sentinel file. If it exists after the first emitted event, pause until it is removed.",
-    )
+    parser.add_argument("--interval-seconds", type=float, default=1.0)
+    parser.add_argument("--realtime-playback", action="store_true")
+    parser.add_argument("--pause-after-first-event-file", default=None)
     parser.add_argument("--max-events", type=int, default=None)
+    parser.add_argument("--observation-window-seconds", type=float, default=5.0)
+    parser.add_argument("--keyframe-retention-seconds", type=float, default=10.0)
+    parser.add_argument("--system1-model", default=DEFAULT_SYSTEM1_MODEL)
+    parser.add_argument("--system1-tracker", default=DEFAULT_SYSTEM1_TRACKER)
+    parser.add_argument("--system1-device", default=None)
+    parser.add_argument("--system1-conf", type=float, default=0.25)
+    parser.add_argument("--system1-imgsz", type=int, default=None)
+    parser.add_argument("--system1-person-class-id", type=int, default=DEFAULT_PERSON_CLASS_ID)
+    parser.add_argument("--system1-result-window-seconds", type=float, default=5.0)
     parser.add_argument(
-        "--observation-window-seconds",
-        type=float,
-        default=5.0,
-        help="How much recent camera perception to keep in the persisted observation window.",
+        "--disable-system1",
+        action="store_true",
+        help="Write perception only and skip the in-process system1 inference step.",
     )
-    parser.add_argument(
-        "--keyframe-retention-seconds",
-        type=float,
-        default=10.0,
-        help="How much keyframe history to keep on disk.",
-    )
-
     return parser.parse_args()
 
 
-def _load_cv2():
-    try:
-        import cv2
-    except ImportError as exc:
-        raise RuntimeError(
-            "Missing robot-side dependencies. Install opencv-python before running the environment writer workflow."
-        ) from exc
-    return cv2
-
-
-def _probe_camera_indices(max_index: int = 5) -> list[int]:
-    cv2 = _load_cv2()
-    available: list[int] = []
-    for index in range(max_index):
-        capture = cv2.VideoCapture(index)
-        try:
-            if capture.isOpened():
-                ok, _frame = capture.read()
-                if ok:
-                    available.append(index)
-        finally:
-            capture.release()
-    return available
-
-
-def _assert_camera_source(source: int) -> None:
-    cv2 = _load_cv2()
-    capture = cv2.VideoCapture(source)
-    try:
-        if not capture.isOpened():
-            available_cameras = _probe_camera_indices()
-            raise RuntimeError(
-                "Failed to open camera source index "
-                f"{source}. On macOS this is often caused by camera permission denied or another app holding the device. "
-                f"Available readable indices from 0..4: {available_cameras}. "
-                "Try another index such as 1 or 2, or pass a file path to --source for debugging."
-            )
-
-        ready = False
-        for _ in range(5):
-            ok, frame = capture.read()
-            if ok and frame is not None:
-                ready = True
-                break
-            time.sleep(0.2)
-        if not ready:
-            raise RuntimeError(
-                "Opened camera source but failed to read a frame. "
-                "The device might be blocked by another process or not initialized yet."
-            )
-    finally:
-        capture.release()
-
-
-def _should_emit_event(
-    frame_index: int,
-    sample_every: int,
-    now_monotonic: float,
-    next_emit_at: float,
-) -> bool:
-    if frame_index % sample_every != 0:
-        return False
-    return now_monotonic >= next_emit_at
-
-
-def _should_emit_video_sample(
-    frame_index: int,
-    sample_every: int,
-    fps: float,
-    next_video_emit_at: float,
-) -> bool:
-    if frame_index % sample_every != 0:
-        return False
-    return video_timestamp_seconds(frame_index, fps) >= next_video_emit_at
-
-
-def _iter_frames(source: Any, *, vid_stride: int) -> Iterator[Tuple[int, Any]]:
-    cv2 = _load_cv2()
-    capture = cv2.VideoCapture(source)
-    if not capture.isOpened():
-        raise RuntimeError(f"Unable to open video source: {source}")
-
-    frame_index = 0
-    try:
-        while True:
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                break
-            frame_index += 1
-            if vid_stride > 1 and frame_index % vid_stride != 0:
-                continue
-            yield frame_index, frame
-    finally:
-        capture.release()
-
-
-def _prepare_perception_writer(*, perception_service: LocalPerceptionService) -> None:
+def _prepare_environment_writer(
+    *,
+    perception_service: LocalPerceptionService,
+    system1_service: Optional[LocalSystem1Service],
+    system1_tracker: Optional[System1Tracker],
+) -> None:
     perception_service.prepare(fresh_state=True)
+    if system1_service is not None:
+        system1_service.prepare(
+            fresh_state=True,
+            model_info=None if system1_tracker is None else system1_tracker.model_info(),
+        )
 
 
-async def _run_perception_writer(
+async def _write_system1_result(
+    *,
+    system1_service: Optional[LocalSystem1Service],
+    system1_tracker: Optional[System1Tracker],
+    frame_id: str,
+    timestamp_ms: int,
+    image_path: Path,
+) -> dict | None:
+    if system1_service is None or system1_tracker is None:
+        return None
+    result = await asyncio.to_thread(
+        system1_tracker.track_frame,
+        frame_id=frame_id,
+        timestamp_ms=timestamp_ms,
+        image_path=image_path,
+    )
+    snapshot = await asyncio.to_thread(system1_service.write_result, result)
+    return dict(snapshot.get("latest_frame_result") or {})
+
+
+async def _run_environment_writer(
     args: argparse.Namespace,
     *,
     perception_service: LocalPerceptionService,
+    system1_service: Optional[LocalSystem1Service],
+    system1_tracker: Optional[System1Tracker],
     frame_stream: Iterator[Tuple[int, Any]],
     video_fps: float | None,
     source_is_camera: bool,
@@ -262,21 +177,31 @@ async def _run_perception_writer(
             text=str(args.observation_text).strip(),
         )
         last_timestamp_ms = int(event.frame.timestamp_ms)
-        snapshot = await asyncio.to_thread(perception_service.write_observation, event)
-        persisted_image_path_value = str(((snapshot.get("latest_frame") or {}).get("image_path")) or "").strip()
+        perception_snapshot = await asyncio.to_thread(perception_service.write_observation, event)
+        persisted_image_path_value = str(((perception_snapshot.get("latest_frame") or {}).get("image_path")) or "").strip()
         persisted_image_path = None if not persisted_image_path_value else Path(persisted_image_path_value)
+        system1_result = await _write_system1_result(
+            system1_service=system1_service,
+            system1_tracker=system1_tracker,
+            frame_id=frame_id,
+            timestamp_ms=timestamp_ms,
+            image_path=frame_path if persisted_image_path is None else persisted_image_path,
+        )
         if persisted_image_path is not None and persisted_image_path != frame_path and frame_path.exists():
             frame_path.unlink()
 
         print(
-            json.dumps(
-                {
-                    "frame_id": frame_id,
-                    "timestamp_ms": timestamp_ms,
-                    "image_path": str(frame_path if persisted_image_path is None else persisted_image_path),
-                    "ingest_status": 200,
-                },
-                ensure_ascii=True,
+            _perception_log_line(
+                frame_id=frame_id,
+                timestamp_ms=timestamp_ms,
+                image_path=frame_path if persisted_image_path is None else persisted_image_path,
+            ),
+            flush=True,
+        )
+        print(
+            _system1_log_line(
+                frame_id=frame_id,
+                system1_result=system1_result,
             ),
             flush=True,
         )
@@ -304,7 +229,61 @@ async def _run_perception_writer(
         status="completed",
         ended_at_ms=last_timestamp_ms if last_timestamp_ms is not None else current_timestamp_ms(),
     )
+    if system1_service is not None:
+        system1_service.update_stream_status(
+            status="completed",
+            ended_at_ms=last_timestamp_ms if last_timestamp_ms is not None else current_timestamp_ms(),
+        )
     return 0
+
+
+def _build_system1_services(args: argparse.Namespace, *, state_root: Path) -> tuple[Optional[LocalSystem1Service], Optional[System1Tracker]]:
+    if args.disable_system1:
+        return None, None
+    system1_service = LocalSystem1Service(
+        state_root=state_root,
+        result_window_seconds=args.system1_result_window_seconds,
+    )
+    tracker = System1Tracker(
+        model_path=resolve_project_path(args.system1_model),
+        tracker=str(args.system1_tracker or "").strip() or None,
+        device=None if args.system1_device in (None, "") else str(args.system1_device),
+        conf=float(args.system1_conf),
+        imgsz=args.system1_imgsz,
+        person_class_id=int(args.system1_person_class_id),
+    )
+    return system1_service, tracker
+
+
+def _perception_log_line(
+    *,
+    frame_id: str,
+    timestamp_ms: int,
+    image_path: Path,
+) -> str:
+    return (
+        f"视觉感知：frame_id={frame_id}, "
+        f"timestamp_ms={int(timestamp_ms)}, "
+        f"image_path={str(image_path)}"
+    )
+
+
+def _system1_log_line(
+    *,
+    frame_id: str,
+    system1_result: dict | None,
+) -> str:
+    detections = [] if system1_result is None else list(system1_result.get("detections") or [])
+    track_ids = [
+        int(detection["track_id"])
+        for detection in detections
+        if isinstance(detection, dict) and detection.get("track_id") not in (None, "")
+    ]
+    return (
+        f"yolo+bytetrack：frame_id={frame_id}, "
+        f"detection_count={len(detections)}, "
+        f"track_ids={track_ids}"
+    )
 
 
 async def _async_main() -> int:
@@ -321,6 +300,8 @@ async def _async_main() -> int:
         raise ValueError("--observation-window-seconds must be positive")
     if args.keyframe_retention_seconds <= 0:
         raise ValueError("--keyframe-retention-seconds must be positive")
+    if args.system1_result_window_seconds <= 0:
+        raise ValueError("--system1-result-window-seconds must be positive")
 
     state_root = resolve_project_path(args.state_root)
     perception_service = LocalPerceptionService(
@@ -329,7 +310,12 @@ async def _async_main() -> int:
         save_frame_every_seconds=args.interval_seconds,
         keyframe_retention_seconds=args.keyframe_retention_seconds,
     )
-    _prepare_perception_writer(perception_service=perception_service)
+    system1_service, system1_tracker = _build_system1_services(args, state_root=state_root)
+    _prepare_environment_writer(
+        perception_service=perception_service,
+        system1_service=system1_service,
+        system1_tracker=system1_tracker,
+    )
 
     source = normalize_source(str(args.source).strip())
     if isinstance(source, str):
@@ -341,9 +327,11 @@ async def _async_main() -> int:
         _assert_camera_source(int(source))
     frame_stream = _iter_frames(source, vid_stride=args.vid_stride)
 
-    return await _run_perception_writer(
+    return await _run_environment_writer(
         args,
         perception_service=perception_service,
+        system1_service=system1_service,
+        system1_tracker=system1_tracker,
         frame_stream=frame_stream,
         video_fps=video_fps,
         source_is_camera=source_is_camera,

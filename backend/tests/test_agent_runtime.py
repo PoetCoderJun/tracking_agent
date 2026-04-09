@@ -12,6 +12,7 @@ from backend.perception import (
     RobotIngestEvent,
     build_perception_bundle,
 )
+from backend.system1 import LocalSystem1Service
 
 
 def _frame_image(path: Path) -> Path:
@@ -74,9 +75,51 @@ def test_agent_session_store_builds_perception_bundle(tmp_path: Path) -> None:
     bundle = build_perception_bundle(context)
 
     assert bundle.vision["latest_frame"]["frame_id"] == "frame_000001"
+    assert bundle.system1["latest_frame_result"] is None
+    assert bundle.system1["recent_frame_results"] == []
     assert bundle.language["latest_request_function"] is None
     assert bundle.user_preferences["language"] == "zh"
     assert bundle.environment_map["map_id"] == "lab-01"
+
+
+def test_agent_session_store_builds_system1_bundle(tmp_path: Path) -> None:
+    runtime = AgentSessionStore(tmp_path / "state")
+    perception = LocalPerceptionService(tmp_path / "state")
+    system1 = LocalSystem1Service(tmp_path / "state")
+    frame_path = _frame_image(tmp_path / "frame.jpg")
+    perception.write_observation(
+        RobotIngestEvent(
+            session_id="sess_001",
+            device_id="robot_01",
+            frame=RobotFrame(
+                frame_id="frame_000001",
+                timestamp_ms=1710000000000,
+                image_path=str(frame_path),
+            ),
+            detections=[],
+            text="继续跟踪",
+        ),
+    )
+    system1.write_result(
+        {
+            "frame_id": "frame_000001",
+            "timestamp_ms": 1710000000000,
+            "image_path": str(frame_path),
+            "detections": [
+                {
+                    "track_id": 12,
+                    "bbox": [10, 20, 30, 40],
+                    "score": 0.95,
+                    "label": "person",
+                }
+            ],
+        }
+    )
+
+    bundle = build_perception_bundle(runtime.load("sess_001", device_id="robot_01"))
+
+    assert bundle.system1["latest_frame_result"]["frame_id"] == "frame_000001"
+    assert bundle.system1["recent_frame_results"][0]["detections"][0]["track_id"] == 12
 
 
 def test_agent_session_store_observation_ingest_does_not_pollute_chat_history(tmp_path: Path) -> None:

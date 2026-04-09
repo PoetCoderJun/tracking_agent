@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STACK_SCRIPT = ROOT / "scripts" / "run_tracking_stack.sh"
 HELP_TEXT = """Usage: robot-agent-tracking-stack [options]
 
-Start the tracking stack environment (perception + backend websocket viewer only).
+Start the tracking stack environment (environment writer + backend websocket viewer).
 
 Common options:
   --source <video-or-camera>
@@ -19,7 +19,7 @@ Common options:
   --start-frontend
 
 Current recommended flow:
-  1. Start the stack without forcing target selection.
+  1. Start the stack to launch the environment writer workflow.
   2. Start the main runner with `e-agent`.
   3. Let `pi` run the conversation loop and call project skills directly.
   4. Start `robot-agent-tracking-loop` separately only if you want continuous tracking.

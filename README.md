@@ -26,7 +26,7 @@ set -a && source .ENV && set +a
 
 当前启动面分成三块：
 
-- `perception`：唯一常驻组件，持续写入最新观察。
+- `environment writer`：唯一常驻组件，持续写入 perception，并对同一帧同步写入 system1 结果。
 - `active session`：主 runner 创建并持有的会话标识。skills 和 runtime 都从这里读写 agent state，但不负责偷偷创建或切换它。
 - `pi`：聊天入口。它进入项目 skill 后，skill 再通过 `backend.cli` 访问当前 active session。
 
@@ -38,10 +38,10 @@ set -a && source .ENV && set +a
 
 这是最小聊天流程，适合只想让 `pi` 进来读当前 perception、调用 skills、手动触发 turn 的场景。
 
-1. 启动常驻 perception：
+1. 启动常驻环境写入：
 
 ```bash
-uv run robot-agent-perception-writer --source 0
+uv run robot-agent-environment-writer --source 0
 ```
 
 2. 直接启动主 runner：
@@ -75,7 +75,7 @@ uv run e-agent --fresh
 
 ## 完整 Tracking 启动
 
-如果你要 perception + websocket viewer 一起跑，直接用 stack：
+如果你要 environment writer + websocket viewer 一起跑，直接用 stack：
 
 摄像头：
 
@@ -118,10 +118,10 @@ uv run robot-agent-tracking-loop \
 
 如果你不想用 stack，也可以分开起：
 
-1. perception：
+1. environment writer：
 
 ```bash
-uv run robot-agent-perception-writer --source 0
+uv run robot-agent-environment-writer --source 0
 ```
 
 2. tracking runner：
@@ -162,6 +162,12 @@ uv run robot-agent-perception latest-frame --state-root ./.runtime/agent-runtime
 
 ```bash
 cat ./.runtime/agent-runtime/perception/snapshot.json
+```
+
+直接看全局 system1 snapshot.json：
+
+```bash
+cat ./.runtime/agent-runtime/system1/snapshot.json
 ```
 
 手动做一次确定性 tracking init：
