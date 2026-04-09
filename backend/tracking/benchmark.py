@@ -509,10 +509,6 @@ def _apply_processed_tracking_payload_without_rewrite(
     if isinstance(environment_map_patch, dict) and environment_map_patch:
         sessions.patch_environment(session_id, dict(environment_map_patch))
 
-    perception_cache_patch = pi_payload.get("perception_cache_patch")
-    if isinstance(perception_cache_patch, dict) and perception_cache_patch:
-        sessions.patch_perception(session_id, dict(perception_cache_patch))
-
     skill_state_patch = _normalized_tracking_skill_patch(pi_payload)
     if skill_state_patch:
         sessions.patch_skill_state(
@@ -1010,7 +1006,7 @@ def run_sequence_benchmark_stack_chain(
                     request_id=generate_request_id(prefix="stack_init"),
                     env_file=env_file,
                     artifacts_root=artifacts_root,
-                    apply_processed_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_without_rewrite(
+                    apply_tracking_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_without_rewrite(
                         sessions=sessions,
                         session_id=session_id,
                         pi_payload=pi_payload,
@@ -1035,7 +1031,7 @@ def run_sequence_benchmark_stack_chain(
                         env_file=env_file,
                         artifacts_root=artifacts_root,
                         excluded_track_ids=sorted(excluded_track_ids),
-                        apply_processed_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_without_rewrite(
+                        apply_tracking_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_without_rewrite(
                             sessions=sessions,
                             session_id=session_id,
                             pi_payload=pi_payload,
@@ -1205,7 +1201,7 @@ def run_sequence_benchmark_rebind_fsm(
                         request_id=generate_request_id(prefix="bench_init"),
                         env_file=env_file,
                         artifacts_root=artifacts_root,
-                        apply_processed_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_with_sync_rewrite(
+                        apply_tracking_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_with_sync_rewrite(
                             sessions=sessions,
                             session_id=session_id,
                             pi_payload=pi_payload,
@@ -1254,7 +1250,7 @@ def run_sequence_benchmark_rebind_fsm(
                         env_file=env_file,
                         artifacts_root=artifacts_root,
                         append_chat_request=False,
-                        apply_processed_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_with_sync_rewrite(
+                        apply_tracking_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_with_sync_rewrite(
                             sessions=sessions,
                             session_id=session_id,
                             pi_payload=pi_payload,
@@ -1299,7 +1295,7 @@ def run_sequence_benchmark_rebind_fsm(
                     env_file=env_file,
                     artifacts_root=artifacts_root,
                     append_chat_request=False,
-                    apply_processed_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_with_sync_rewrite(
+                    apply_tracking_payload=lambda *, session_id, pi_payload, env_file: _apply_processed_tracking_payload_with_sync_rewrite(
                         sessions=sessions,
                         session_id=session_id,
                         pi_payload=pi_payload,

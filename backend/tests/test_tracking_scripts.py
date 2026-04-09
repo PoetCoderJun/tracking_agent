@@ -10,7 +10,6 @@ from PIL import Image, ImageDraw
 from backend.runtime_session import AgentSessionStore
 from backend.config import Settings
 from backend.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
-from backend.system1 import LocalSystem1Service
 from backend.tracking.deterministic import schedule_tracking_memory_rewrite
 from backend.tracking.memory import read_tracking_memory_snapshot, write_tracking_memory_snapshot
 
@@ -89,15 +88,17 @@ def _structured_memory(summary: str) -> dict:
 
 def _memory_payload(latest_memory: object = "", latest_target_id: int | None = None) -> dict:
     return {
-        "user_preferences": {},
-        "environment_map": {},
-        "perception_cache": {},
-        "skill_cache": {
-            "tracking": {
-                "target_description": "黑衣服的人",
-                "latest_memory": latest_memory,
-                "latest_target_id": latest_target_id,
-                "latest_confirmed_frame_path": "/tmp/reference.jpg" if latest_target_id is not None else None,
+        "state": {
+            "user_preferences": {},
+            "environment": {},
+            "runner": {},
+            "capabilities": {
+                "tracking": {
+                    "target_description": "黑衣服的人",
+                    "latest_memory": latest_memory,
+                    "latest_target_id": latest_target_id,
+                    "latest_confirmed_frame_path": "/tmp/reference.jpg" if latest_target_id is not None else None,
+                }
             }
         },
     }
@@ -116,7 +117,6 @@ def _write_tracking_session(tmp_path: Path, session_state: dict) -> Path:
     session_dir.mkdir(parents=True, exist_ok=True)
 
     perception = LocalPerceptionService(state_root)
-    system1 = LocalSystem1Service(state_root)
     for frame in list(session_state.get("frames") or []):
         perception.write_observation(
             RobotIngestEvent(
@@ -131,7 +131,7 @@ def _write_tracking_session(tmp_path: Path, session_state: dict) -> Path:
                 text="frame",
             )
         )
-        system1.write_result(
+        perception.write_frame_result(
             {
                 "frame_id": str(frame["frame_id"]),
                 "timestamp_ms": int(frame["timestamp_ms"]),
@@ -144,7 +144,7 @@ def _write_tracking_session(tmp_path: Path, session_state: dict) -> Path:
     session_payload.pop("frames", None)
     session_file = session_dir / "session.json"
     session_file.write_text(json.dumps(session_payload), encoding="utf-8")
-    tracking_state = dict(((session_state.get("skill_cache") or {}).get("tracking") or {}))
+    tracking_state = dict((((session_state.get("state") or {}).get("capabilities") or {}).get("tracking") or {}))
     latest_memory = tracking_state.get("latest_memory", {})
     if latest_memory not in (None, "", {}):
         write_tracking_memory_snapshot(
@@ -216,7 +216,7 @@ def test_select_target_init_ignores_seeded_first_frame_snapshot_and_uses_latest_
             ],
         }
     ]
-    session["skill_cache"]["tracking"]["init_frame_snapshot"] = {
+    session["state"]["capabilities"]["tracking"]["init_frame_snapshot"] = {
         "frame_id": "frame_000001",
         "timestamp_ms": 1710000000000,
         "image_path": str(first_frame_path),
@@ -578,7 +578,7 @@ def test_load_tracking_context_preserves_structured_memory_object(tmp_path: Path
     frame_path = _frame_image(tmp_path / "frames" / "frame_000001.jpg")
     session_state = _session_state(frame_path, latest_memory=_structured_memory("黑色连帽外套、彩色鞋"))
     session_state["frames"][0]["detections"].append({"track_id": 21, "bbox": [14, 16, 30, 40], "score": 0.9})
-    session_state["skill_cache"]["tracking"]["excluded_track_ids"] = [21]
+    session_state["state"]["capabilities"]["tracking"]["excluded_track_ids"] = [21]
     session_file = _write_tracking_session(tmp_path, session_state)
 
     loaded = select.load_tracking_context(session_file)
@@ -1284,16 +1284,18 @@ def test_select_init_requests_clarification_when_multiple_candidates_match(tmp_p
                 ],
             }
         ],
-        "user_preferences": {},
-        "environment_map": {},
-        "perception_cache": {},
-        "skill_cache": {
-            "tracking": {
-                "target_description": "穿黑衣服的人",
-                "latest_memory": "",
-                "latest_target_id": None,
-                "latest_confirmed_frame_path": None,
-            }
+        "state": {
+            "user_preferences": {},
+            "environment": {},
+            "runner": {},
+            "capabilities": {
+                "tracking": {
+                    "target_description": "穿黑衣服的人",
+                    "latest_memory": "",
+                    "latest_target_id": None,
+                    "latest_confirmed_frame_path": None,
+                }
+            },
         },
     }
     session_file = _write_tracking_session(tmp_path, session)
@@ -1383,16 +1385,18 @@ def test_select_init_does_not_request_clarification_when_single_match(tmp_path: 
                 ],
             }
         ],
-        "user_preferences": {},
-        "environment_map": {},
-        "perception_cache": {},
-        "skill_cache": {
-            "tracking": {
-                "target_description": "穿黑衣服的人",
-                "latest_memory": "",
-                "latest_target_id": None,
-                "latest_confirmed_frame_path": None,
-            }
+        "state": {
+            "user_preferences": {},
+            "environment": {},
+            "runner": {},
+            "capabilities": {
+                "tracking": {
+                    "target_description": "穿黑衣服的人",
+                    "latest_memory": "",
+                    "latest_target_id": None,
+                    "latest_confirmed_frame_path": None,
+                }
+            },
         },
     }
     session_file = _write_tracking_session(tmp_path, session)

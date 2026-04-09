@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.runtime_apply import apply_processed_payload
+from backend.runner import apply_processed_turn
 from backend.runtime_session import AgentSessionStore
 from backend.skill_payload import processed_skill_payload, reply_session_result
 
@@ -23,13 +23,12 @@ def test_processed_skill_payload_omits_unused_optional_fields() -> None:
     assert "skill_state_patch" not in payload
     assert "user_preferences_patch" not in payload
     assert "environment_map_patch" not in payload
-    assert "perception_cache_patch" not in payload
     assert "rewrite_output" not in payload
     assert "rewrite_memory_input" not in payload
     assert "robot_response" not in payload
 
 
-def test_apply_processed_payload_returns_compact_response(tmp_path: Path) -> None:
+def test_apply_processed_turn_returns_compact_response(tmp_path: Path) -> None:
     sessions = AgentSessionStore(tmp_path / "state")
     sessions.start_fresh_session("sess_001", device_id="robot_01")
 
@@ -39,7 +38,7 @@ def test_apply_processed_payload_returns_compact_response(tmp_path: Path) -> Non
         tool="describe_image",
         tool_output={"image_path": "/tmp/frame.jpg"},
     )
-    applied = apply_processed_payload(
+    applied = apply_processed_turn(
         sessions=sessions,
         session_id="sess_001",
         pi_payload=payload,
@@ -56,12 +55,11 @@ def test_apply_processed_payload_returns_compact_response(tmp_path: Path) -> Non
     assert "skill_state_patch" not in applied
     assert "user_preferences_patch" not in applied
     assert "environment_map_patch" not in applied
-    assert "perception_cache_patch" not in applied
     assert "rewrite_output" not in applied
     assert "rewrite_memory_input" not in applied
 
 
-def test_apply_processed_payload_delegates_tracking_to_tracking_module(tmp_path: Path, monkeypatch) -> None:
+def test_apply_processed_turn_delegates_tracking_to_tracking_module(tmp_path: Path, monkeypatch) -> None:
     sessions = AgentSessionStore(tmp_path / "state")
     sessions.start_fresh_session("sess_001", device_id="robot_01")
     payload = {
@@ -86,7 +84,7 @@ def test_apply_processed_payload_delegates_tracking_to_tracking_module(tmp_path:
         fake_apply_processed_tracking_payload,
     )
 
-    applied = apply_processed_payload(
+    applied = apply_processed_turn(
         sessions=sessions,
         session_id="sess_001",
         pi_payload=payload,

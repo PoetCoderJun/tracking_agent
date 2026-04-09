@@ -12,7 +12,6 @@ from backend.perception import (
     RobotIngestEvent,
     build_perception_bundle,
 )
-from backend.system1 import LocalSystem1Service
 
 
 def _frame_image(path: Path) -> Path:
@@ -84,7 +83,6 @@ def test_agent_session_store_builds_perception_bundle(tmp_path: Path) -> None:
 def test_agent_session_store_builds_system1_bundle(tmp_path: Path) -> None:
     runtime = AgentSessionStore(tmp_path / "state")
     perception = LocalPerceptionService(tmp_path / "state")
-    system1 = LocalSystem1Service(tmp_path / "state")
     frame_path = _frame_image(tmp_path / "frame.jpg")
     perception.write_observation(
         RobotIngestEvent(
@@ -99,7 +97,7 @@ def test_agent_session_store_builds_system1_bundle(tmp_path: Path) -> None:
             text="继续跟踪",
         ),
     )
-    system1.write_result(
+    perception.write_frame_result(
         {
             "frame_id": "frame_000001",
             "timestamp_ms": 1710000000000,
@@ -178,7 +176,7 @@ def test_agent_session_store_apply_skill_result_keeps_runtime_summary_small(tmp_
         },
     )
 
-    runtime_state = context.perception["runtime"]
+    runtime_state = context.runtime_summary
     assert runtime_state["has_latest_result"] is True
     assert runtime_state["latest_behavior"] == "track"
     assert runtime_state["latest_frame_id"] == "frame_000001"

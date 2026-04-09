@@ -34,7 +34,6 @@ from backend.system1 import (
     DEFAULT_PERSON_CLASS_ID,
     DEFAULT_SYSTEM1_MODEL,
     DEFAULT_SYSTEM1_TRACKER,
-    LocalSystem1Service,
     System1Tracker,
 )
 
@@ -81,12 +80,12 @@ def parse_args() -> argparse.Namespace:
 def _prepare_environment_writer(
     *,
     perception_service: LocalPerceptionService,
-    system1_service: Optional[LocalSystem1Service],
+    system1_service: Optional[LocalPerceptionService],
     system1_tracker: Optional[System1Tracker],
 ) -> None:
     perception_service.prepare(fresh_state=True)
     if system1_service is not None:
-        system1_service.prepare(
+        system1_service.prepare_system1(
             fresh_state=True,
             model_info=None if system1_tracker is None else system1_tracker.model_info(),
         )
@@ -94,7 +93,7 @@ def _prepare_environment_writer(
 
 async def _write_system1_result(
     *,
-    system1_service: Optional[LocalSystem1Service],
+    system1_service: Optional[LocalPerceptionService],
     system1_tracker: Optional[System1Tracker],
     frame_id: str,
     timestamp_ms: int,
@@ -108,7 +107,7 @@ async def _write_system1_result(
         timestamp_ms=timestamp_ms,
         image_path=image_path,
     )
-    snapshot = await asyncio.to_thread(system1_service.write_result, result)
+    snapshot = await asyncio.to_thread(system1_service.write_frame_result, result)
     return dict(snapshot.get("latest_frame_result") or {})
 
 
@@ -116,7 +115,7 @@ async def _run_environment_writer(
     args: argparse.Namespace,
     *,
     perception_service: LocalPerceptionService,
-    system1_service: Optional[LocalSystem1Service],
+    system1_service: Optional[LocalPerceptionService],
     system1_tracker: Optional[System1Tracker],
     frame_stream: Iterator[Tuple[int, Any]],
     video_fps: float | None,
@@ -251,10 +250,10 @@ async def _run_environment_writer(
     return 0
 
 
-def _build_system1_services(args: argparse.Namespace, *, state_root: Path) -> tuple[Optional[LocalSystem1Service], Optional[System1Tracker]]:
+def _build_system1_services(args: argparse.Namespace, *, state_root: Path) -> tuple[Optional[LocalPerceptionService], Optional[System1Tracker]]:
     if args.disable_system1:
         return None, None
-    system1_service = LocalSystem1Service(
+    system1_service = LocalPerceptionService(
         state_root=state_root,
         result_window_seconds=args.system1_result_window_seconds,
     )
@@ -321,6 +320,7 @@ async def _async_main() -> int:
     perception_service = LocalPerceptionService(
         state_root=state_root,
         observation_window_seconds=args.observation_window_seconds,
+        result_window_seconds=args.system1_result_window_seconds,
         save_frame_every_seconds=args.interval_seconds,
         keyframe_retention_seconds=args.keyframe_retention_seconds,
     )

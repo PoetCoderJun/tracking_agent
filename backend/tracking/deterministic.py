@@ -189,10 +189,6 @@ def apply_processed_tracking_payload(
     if environment_map_patch:
         sessions.patch_environment(session_id, environment_map_patch)
 
-    perception_cache_patch = _as_optional_dict(pi_payload.get("perception_cache_patch"), "perception_cache_patch")
-    if perception_cache_patch:
-        sessions.patch_perception(session_id, perception_cache_patch)
-
     skill_state_patch = _tracking_skill_state_patch(pi_payload)
     if skill_state_patch:
         sessions.patch_skill_state(
@@ -232,7 +228,6 @@ def apply_processed_tracking_payload(
         "skill_state_patch": skill_state_patch,
         "user_preferences_patch": user_preferences_patch,
         "environment_map_patch": environment_map_patch,
-        "perception_cache_patch": perception_cache_patch,
         "robot_response": robot_response or session_result.get("robot_response"),
         "tool": pi_payload.get("tool"),
         "tool_output": tool_output,
@@ -508,7 +503,6 @@ def build_tracking_wait_payload(
         "skill_state_patch": {"pending_question": None},
         "user_preferences_patch": None,
         "environment_map_patch": None,
-        "perception_cache_patch": None,
         "robot_response": {"action": "wait", "text": text},
         "tool": "track",
         "tool_output": {"behavior": "track", "decision": "wait", "text": text, "reason": reason},
@@ -572,7 +566,7 @@ def process_tracking_init_direct(
     request_id: str,
     env_file: Path,
     artifacts_root: Path,
-    apply_processed_payload: Callable[..., Dict[str, Any]] | None = None,
+    apply_tracking_payload: Callable[..., Dict[str, Any]] | None = None,
     acquire_turn: bool = True,
     turn_owner_id: str | None = None,
     wait_for_turn: bool = True,
@@ -603,7 +597,7 @@ def process_tracking_init_direct(
             request_id=request_id,
         )
         session = sessions.load(session_id, device_id=device_id)
-        processed_payload = apply_processed_payload or (
+        processed_payload = apply_tracking_payload or (
             lambda *, session_id, pi_payload, env_file: apply_processed_tracking_payload(
                 sessions=sessions,
                 session_id=session_id,
@@ -642,7 +636,6 @@ def process_tracking_init_direct(
                     "skill_state_patch": {"pending_question": clarification},
                     "user_preferences_patch": None,
                     "environment_map_patch": None,
-                    "perception_cache_patch": None,
                     "robot_response": {
                         "action": "ask",
                         "question": clarification,
@@ -678,7 +671,7 @@ def process_tracking_request_direct(
     artifacts_root: Path,
     excluded_track_ids: list[int] | None = None,
     append_chat_request: bool = True,
-    apply_processed_payload: Callable[..., Dict[str, Any]] | None = None,
+    apply_tracking_payload: Callable[..., Dict[str, Any]] | None = None,
     acquire_turn: bool = True,
     turn_owner_id: str | None = None,
     wait_for_turn: bool = True,
@@ -710,7 +703,7 @@ def process_tracking_request_direct(
                 request_id=request_id,
             )
         session = sessions.load(session_id, device_id=device_id)
-        processed_payload = apply_processed_payload or (
+        processed_payload = apply_tracking_payload or (
             lambda *, session_id, pi_payload, env_file: apply_processed_tracking_payload(
                 sessions=sessions,
                 session_id=session_id,

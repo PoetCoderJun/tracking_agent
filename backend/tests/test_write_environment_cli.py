@@ -7,7 +7,6 @@ from PIL import Image
 import pytest
 
 from backend.perception import LocalPerceptionService
-from backend.system1 import LocalSystem1Service
 from scripts.write_environment import (
     DEFAULT_CAMERA_SOURCE,
     DEFAULT_SYSTEM1_MODEL,
@@ -70,7 +69,7 @@ def test_parse_args_defaults_environment_runtime(monkeypatch) -> None:
 def test_prepare_environment_writer_resets_perception_and_system1(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     perception = LocalPerceptionService(state_root)
-    system1 = LocalSystem1Service(state_root)
+    system1 = LocalPerceptionService(state_root)
     tracker = _FakeTracker()
 
     _prepare_environment_writer(
@@ -86,7 +85,7 @@ def test_prepare_environment_writer_resets_perception_and_system1(tmp_path: Path
 def test_run_environment_writer_writes_perception_and_system1(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     perception = LocalPerceptionService(state_root)
-    system1 = LocalSystem1Service(state_root)
+    system1 = LocalPerceptionService(state_root)
     tracker = _FakeTracker()
     frame_path = _frame_image(tmp_path / "input.jpg")
 

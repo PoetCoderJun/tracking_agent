@@ -63,31 +63,30 @@ class AgentSession:
 
     @property
     def user_preferences(self) -> Dict[str, Any]:
-        return dict(self.payload.get("user_preferences", {}))
+        return dict((self.payload.get("state") or {}).get("user_preferences", {}))
 
     @property
     def environment_map(self) -> Dict[str, Any]:
-        return dict(self.payload.get("environment_map", {}))
+        return dict((self.payload.get("state") or {}).get("environment", {}))
 
     @property
     def environment(self) -> Dict[str, Any]:
         return self.environment_map
 
     @property
-    def perception_cache(self) -> Dict[str, Any]:
-        return dict(self.payload.get("perception_cache", {}))
-
-    @property
     def perception(self) -> Dict[str, Any]:
-        return self.perception_cache
+        return {
+            "language": _latest_language_snapshot(self.payload),
+            "runtime": _runtime_result_snapshot(self.payload),
+        }
 
     @property
     def runner_state(self) -> Dict[str, Any]:
-        return dict(self.payload.get("runner_state", {}))
+        return dict((self.payload.get("state") or {}).get("runner", {}))
 
     @property
     def skill_cache(self) -> Dict[str, Any]:
-        return dict(self.payload.get("skill_cache", {}))
+        return dict((self.payload.get("state") or {}).get("capabilities", {}))
 
     @property
     def skills(self) -> Dict[str, Any]:
@@ -101,6 +100,16 @@ class AgentSession:
     @property
     def conversation_history(self) -> List[Dict[str, Any]]:
         return list(self.payload.get("conversation_history", []))
+
+    @property
+    def runtime_summary(self) -> Dict[str, Any]:
+        return _runtime_result_snapshot(self.payload)
+
+    @property
+    def perception_snapshot(self) -> Dict[str, Any]:
+        from backend.perception.service import LocalPerceptionService
+
+        return LocalPerceptionService(Path(self.state_paths["state_root"])).read_snapshot()
 
 class AgentSessionStore:
     def __init__(self, state_root: Path):
@@ -147,16 +156,6 @@ class AgentSessionStore:
             text=text,
             request_id=request_id,
         )
-        self.patch_perception(
-            session_id,
-            {
-                "language": {
-                    "latest_text": text,
-                    "latest_function": "chat",
-                    "latest_request_id": request_id,
-                }
-            },
-        )
         return self.load(session_id, device_id=device_id)
 
     def apply_skill_result(
@@ -170,14 +169,6 @@ class AgentSessionStore:
             session_id,
             result,
             session_payload=None if base_session is None else base_session.session,
-        )
-        session = self.load(session_id)
-        self.patch_perception(
-            session_id,
-            {
-                "runtime": _runtime_result_snapshot(session.session),
-                "language": _latest_language_snapshot(session.session),
-            },
         )
         return self.load(session_id)
 
@@ -195,18 +186,10 @@ class AgentSessionStore:
             expected_request_id=expected_request_id,
             expected_frame_id=expected_frame_id,
         )
-        self.patch_perception(
-            session_id,
-            {"runtime": _runtime_result_snapshot(self.load(session_id).session)},
-        )
         return self.load(session_id)
 
     def clear_turn_state(self, session_id: str) -> AgentSession:
         self._store.reset_session_context(session_id)
-        self.patch_perception(
-            session_id,
-            {"runtime": _runtime_result_snapshot(self.load(session_id).session)},
-        )
         return self.load(session_id)
 
     def patch_user_preferences(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
@@ -217,11 +200,6 @@ class AgentSessionStore:
     def patch_environment(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
         self._ensure_session(session_id)
         self._store.patch_agent_state(session_id, environment_map=patch)
-        return self.load(session_id)
-
-    def patch_perception(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
-        self._ensure_session(session_id)
-        self._store.patch_agent_state(session_id, perception_cache=patch)
         return self.load(session_id)
 
     def patch_runner_state(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:

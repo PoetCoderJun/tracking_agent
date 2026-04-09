@@ -83,9 +83,82 @@ def _merge_nested(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]
     return merged
 
 
+def _empty_state() -> Dict[str, Any]:
+    return {
+        "user_preferences": {},
+        "environment": {},
+        "runner": {},
+        "capabilities": {},
+    }
+
+
+def _normalized_state(payload: Dict[str, Any]) -> Dict[str, Any]:
+    state = _empty_state()
+    raw_state = payload.get("state")
+    if isinstance(raw_state, dict):
+        state["user_preferences"] = _normalized_section(raw_state.get("user_preferences"))
+        state["environment"] = _normalized_section(raw_state.get("environment"))
+        state["runner"] = _normalized_section(raw_state.get("runner"))
+        state["capabilities"] = _normalized_section(raw_state.get("capabilities"))
+        return state
+    state["user_preferences"] = _normalized_section(payload.get("user_preferences"))
+    state["environment"] = _normalized_section(payload.get("environment_map"))
+    state["runner"] = _normalized_section(payload.get("runner_state"))
+    capabilities = _normalized_section(payload.get("skill_cache"))
+    if not capabilities:
+        capabilities = _normalized_section(payload.get("capabilities"))
+    state["capabilities"] = capabilities
+    return state
+
+
+def _state_with_updates(
+    state: Dict[str, Any],
+    *,
+    user_preferences: Optional[Dict[str, Any]] = None,
+    environment_map: Optional[Dict[str, Any]] = None,
+    runner_state: Optional[Dict[str, Any]] = None,
+    skill_cache: Optional[Dict[str, Any]] = None,
+    replace: bool = False,
+) -> Dict[str, Any]:
+    base = _normalized_state({"state": state})
+    updated = _empty_state() if replace else base
+    if user_preferences is None:
+        updated["user_preferences"] = {} if replace else base["user_preferences"]
+    else:
+        normalized = _normalized_section(user_preferences)
+        updated["user_preferences"] = normalized if replace else _merge_nested(base["user_preferences"], normalized)
+    if environment_map is None:
+        updated["environment"] = {} if replace else base["environment"]
+    else:
+        normalized = _normalized_section(environment_map)
+        updated["environment"] = normalized if replace else _merge_nested(base["environment"], normalized)
+    if runner_state is None:
+        updated["runner"] = {} if replace else base["runner"]
+    else:
+        normalized = _normalized_section(runner_state)
+        updated["runner"] = normalized if replace else _merge_nested(base["runner"], normalized)
+    if skill_cache is None:
+        updated["capabilities"] = {} if replace else base["capabilities"]
+    else:
+        normalized = _normalized_section(skill_cache)
+        updated["capabilities"] = normalized if replace else _merge_nested(base["capabilities"], normalized)
+    return updated
+
+
 def _session_payload_dict(session: "BackendSession") -> Dict[str, Any]:
+    payload = _session_storage_dict(session)
+    payload["user_preferences"] = _copy_jsonish(session.user_preferences)
+    payload["environment_map"] = _copy_jsonish(session.environment_map)
+    payload["runner_state"] = _copy_jsonish(session.runner_state)
+    payload["skill_cache"] = _copy_jsonish(session.skill_cache)
+    return payload
+
+
+def _session_storage_dict(session: "BackendSession") -> Dict[str, Any]:
     payload = asdict(session)
     payload.pop("recent_frames", None)
+    payload.pop("state", None)
+    payload["state"] = _copy_jsonish(session.state)
     return payload
 
 
@@ -106,13 +179,25 @@ class BackendSession:
     latest_result: Optional[Dict[str, Any]]
     result_history: List[Dict[str, Any]]
     conversation_history: List[Dict[str, str]]
-    user_preferences: Dict[str, Any]
-    environment_map: Dict[str, Any]
-    perception_cache: Dict[str, Any]
-    runner_state: Dict[str, Any]
-    skill_cache: Dict[str, Any]
+    state: Dict[str, Any]
     created_at: str
     updated_at: str
+
+    @property
+    def user_preferences(self) -> Dict[str, Any]:
+        return _normalized_section(self.state.get("user_preferences"))
+
+    @property
+    def environment_map(self) -> Dict[str, Any]:
+        return _normalized_section(self.state.get("environment"))
+
+    @property
+    def runner_state(self) -> Dict[str, Any]:
+        return _normalized_section(self.state.get("runner"))
+
+    @property
+    def skill_cache(self) -> Dict[str, Any]:
+        return _normalized_section(self.state.get("capabilities"))
 
 
 class BackendStore:
@@ -165,11 +250,7 @@ class BackendStore:
                 }
                 for entry in payload.get("conversation_history", [])
             ],
-            user_preferences=_normalized_section(payload.get("user_preferences")),
-            environment_map=_normalized_section(payload.get("environment_map")),
-            perception_cache=_normalized_section(payload.get("perception_cache")),
-            runner_state=_normalized_section(payload.get("runner_state")),
-            skill_cache=_normalized_section(payload.get("skill_cache")),
+            state=_normalized_state(payload),
             created_at=str(payload["created_at"]),
             updated_at=str(payload["updated_at"]),
         )
@@ -193,11 +274,7 @@ class BackendStore:
                 latest_result=None,
                 result_history=[],
                 conversation_history=[],
-                user_preferences={},
-                environment_map={},
-                perception_cache={},
-                runner_state={},
-                skill_cache={},
+                state=_empty_state(),
                 created_at=now,
                 updated_at=now,
             )
@@ -222,11 +299,7 @@ class BackendStore:
                 latest_result=None,
                 result_history=[],
                 conversation_history=[],
-                user_preferences={},
-                environment_map={},
-                perception_cache={},
-                runner_state={},
-                skill_cache={},
+                state=_empty_state(),
                 created_at=now,
                 updated_at=now,
             )
@@ -299,11 +372,7 @@ class BackendStore:
                     if record_conversation
                     else list(session.conversation_history)
                 ),
-                user_preferences=session.user_preferences,
-                environment_map=session.environment_map,
-                perception_cache=session.perception_cache,
-                runner_state=session.runner_state,
-                skill_cache=session.skill_cache,
+                state=_copy_jsonish(session.state),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
@@ -335,11 +404,7 @@ class BackendStore:
                     role="user",
                     text=cleaned_text,
                 ),
-                user_preferences=session.user_preferences,
-                environment_map=session.environment_map,
-                perception_cache=session.perception_cache,
-                runner_state=session.runner_state,
-                skill_cache=session.skill_cache,
+                state=_copy_jsonish(session.state),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
@@ -410,11 +475,7 @@ class BackendStore:
                 latest_result=latest_result,
                 result_history=result_history,
                 conversation_history=conversation_history,
-                user_preferences=session.user_preferences,
-                environment_map=session.environment_map,
-                perception_cache=session.perception_cache,
-                runner_state=session.runner_state,
-                skill_cache=session.skill_cache,
+                state=_copy_jsonish(session.state),
                 created_at=session.created_at,
                 updated_at=updated_at,
             )
@@ -475,11 +536,7 @@ class BackendStore:
                 latest_result=updated_latest_result,
                 result_history=updated_history,
                 conversation_history=session.conversation_history,
-                user_preferences=session.user_preferences,
-                environment_map=session.environment_map,
-                perception_cache=session.perception_cache,
-                runner_state=session.runner_state,
-                skill_cache=session.skill_cache,
+                state=_copy_jsonish(session.state),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
@@ -493,7 +550,6 @@ class BackendStore:
         device_id: str = "",
         user_preferences: Optional[Dict[str, Any]] = None,
         environment_map: Optional[Dict[str, Any]] = None,
-        perception_cache: Optional[Dict[str, Any]] = None,
         runner_state: Optional[Dict[str, Any]] = None,
         skill_cache: Optional[Dict[str, Any]] = None,
     ) -> BackendSession:
@@ -507,30 +563,12 @@ class BackendStore:
                 latest_result=session.latest_result,
                 result_history=session.result_history,
                 conversation_history=session.conversation_history,
-                user_preferences=(
-                    session.user_preferences
-                    if user_preferences is None
-                    else _merge_nested(session.user_preferences, _normalized_section(user_preferences))
-                ),
-                environment_map=(
-                    session.environment_map
-                    if environment_map is None
-                    else _merge_nested(session.environment_map, _normalized_section(environment_map))
-                ),
-                perception_cache=(
-                    session.perception_cache
-                    if perception_cache is None
-                    else _merge_nested(session.perception_cache, _normalized_section(perception_cache))
-                ),
-                runner_state=(
-                    session.runner_state
-                    if runner_state is None
-                    else _merge_nested(session.runner_state, _normalized_section(runner_state))
-                ),
-                skill_cache=(
-                    session.skill_cache
-                    if skill_cache is None
-                    else _merge_nested(session.skill_cache, _normalized_section(skill_cache))
+                state=_state_with_updates(
+                    session.state,
+                    user_preferences=user_preferences,
+                    environment_map=environment_map,
+                    runner_state=runner_state,
+                    skill_cache=skill_cache,
                 ),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
@@ -545,7 +583,6 @@ class BackendStore:
         device_id: str = "",
         user_preferences: Optional[Dict[str, Any]] = None,
         environment_map: Optional[Dict[str, Any]] = None,
-        perception_cache: Optional[Dict[str, Any]] = None,
         runner_state: Optional[Dict[str, Any]] = None,
         skill_cache: Optional[Dict[str, Any]] = None,
     ) -> BackendSession:
@@ -559,17 +596,14 @@ class BackendStore:
                 latest_result=session.latest_result,
                 result_history=session.result_history,
                 conversation_history=session.conversation_history,
-                user_preferences=_normalized_section(
-                    session.user_preferences if user_preferences is None else user_preferences
+                state=_state_with_updates(
+                    session.state,
+                    user_preferences=user_preferences,
+                    environment_map=environment_map,
+                    runner_state=runner_state,
+                    skill_cache=skill_cache,
+                    replace=True,
                 ),
-                environment_map=_normalized_section(
-                    session.environment_map if environment_map is None else environment_map
-                ),
-                perception_cache=_normalized_section(
-                    session.perception_cache if perception_cache is None else perception_cache
-                ),
-                runner_state=_normalized_section(session.runner_state if runner_state is None else runner_state),
-                skill_cache=_normalized_section(session.skill_cache if skill_cache is None else skill_cache),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
@@ -582,7 +616,6 @@ class BackendStore:
             device_id=device_id,
             user_preferences={},
             environment_map={},
-            perception_cache={},
             runner_state={},
             skill_cache={},
         )
@@ -601,11 +634,7 @@ class BackendStore:
                 latest_result=latest_result,
                 result_history=[],
                 conversation_history=session.conversation_history,
-                user_preferences=session.user_preferences,
-                environment_map=session.environment_map,
-                perception_cache=session.perception_cache,
-                runner_state=session.runner_state,
-                skill_cache=session.skill_cache,
+                state=_copy_jsonish(session.state),
                 created_at=session.created_at,
                 updated_at=updated_at,
             )
@@ -662,11 +691,7 @@ class BackendStore:
                 latest_result=session.latest_result,
                 result_history=session.result_history,
                 conversation_history=session.conversation_history,
-                user_preferences=session.user_preferences,
-                environment_map=session.environment_map,
-                perception_cache=session.perception_cache,
-                runner_state=updated_runner_state,
-                skill_cache=session.skill_cache,
+                state=_state_with_updates(session.state, runner_state=updated_runner_state),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
@@ -709,11 +734,7 @@ class BackendStore:
                 latest_result=session.latest_result,
                 result_history=session.result_history,
                 conversation_history=session.conversation_history,
-                user_preferences=session.user_preferences,
-                environment_map=session.environment_map,
-                perception_cache=session.perception_cache,
-                runner_state=updated_runner_state,
-                skill_cache=session.skill_cache,
+                state=_state_with_updates(session.state, runner_state=updated_runner_state),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
@@ -748,7 +769,7 @@ class BackendStore:
             session_path = self.session_path(session.session_id)
             tmp_path = session_path.with_suffix(".json.tmp")
             tmp_path.write_text(
-                json.dumps(_session_payload_dict(session), indent=2, ensure_ascii=True),
+                json.dumps(_session_storage_dict(session), indent=2, ensure_ascii=True),
                 encoding="utf-8",
             )
             tmp_path.replace(session_path)

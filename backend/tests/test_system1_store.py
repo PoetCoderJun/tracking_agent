@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.system1 import LocalSystem1Service
+from backend.perception import LocalPerceptionService
 
 
 def _frame_result(*, frame_id: str, timestamp_ms: int, image_path: Path, track_id: int | None) -> dict:
@@ -22,12 +22,12 @@ def _frame_result(*, frame_id: str, timestamp_ms: int, image_path: Path, track_i
 
 
 def test_system1_service_keeps_recent_window_only(tmp_path: Path) -> None:
-    service = LocalSystem1Service(tmp_path / "state", result_window_seconds=2.0)
+    service = LocalPerceptionService(tmp_path / "state", result_window_seconds=2.0)
     frame_path = tmp_path / "frame.jpg"
 
-    service.write_result(_frame_result(frame_id="frame_001", timestamp_ms=1000, image_path=frame_path, track_id=1))
-    service.write_result(_frame_result(frame_id="frame_002", timestamp_ms=2500, image_path=frame_path, track_id=2))
-    service.write_result(_frame_result(frame_id="frame_003", timestamp_ms=4100, image_path=frame_path, track_id=3))
+    service.write_frame_result(_frame_result(frame_id="frame_001", timestamp_ms=1000, image_path=frame_path, track_id=1))
+    service.write_frame_result(_frame_result(frame_id="frame_002", timestamp_ms=2500, image_path=frame_path, track_id=2))
+    service.write_frame_result(_frame_result(frame_id="frame_003", timestamp_ms=4100, image_path=frame_path, track_id=3))
 
     snapshot = service.read_snapshot()
 
@@ -36,9 +36,9 @@ def test_system1_service_keeps_recent_window_only(tmp_path: Path) -> None:
 
 
 def test_system1_service_updates_model_and_stream_status(tmp_path: Path) -> None:
-    service = LocalSystem1Service(tmp_path / "state")
+    service = LocalPerceptionService(tmp_path / "state")
 
-    service.prepare(
+    service.prepare_system1(
         fresh_state=True,
         model_info={"model_path": "/tmp/yolov8n.pt", "tracker": "bytetrack.yaml"},
     )
@@ -50,11 +50,11 @@ def test_system1_service_updates_model_and_stream_status(tmp_path: Path) -> None
 
 
 def test_system1_service_deduplicates_frame_ids(tmp_path: Path) -> None:
-    service = LocalSystem1Service(tmp_path / "state")
+    service = LocalPerceptionService(tmp_path / "state")
     frame_path = tmp_path / "frame.jpg"
 
-    service.write_result(_frame_result(frame_id="frame_001", timestamp_ms=1000, image_path=frame_path, track_id=1))
-    service.write_result(_frame_result(frame_id="frame_001", timestamp_ms=1000, image_path=frame_path, track_id=7))
+    service.write_frame_result(_frame_result(frame_id="frame_001", timestamp_ms=1000, image_path=frame_path, track_id=1))
+    service.write_frame_result(_frame_result(frame_id="frame_001", timestamp_ms=1000, image_path=frame_path, track_id=7))
 
     recent = service.recent_frame_results()
     assert len(recent) == 1

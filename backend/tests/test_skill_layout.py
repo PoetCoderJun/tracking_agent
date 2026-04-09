@@ -8,11 +8,13 @@ BACKEND_TRACKING_ROOT = ROOT / "backend" / "tracking"
 BACKEND_WEB_SEARCH_PATH = ROOT / "backend" / "web_search.py"
 BACKEND_FEISHU_PATH = ROOT / "backend" / "feishu.py"
 BACKEND_DESCRIBE_IMAGE_PATH = ROOT / "backend" / "describe_image.py"
+BACKEND_TTS_PATH = ROOT / "backend" / "tts.py"
 RUNTIME_SESSION_PATH = ROOT / "backend" / "runtime_session.py"
 SKILL_ROOT = ROOT / "skills" / "tracking"
 WEB_SEARCH_SKILL_ROOT = ROOT / "skills" / "web-search"
 FEISHU_SKILL_ROOT = ROOT / "skills" / "feishu"
 DESCRIBE_IMAGE_SKILL_ROOT = ROOT / "skills" / "describe-image"
+TTS_SKILL_ROOT = ROOT / "skills" / "tts"
 CLI_PATH = ROOT / "backend" / "cli.py"
 TRACKING_VIEWER_ROOT = ROOT / "viewer"
 
@@ -36,6 +38,7 @@ def test_skill_package_contains_expected_files() -> None:
         BACKEND_WEB_SEARCH_PATH,
         BACKEND_FEISHU_PATH,
         BACKEND_DESCRIBE_IMAGE_PATH,
+        BACKEND_TTS_PATH,
         ROOT / "scripts" / "write_environment.py",
         ROOT / "scripts" / "run_tracking_perception.py",
         ROOT / "scripts" / "run_tracking_stack.sh",
@@ -55,6 +58,8 @@ def test_external_skill_wrappers_are_installed() -> None:
         FEISHU_SKILL_ROOT / "scripts" / "notify_turn.py",
         DESCRIBE_IMAGE_SKILL_ROOT / "SKILL.md",
         DESCRIBE_IMAGE_SKILL_ROOT / "scripts" / "describe_turn.py",
+        TTS_SKILL_ROOT / "SKILL.md",
+        TTS_SKILL_ROOT / "scripts" / "speak_turn.py",
     ]
     for path in expected_paths:
         assert path.exists(), f"Missing expected external skill artifact: {path}"
@@ -92,6 +97,7 @@ def test_web_search_skill_contract_is_pi_native() -> None:
     assert "route_context" not in skill
     assert "--session-id <session-id>" in skill
     assert "python ./skills/web-search/scripts/search_turn.py" in skill
+    assert "ROBOT_AGENT_STATE_ROOT" in skill
     assert "backend" in skill
 
 
@@ -101,6 +107,7 @@ def test_feishu_skill_contract_is_pi_native() -> None:
     assert "route_context" not in skill
     assert "--session-id <session-id>" in skill
     assert "python -m skills.feishu.scripts.notify_turn" in skill
+    assert "ROBOT_AGENT_STATE_ROOT" in skill
     assert "backend" in skill
 
 
@@ -108,20 +115,32 @@ def test_describe_image_skill_contract_is_pi_native() -> None:
     skill = (DESCRIBE_IMAGE_SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     assert "turn_context.json" not in skill
     assert "route_context" not in skill
-    assert "./.runtime/agent-runtime/perception/snapshot.json" in skill
+    assert "ROBOT_AGENT_STATE_ROOT/perception/snapshot.json" in skill
     assert "latest_frame.image_path" in skill
     assert "answer the user naturally" in skill
     assert "Do not call `describe_turn.py`" in skill
+
+
+def test_tts_skill_contract_is_pi_native() -> None:
+    skill = (TTS_SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+    assert "turn_context.json" not in skill
+    assert "route_context" not in skill
+    assert "--session-id <session-id>" in skill
+    assert "python -m skills.tts.scripts.speak_turn" in skill
+    assert "ROBOT_AGENT_STATE_ROOT" in skill
+    assert "backend" in skill
 
 
 def test_external_skill_scripts_are_thin_backend_adapters() -> None:
     web_search = (WEB_SEARCH_SKILL_ROOT / "scripts" / "search_turn.py").read_text(encoding="utf-8")
     feishu = (FEISHU_SKILL_ROOT / "scripts" / "notify_turn.py").read_text(encoding="utf-8")
     describe_image = (DESCRIBE_IMAGE_SKILL_ROOT / "scripts" / "describe_turn.py").read_text(encoding="utf-8")
+    tts = (TTS_SKILL_ROOT / "scripts" / "speak_turn.py").read_text(encoding="utf-8")
 
     assert "run_web_search_turn" in web_search
     assert "run_notify_turn" in feishu
     assert "run_describe_turn" in describe_image
+    assert "run_tts_turn" in tts
 
     assert "processed_skill_payload" not in web_search
     assert "apply_processed_payload" not in web_search
@@ -129,3 +148,5 @@ def test_external_skill_scripts_are_thin_backend_adapters() -> None:
     assert "apply_processed_payload" not in feishu
     assert "processed_skill_payload" not in describe_image
     assert "apply_processed_payload" not in describe_image
+    assert "processed_skill_payload" not in tts
+    assert "apply_processed_payload" not in tts

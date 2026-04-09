@@ -5,7 +5,6 @@ from pathlib import Path
 from backend.perception.service import LocalPerceptionService
 from backend.perception.stream import RobotDetection, RobotFrame, RobotIngestEvent
 from backend.runtime_session import AgentSessionStore
-from backend.system1 import LocalSystem1Service
 from backend.tracking.context import TRACKING_LIFECYCLE_BOUND, TRACKING_LIFECYCLE_INACTIVE
 from backend.tracking.loop import supervisor_tracking_step
 
@@ -30,7 +29,7 @@ def _write_perception_frame(
             text="frame",
         )
     )
-    LocalSystem1Service(state_root).write_result(
+    LocalPerceptionService(state_root).write_frame_result(
         {
             "frame_id": frame_id,
             "timestamp_ms": 1710000000000,
@@ -159,6 +158,6 @@ def test_supervisor_step_dispatches_tracking_and_clears_lease(tmp_path: Path, mo
     runner_state = sessions.load("sess_001").runner_state
     assert result["status"] == "tracked"
     assert tracking_state["lifecycle_status"] == TRACKING_LIFECYCLE_BOUND
-    assert tracking_state["last_trigger"] == "missing"
+    assert tracking_state["last_trigger"] == "cadence"
     assert tracking_state["last_completed_frame_id"] == "frame_000010"
     assert runner_state["turn_in_flight"] is False

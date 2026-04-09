@@ -5,7 +5,6 @@ from pathlib import Path
 from PIL import Image
 
 from backend.runtime_session import AgentSessionStore
-from backend.system1 import LocalSystem1Service
 from backend.tracking.context import build_tracking_context
 from backend.perception import (
     CAMERA_SENSOR_NAME,
@@ -221,7 +220,7 @@ def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
-    system1 = LocalSystem1Service(state_root)
+    system1 = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
     runtime.patch_skill_state(
         "sess_001",
@@ -237,7 +236,7 @@ def test_tracking_context_helpers_match_existing_payload_shape(tmp_path: Path) -
             text="跟踪穿黑衣服的人",
         ),
     )
-    system1.write_result(
+    system1.write_frame_result(
         {
             "frame_id": "frame_000001",
             "timestamp_ms": 1710000000000,
@@ -259,7 +258,7 @@ def test_tracking_context_ignores_session_recent_frames_and_uses_environment_tru
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
-    system1 = LocalSystem1Service(state_root)
+    system1 = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
 
     perception.write_observation(
@@ -271,7 +270,7 @@ def test_tracking_context_ignores_session_recent_frames_and_uses_environment_tru
             text="继续跟踪",
         ),
     )
-    system1.write_result(
+    system1.write_frame_result(
         {
             "frame_id": "frame_000009",
             "timestamp_ms": 1710000000000,
@@ -302,7 +301,7 @@ def test_tracking_context_uses_system1_detections_for_matching_perception_frame(
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
-    system1 = LocalSystem1Service(state_root)
+    system1 = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame_system1.jpg")
 
     perception.write_observation(
@@ -314,7 +313,7 @@ def test_tracking_context_uses_system1_detections_for_matching_perception_frame(
             text="初始化目标",
         ),
     )
-    system1.write_result(
+    system1.write_frame_result(
         {
             "frame_id": "frame_000123",
             "timestamp_ms": 1710000000000,
@@ -343,7 +342,7 @@ def test_tracking_context_filters_excluded_track_ids(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     runtime = AgentSessionStore(state_root)
     perception = LocalPerceptionService(state_root)
-    system1 = LocalSystem1Service(state_root)
+    system1 = LocalPerceptionService(state_root)
     frame_path = _frame_image(tmp_path / "frame.jpg")
     perception.write_observation(
         RobotIngestEvent(
@@ -354,7 +353,7 @@ def test_tracking_context_filters_excluded_track_ids(tmp_path: Path) -> None:
             text="继续跟踪",
         ),
     )
-    system1.write_result(
+    system1.write_frame_result(
         {
             "frame_id": "frame_000011",
             "timestamp_ms": 1710000000000,
