@@ -55,7 +55,7 @@ def _normalized_frame(
     }
 
 
-def observation_recent_frames(
+def recent_frames(
     *,
     state_root: Path,
     excluded_track_ids: Any = None,
@@ -77,14 +77,3 @@ def observation_recent_frames(
             )
         )
     return frames
-
-
-def recent_frames(
-    *,
-    state_root: Path,
-    excluded_track_ids: Any = None,
-) -> List[Dict[str, Any]]:
-    return observation_recent_frames(
-        state_root=state_root,
-        excluded_track_ids=excluded_track_ids,
-    )
