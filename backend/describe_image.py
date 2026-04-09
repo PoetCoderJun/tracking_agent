@@ -58,20 +58,6 @@ def build_describe_payload(*, text: str, tool_output: Dict[str, object]) -> Dict
         tool="describe_image",
         tool_output=tool_output,
     )
-
-
-def _latest_user_text(store: AgentSessionStore, session_id: str) -> str:
-    session = store.load(session_id)
-    history = list(session.session.get("conversation_history") or [])
-    for entry in reversed(history):
-        if str(entry.get("role", "")).strip() != "user":
-            continue
-        text = str(entry.get("text", "")).strip()
-        if text:
-            return text
-    return ""
-
-
 def run_describe_turn(
     *,
     image_path: str,
@@ -102,7 +88,7 @@ def run_describe_turn(
             instruction=_instruction(
                 str(user_text).strip()
                 or (
-                    _latest_user_text(sessions, resolved_session_id)
+                    sessions.load(resolved_session_id).latest_user_text
                     if resolved_session_id is not None
                     else ""
                 )

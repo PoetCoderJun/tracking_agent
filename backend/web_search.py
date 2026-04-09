@@ -35,15 +35,7 @@ def _default_query(
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
     if resolved_session_id is None:
         return ""
-    session = AgentSessionStore(state_root=state_root).load(resolved_session_id)
-    history = list(session.session.get("conversation_history") or [])
-    for entry in reversed(history):
-        if str(entry.get("role", "")).strip() != "user":
-            continue
-        text = str(entry.get("text", "")).strip()
-        if text:
-            return text
-    return ""
+    return AgentSessionStore(state_root=state_root).load(resolved_session_id).latest_user_text
 
 
 def _tavily_search(

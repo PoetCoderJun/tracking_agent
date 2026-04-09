@@ -24,14 +24,7 @@ def _utc_now() -> str:
 
 def _default_message(store: AgentSessionStore, session_id: str) -> str:
     session = store.load(session_id)
-    history = list(session.session.get("conversation_history") or [])
-    latest_user_text = ""
-    for entry in reversed(history):
-        if str(entry.get("role", "")).strip() != "user":
-            continue
-        latest_user_text = str(entry.get("text", "")).strip()
-        if latest_user_text:
-            break
+    latest_user_text = session.latest_user_text
     latest_result_text = str((session.latest_result or {}).get("text", "")).strip()
     if latest_user_text and latest_result_text:
         return f"{latest_user_text}\n\n最近结果：{latest_result_text}"

@@ -20,13 +20,8 @@ def _utc_now() -> str:
 
 def _default_text(store: AgentSessionStore, session_id: str) -> str:
     session = store.load(session_id)
-    history = list(session.session.get("conversation_history") or [])
-    for entry in reversed(history):
-        if str(entry.get("role", "")).strip() != "user":
-            continue
-        text = str(entry.get("text", "")).strip()
-        if text:
-            return text
+    if session.latest_user_text:
+        return session.latest_user_text
     latest_text = str((session.latest_result or {}).get("text", "")).strip()
     return latest_text
 

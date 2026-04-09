@@ -8,17 +8,6 @@ from backend.perception.frames import recent_frames
 from backend.runtime_session import AgentSession
 
 
-def _latest_user_text(session_payload: Dict[str, Any]) -> str:
-    history = session_payload.get("conversation_history") or []
-    for entry in reversed(history):
-        if str(entry.get("role", "")).strip() != "user":
-            continue
-        text = str(entry.get("text", "")).strip()
-        if text:
-            return text
-    return ""
-
-
 @dataclass(frozen=True)
 class PerceptionBundle:
     vision: Dict[str, Any]
@@ -49,18 +38,10 @@ def build_perception_bundle(session: AgentSession) -> PerceptionBundle:
             "model": dict(perception_snapshot.get("model") or {}),
         },
         language={
-            "latest_request_function": session.session.get("latest_request_function"),
-            "latest_request_id": session.session.get("latest_request_id"),
-            "latest_user_text": _latest_user_text(session.session),
-            "recent_dialogue": [
-                {
-                    "role": str(entry.get("role", "")).strip(),
-                    "text": str(entry.get("text", "")).strip(),
-                    "timestamp": str(entry.get("timestamp", "")).strip(),
-                }
-                for entry in list(session.session.get("conversation_history") or [])[-6:]
-                if isinstance(entry, dict)
-            ],
+            "latest_request_function": session.language_context["latest_request_function"],
+            "latest_request_id": session.language_context["latest_request_id"],
+            "latest_user_text": session.language_context["latest_user_text"],
+            "recent_dialogue": session.recent_dialogue(limit=6),
         },
         memory={
             "latest_result": dict(session.session.get("latest_result") or {}) or None,

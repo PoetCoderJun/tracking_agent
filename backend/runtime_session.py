@@ -24,6 +24,29 @@ def _latest_language_snapshot(session: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _latest_user_text(session: Dict[str, Any]) -> str:
+    history = session.get("conversation_history") or []
+    for entry in reversed(history):
+        if str(entry.get("role", "")).strip() != "user":
+            continue
+        text = str(entry.get("text", "")).strip()
+        if text:
+            return text
+    return ""
+
+
+def _recent_dialogue(session: Dict[str, Any], *, limit: int) -> List[Dict[str, Any]]:
+    return [
+        {
+            "role": str(entry.get("role", "")).strip(),
+            "text": str(entry.get("text", "")).strip(),
+            "timestamp": str(entry.get("timestamp", "")).strip(),
+        }
+        for entry in list(session.get("conversation_history") or [])[-max(0, int(limit)) :]
+        if isinstance(entry, dict)
+    ]
+
+
 def _runtime_result_snapshot(session: Dict[str, Any]) -> Dict[str, Any]:
     latest_result = session.get("latest_result")
     if not isinstance(latest_result, dict):
@@ -100,6 +123,22 @@ class AgentSession:
     @property
     def conversation_history(self) -> List[Dict[str, Any]]:
         return list(self.payload.get("conversation_history", []))
+
+    @property
+    def latest_user_text(self) -> str:
+        return _latest_user_text(self.payload)
+
+    @property
+    def language_context(self) -> Dict[str, Any]:
+        snapshot = _latest_language_snapshot(self.payload)
+        return {
+            **snapshot,
+            "latest_user_text": self.latest_user_text,
+            "recent_dialogue": _recent_dialogue(self.payload, limit=6),
+        }
+
+    def recent_dialogue(self, *, limit: int = 6) -> List[Dict[str, Any]]:
+        return _recent_dialogue(self.payload, limit=limit)
 
     @property
     def runtime_summary(self) -> Dict[str, Any]:

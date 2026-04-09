@@ -185,3 +185,29 @@ def test_agent_session_store_apply_skill_result_keeps_runtime_summary_small(tmp_
     assert runtime_state["latest_decision"] == "track"
     assert runtime_state["latest_text"] == "已确认继续跟踪 ID 12。"
     assert "latest_result" not in runtime_state
+
+
+def test_agent_session_exposes_canonical_language_context(tmp_path: Path) -> None:
+    runtime = AgentSessionStore(tmp_path / "state")
+    runtime.start_fresh_session("sess_lang", device_id="robot_01")
+    runtime.append_chat_request(
+        session_id="sess_lang",
+        device_id="robot_01",
+        text="先看左边的人",
+        request_id="req_001",
+    )
+    runtime.apply_skill_result(
+        "sess_lang",
+        {
+            "request_id": "req_001",
+            "function": "chat",
+            "behavior": "reply",
+            "text": "收到，先观察左边。",
+        },
+    )
+    context = runtime.load("sess_lang", device_id="robot_01")
+
+    assert context.latest_user_text == "先看左边的人"
+    assert context.language_context["latest_request_function"] == "chat"
+    assert context.language_context["latest_user_text"] == "先看左边的人"
+    assert context.language_context["recent_dialogue"][-1]["text"] == "收到，先观察左边。"
