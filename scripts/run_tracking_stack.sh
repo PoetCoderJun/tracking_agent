@@ -153,7 +153,7 @@ if [[ "${START_FRONTEND}" == "1" ]]; then
   ensure_port_free "${FRONTEND_HOST}" "${FRONTEND_PORT}" "frontend"
 fi
 
-ENVIRONMENT_CMD=(uv run python -m world.perception.write_environment
+ENVIRONMENT_CMD=(uv run python -m world.write_environment
   --source "${SOURCE}"
   --state-root "${STATE_ROOT}"
   --interval-seconds "1.0"
@@ -181,8 +181,8 @@ if [[ "${START_FRONTEND}" == "1" ]]; then
 fi
 
 printf '[stack] target selection is now handled by pi via project skills.\n'
-printf '[stack] environment writer captures frames, writes perception, and runs system1 inline.\n'
-printf '[stack] stack starts the environment writer and viewer.\n'
+printf '[stack] world writer captures frames, writes perception, and runs system1 inline.\n'
+printf '[stack] stack starts the world writer and viewer.\n'
 printf '[stack] use e-agent to bootstrap the main runner session and enter pi.\n'
 printf '[stack] successful tracking-init inside e-agent now enables continuous tracking in the same session.\n'
 printf '[stack] viewer ws: ws://%s:%s\n' "${VIEWER_HOST}" "${VIEWER_PORT}"

@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Sequence
 
-from world.perception.stream import RobotDetection
 from agent.project_paths import resolve_project_path
+from world.perception.stream import RobotDetection
 
 DEFAULT_SYSTEM1_MODEL = "yolov8n.pt"
 DEFAULT_SYSTEM1_TRACKER = "bytetrack.yaml"

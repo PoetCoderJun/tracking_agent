@@ -462,7 +462,7 @@ def _results_for_video_file_at_target_fps(
             if tracker not in (None, ""):
                 kwargs["tracker"] = tracker
             results = model.track(**kwargs)
-            yield frame_index, (None if not results else results[0])
+            yield frame_index, frame, (None if not results else results[0])
             next_sample_at += 1.0 / tracker_fps
             frame_index += 1
     finally:
@@ -1139,7 +1139,7 @@ def run_sequence_benchmark_rebind_fsm(
         person_class_id=person_class_id,
     )
     try:
-        for event_index, (frame_index, result) in enumerate(result_stream):
+        for event_index, (frame_index, frame_bgr, result) in enumerate(result_stream):
             if frame_index not in label_map:
                 continue
             if max_frames is not None and len(processed_frame_indices) >= max_frames:
@@ -1151,10 +1151,8 @@ def run_sequence_benchmark_rebind_fsm(
 
             frame_id = f"frame_{len(processed_frame_indices):06d}"
             frame_path = frames_dir / f"{frame_id}.jpg"
-            if result is None:
-                break
-            save_frame_image(result.orig_img, frame_path)
-            frame_detections = extract_person_detections(result, person_class_id=person_class_id)
+            save_frame_image(frame_bgr if result is None else result.orig_img, frame_path)
+            frame_detections = [] if result is None else extract_person_detections(result, person_class_id=person_class_id)
             perception_service.write_observation(
                 RobotIngestEvent(
                     session_id=session_id,

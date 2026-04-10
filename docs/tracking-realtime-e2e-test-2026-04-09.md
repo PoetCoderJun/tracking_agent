@@ -4,7 +4,7 @@
 
 Record and execute a realistic end-to-end tracking test that preserves the real-world timing model:
 
-1. Use `scripts/write_environment.py` to write the first frame.
+1. Use `robot-agent-environment-writer` to write the first frame.
 2. Keep the first frame stable while the main Agent initializes the target.
 3. Only after init should continuous environment writing resume, to simulate:
    - the observed person is mostly static during initialization
@@ -18,8 +18,8 @@ Record and execute a realistic end-to-end tracking test that preserves the real-
 
 ## Planned Procedure
 
-1. Clear runtime state and any lingering `write_environment` / `e-agent` / `pi` processes.
-2. Start `scripts/write_environment.py` with:
+1. Clear runtime state and any lingering `robot-agent-environment-writer` / `e-agent` / `pi` processes.
+2. Start `robot-agent-environment-writer` with:
    - `--source tests/fixtures/demo_video.mp4`
    - `--realtime-playback`
    - `--pause-after-first-event-file ./.runtime/test-pause.flag`
@@ -165,7 +165,7 @@ This confirms the original blocker is fixed:
 
 ## Follow-up E2E Result
 
-The same run was continued after removing the pause sentinel so that `write_environment.py` could resume realtime playback.
+The same run was continued after removing the pause sentinel so that `robot-agent-environment-writer` could resume realtime playback.
 
 Observed follow-up state from the persisted session:
 

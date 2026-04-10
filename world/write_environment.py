@@ -8,10 +8,17 @@ import time
 from pathlib import Path
 from typing import Any, Iterator, Optional, Tuple
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from agent.project_paths import resolve_project_path
+from world import (
+    DEFAULT_PERSON_CLASS_ID,
+    DEFAULT_SYSTEM1_MODEL,
+    DEFAULT_SYSTEM1_TRACKER,
+    System1Tracker,
+)
 from world.perception import LocalPerceptionService
 from world.perception.stream import (
     DEFAULT_CAMERA_SOURCE,
@@ -19,8 +26,8 @@ from world.perception.stream import (
     RobotIngestEvent,
     assert_camera_source,
     current_timestamp_ms,
-    iter_frames,
     is_camera_source,
+    iter_frames,
     normalize_source,
     probe_video_fps,
     save_frame_image,
@@ -29,25 +36,12 @@ from world.perception.stream import (
     target_video_emit_at,
     video_timestamp_seconds,
 )
-from agent.project_paths import resolve_project_path
-from world import (
-    DEFAULT_PERSON_CLASS_ID,
-    DEFAULT_SYSTEM1_MODEL,
-    DEFAULT_SYSTEM1_TRACKER,
-    System1Tracker,
-)
-
-_assert_camera_source = assert_camera_source
-_iter_frames = iter_frames
-_should_emit_event = should_emit_event
-_should_emit_video_sample = should_emit_video_sample
-_target_video_emit_at = target_video_emit_at
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Environment writer workflow. Captures frames, writes perception state, "
+            "World writer workflow. Captures frames, writes perception state, "
             "then synchronously runs system1 YOLO + ByteTrack on the same emitted frames."
         )
     )
@@ -77,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _prepare_environment_writer(
+def _prepare_world_writer(
     *,
     perception_service: LocalPerceptionService,
     system1_service: Optional[LocalPerceptionService],
@@ -119,7 +113,7 @@ async def _write_system1_result(
     return dict(snapshot.get("latest_frame_result") or {})
 
 
-async def _run_environment_writer(
+async def _run_world_writer(
     args: argparse.Namespace,
     *,
     perception_service: LocalPerceptionService,
@@ -261,7 +255,11 @@ async def _run_environment_writer(
     return 0
 
 
-def _build_system1_services(args: argparse.Namespace, *, state_root: Path) -> tuple[Optional[LocalPerceptionService], Optional[System1Tracker]]:
+def _build_system1_services(
+    args: argparse.Namespace,
+    *,
+    state_root: Path,
+) -> tuple[Optional[LocalPerceptionService], Optional[System1Tracker]]:
     if args.disable_system1:
         return None, None
     system1_service = LocalPerceptionService(
@@ -336,7 +334,7 @@ async def _async_main() -> int:
         keyframe_retention_seconds=args.keyframe_retention_seconds,
     )
     system1_service, system1_tracker = _build_system1_services(args, state_root=state_root)
-    _prepare_environment_writer(
+    _prepare_world_writer(
         perception_service=perception_service,
         system1_service=system1_service,
         system1_tracker=system1_tracker,
@@ -352,7 +350,7 @@ async def _async_main() -> int:
         assert_camera_source(int(source))
     frame_stream = iter_frames(source, vid_stride=args.vid_stride)
 
-    return await _run_environment_writer(
+    return await _run_world_writer(
         args,
         perception_service=perception_service,
         system1_service=system1_service,
