@@ -36,7 +36,7 @@ set -a && source .ENV && set +a
 
 - `agent/`：唯一 runner path、session truth、continuation 和 turn orchestration。
 - `world/`：环境层；`perception`、system1 input、snapshot、cache、keyframe 与 frame artifacts 都在这里落盘。
-- `capabilities/`：模型可调用的统一能力面；`tracking`、`tts`、`feishu`、`web_search`、`describe_image`、`actions` 都按 capability 归属。
+- `capabilities/`：模型可调用的统一能力面；`tracking`、`tts`、`feishu`、`web_search`、`actions` 都按 capability 归属。
 - `skills/`：给 `pi` 的 skill contract 和 skill-local helper。skill 保持即插即用；仓库不会再为普通 skill 在平台层手写一套镜像 runtime。skill 如果需要附带执行辅助或 viewer 扩展，优先自带在自己的 `scripts/` 里。
 - `interfaces/`：共享状态读取界面；当前 `viewer` 只在这里，不参与调度。
 - `scripts/`：薄入口；只做参数解析、环境拼装和 owner dispatch。
@@ -63,6 +63,7 @@ uv run e-agent
 
 - `e-agent` 会先 bootstrap 主 runner session，然后保持为前台 supervisor，并拉起 `pi` 子进程。
 - 会显式关闭 `pi` 的默认 skills 发现，只加载仓库内 `skills/` 和你额外传入的 `--skill`。
+- `e-agent` 会给 `pi` 追加一段系统级 embodied grounding prompt：需要知道当前世界状态时，先读取 `perception/snapshot.json` 的 `latest_frame.image_path`，把那张图当作当前画面依据。
 - `e-agent` 默认直接拉起 `pi`，避免交互 TUI 在 macOS 沙箱里触发终端 raw mode 错误。
 - 如果你明确要把 `pi` 放进 macOS `sandbox-exec`，再显式传 `--pi-sandbox`。
 - 开启 `--pi-sandbox` 后，如果某个 workflow 还需要额外写目录，可以追加 `--pi-writable-dir /abs/path`。

@@ -72,6 +72,7 @@ def test_main_bootstraps_pi_runner_with_project_skills(monkeypatch, tmp_path: Pa
     active_session = json.loads((state_root / "active_session.json").read_text(encoding="utf-8"))
     command = captured["command"]
     skill_args = [command[index + 1] for index, item in enumerate(command[:-1]) if item == "--skill"]
+    prompt_args = [command[index + 1] for index, item in enumerate(command[:-1]) if item == "--append-system-prompt"]
 
     assert exit_code == 0
     assert captured["env"]["ROBOT_AGENT_SESSION_ID"] == active_session["session_id"]
@@ -84,6 +85,46 @@ def test_main_bootstraps_pi_runner_with_project_skills(monkeypatch, tmp_path: Pa
     assert skill_args
     assert any(path.endswith("/skills/tracking") for path in skill_args)
     assert any(path.endswith("/skills/tts") for path in skill_args)
+    assert len(prompt_args) == 1
+    assert "具身智能机器狗" in prompt_args[0]
+    assert str((state_root / "perception" / "snapshot.json").resolve()) in prompt_args[0]
+    assert "当前启动时还没有可用的 latest_frame.image_path" in prompt_args[0]
+
+
+def test_vision_grounding_prompt_uses_latest_frame_path_when_available(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    snapshot_path = state_root / "perception" / "snapshot.json"
+    image_path = (tmp_path / "frame.jpg").resolve()
+    image_path.write_bytes(b"frame")
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "recent_camera_observations": [],
+                "latest_frame": {
+                    "frame_id": "frame_001",
+                    "timestamp_ms": 123,
+                    "image_path": str(image_path),
+                    "detections": [],
+                },
+                "latest_camera_observation": None,
+                "recent_frame_results": [],
+                "latest_frame_result": None,
+                "model": {},
+                "saved_keyframes": [],
+                "stream_status": {},
+            },
+            indent=2,
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+
+    prompt = e_agent._vision_grounding_prompt(state_root=state_root)
+
+    assert str(snapshot_path.resolve()) in prompt
+    assert f"当前启动时 latest_frame.image_path={str(image_path)}" in prompt
+    assert "不要把这个启动时路径当作长期真相" in prompt
 
 
 def test_chat_reply_updates_main_session_dialogue(tmp_path: Path) -> None:
@@ -612,34 +653,3 @@ def test_runner_drops_feishu_turn_that_becomes_stale_inside_helper(tmp_path: Pat
     assert called["value"] is False
     assert session.latest_result is None
     assert session.capabilities == {}
-
-
-def test_describe_image_skill_helper_handles_missing_image_without_committing(tmp_path: Path) -> None:
-    describe_turn = _load_script_module(
-        ROOT / "skills" / "describe-image" / "scripts" / "describe_turn.py",
-        "test_describe_image_turn",
-    )
-    state_root = tmp_path / "state"
-    sessions = AgentSessionStore(state_root)
-    sessions.start_fresh_session("sess_describe", device_id="robot_01")
-    sessions.append_chat_request(
-        session_id="sess_describe",
-        device_id="robot_01",
-        text="请描述当前画面",
-        request_id="req_describe_001",
-    )
-
-    payload = describe_turn.run_describe_turn(
-        image_path="",
-        user_text="",
-        session_id="sess_describe",
-        state_root=state_root,
-        env_file=tmp_path / ".ENV",
-    )
-    session = sessions.load("sess_describe")
-
-    assert payload["skill_name"] == "describe_image"
-    assert payload["tool"] == "describe_image"
-    assert payload["tool_output"]["error"] == "missing image"
-    assert payload["session_result"]["text"] == "我当前没有拿到可用的图片，暂时不能准确描述画面。"
-    assert session.latest_result is None

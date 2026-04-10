@@ -13,6 +13,7 @@ from agent.runner import run_due_tracking_step
 from agent.session import AgentSessionStore, bootstrap_runner_session
 from capabilities.tracking.context import TRACKING_LIFECYCLE_STOPPED
 from skills.catalog import project_skill_paths
+from world.perception.service import LocalPerceptionService
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TRACKING_POLL_SECONDS = 0.25
@@ -81,7 +82,38 @@ def _skill_args(extra_skills: List[str]) -> List[str]:
     return args
 
 
-def _pi_command(args: argparse.Namespace, *, resolved_pi_args: List[str] | None = None) -> List[str]:
+def _vision_grounding_prompt(*, state_root: Path) -> str:
+    snapshot_path = (state_root / "perception" / "snapshot.json").resolve()
+    latest_frame = LocalPerceptionService(state_root=state_root).read_latest_frame() or {}
+    latest_frame_path = str(latest_frame.get("image_path", "")).strip()
+    if latest_frame_path:
+        latest_frame_note = (
+            f"当前启动时 latest_frame.image_path={latest_frame_path}。"
+            "如果后续还要确认当前画面，必须重新读取 snapshot.json 里的 latest_frame.image_path，"
+            "不要把这个启动时路径当作长期真相。"
+        )
+    else:
+        latest_frame_note = (
+            "当前启动时还没有可用的 latest_frame.image_path。"
+            "需要视觉 grounding 时，先读取 snapshot.json 再决定是否有可用画面。"
+        )
+    return (
+        "你是一个具身智能机器狗的 chat-first Agent。\n"
+        "如果你想知道当前世界状态、当前画面、眼前有什么，先读取 perception snapshot，"
+        f"路径是 {snapshot_path}。\n"
+        "当前画面的真实来源是 snapshot.json 里的 latest_frame.image_path；"
+        "读取到这个路径后，把那张图像当作你判断世界状态的依据，只回答真实可见内容，不要猜测。\n"
+        f"{latest_frame_note}\n"
+        "如果 snapshot.json 不存在、latest_frame 为空、或图片文件不存在，就明确说明当前没有可用画面。"
+    )
+
+
+def _pi_command(
+    args: argparse.Namespace,
+    *,
+    state_root: Path,
+    resolved_pi_args: List[str] | None = None,
+) -> List[str]:
     raw_pi_args = list(resolved_pi_args if resolved_pi_args is not None else _resolved_pi_args(list(args.pi_args or [])))
     has_explicit_thinking = "--thinking" in raw_pi_args
     default_thinking_args = [] if has_explicit_thinking else ["--thinking", "minimal"]
@@ -90,6 +122,8 @@ def _pi_command(args: argparse.Namespace, *, resolved_pi_args: List[str] | None 
         *default_thinking_args,
         "--no-skills",
         *_skill_args(list(args.skill or [])),
+        "--append-system-prompt",
+        _vision_grounding_prompt(state_root=state_root),
         *raw_pi_args,
     ]
 
@@ -241,9 +275,14 @@ def _supervise_pi(
     session_id: str,
     owner_id: str,
     env: dict[str, str],
+    state_root: Path,
     resolved_pi_args: List[str],
 ) -> int:
-    command = _sandboxed_command(_pi_command(args, resolved_pi_args=resolved_pi_args), args, env)
+    command = _sandboxed_command(
+        _pi_command(args, state_root=state_root, resolved_pi_args=resolved_pi_args),
+        args,
+        env,
+    )
     try:
         child = subprocess.Popen(command, env=env)
     except FileNotFoundError as exc:
@@ -294,6 +333,7 @@ def main(argv: List[str] | None = None) -> int:
             session_id=session.session_id,
             owner_id=owner_id,
             env=env,
+            state_root=state_root,
             resolved_pi_args=resolved_pi_args,
         )
     finally:

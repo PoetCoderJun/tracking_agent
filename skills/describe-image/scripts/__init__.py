@@ -1,1 +1,0 @@
-"""Describe-image helper scripts."""
