@@ -22,12 +22,12 @@ dependencies = [
 
 [project.scripts]
 e-agent = "scripts.e_agent:main"
-robot-agent = "backend.cli:main"
-robot-agent-perception = "backend.perception.cli:main"
-robot-agent-environment-writer = "scripts.write_environment:main"
+robot-agent = "scripts.runtime_cli:main"
+robot-agent-perception = "scripts.perception_cli:main"
+robot-agent-environment-writer = "world.perception.write_environment:main"
 robot-agent-tracking-stack = "scripts.run_tracking_stack:main"
-robot-agent-tracking-loop = "backend.tracking.loop:main"
-robot-agent-tracking-viewer-stream = "viewer.stream:main"
+robot-agent-tracking-loop = "capabilities.tracking.loop:main"
+robot-agent-tracking-viewer-stream = "interfaces.viewer.stream:main"
 
 [dependency-groups]
 dev = [
@@ -35,7 +35,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["backend*", "viewer*", "skills*", "scripts*"]
+include = ["agent*", "world*", "capabilities*", "interfaces*", "skills*", "scripts*"]
 
 [tool.uv]
 default-groups = ["dev"]

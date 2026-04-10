@@ -18,9 +18,9 @@ Core rules:
 
 - Real service path:
   - perception writes observations
-  - `backend.tracking.service` waits for the first frame
+  - `capabilities.tracking.service` waits for the first frame
   - service sends one tracking init chat turn if `--init-text` is provided
-  - service then launches `backend.tracking.loop`
+  - service then launches `capabilities.tracking.loop`
 
 - Loop behavior:
   - if there is no active target, status is `idle`
@@ -46,6 +46,6 @@ That means:
 Any serious benchmark of this strategy should use the real service semantics:
 
 - perception cadence from `scripts/run_tracking_perception.py`
-- init through `backend.tracking.service`
-- recovery through `backend.tracking.loop`
+- init through `capabilities.tracking.service`
+- recovery through `capabilities.tracking.loop`
 - the actual `wait` / `track` / `tracking_bound` behavior, not a simplified approximation

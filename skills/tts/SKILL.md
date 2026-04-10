@@ -30,12 +30,13 @@ Do not use this skill for:
 1. Resolve the active session first.
 2. In this runtime, prefer `ROBOT_AGENT_SESSION_ID` and `ROBOT_AGENT_STATE_ROOT` from the environment over hardcoded runtime paths.
 3. Decide whether this turn is asking for one speech/tts action.
-4. If yes, call the helper once.
-5. After the helper completes, reply naturally to the user with the speak result.
+4. If yes, decide whether to use the PI environment's own speech/action surface or the skill-local helper.
+5. Do not route this through backend-owned TTS skill code.
+6. After the speak action completes, reply naturally to the user with the result.
 
-## Helper Script
+## Local Helper
 
-Use this deterministic helper:
+If your current PI environment needs a deterministic local helper, use the skill-local script:
 
 - `python -m skills.tts.scripts.speak_turn --session-id <session-id> --state-root ./.runtime/agent-runtime --artifacts-root ./.runtime/pi-agent --env-file .ENV --text ...`
 - In the normal PI runtime, prefer:
@@ -43,9 +44,10 @@ Use this deterministic helper:
 
 Important:
 
-- The helper is only a thin entrypoint; backend turn logic assembles and applies the processed payload.
+- The helper belongs to this skill package; backend does not own TTS skill logic.
 - If `ROBOT_TTS_COMMAND` is configured, the helper will execute it once with the text appended as the final argument.
 - Without `ROBOT_TTS_COMMAND`, the helper still records a mock tts outbox entry so the capability remains testable.
+- The helper returns a processed payload; the harness/runner is responsible for the final session-state commit.
 - Do not expose helper JSON to the user.
 
 ## Output Contract
@@ -53,5 +55,5 @@ Important:
 For handled turns:
 
 1. choose this skill
-2. call exactly one helper command
-3. answer the user naturally after the helper completes
+2. either speak through your current environment or call exactly one skill-local helper command
+3. answer the user naturally after the action completes

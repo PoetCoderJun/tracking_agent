@@ -43,6 +43,8 @@ If `snapshot.json` is missing, `latest_frame` is empty, or the image file does n
 6. Do not call `describe_turn.py` just to answer a simple visual-description request.
 7. Do not return JSON unless the user explicitly asks for JSON.
 
+If a deterministic helper is used in this repo for integration testing or a bounded runtime flow, it should return a processed payload only; the harness/runner owns the final session-state commit.
+
 ## Response Style
 
 - Start with the main visible subjects.

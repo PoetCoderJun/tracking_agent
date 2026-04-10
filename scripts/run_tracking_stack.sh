@@ -6,8 +6,8 @@ STATE_ROOT="./.runtime/agent-runtime"
 SOURCE="0"
 FRONTEND_HOST="127.0.0.1"
 FRONTEND_PORT="5173"
-BACKEND_HOST="127.0.0.1"
-BACKEND_PORT="8765"
+VIEWER_HOST="127.0.0.1"
+VIEWER_PORT="8765"
 REALTIME_PLAYBACK="0"
 START_FRONTEND="0"
 SHUTTING_DOWN="0"
@@ -35,11 +35,11 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --backend-host)
-      BACKEND_HOST="$2"
+      VIEWER_HOST="$2"
       shift 2
       ;;
     --backend-port)
-      BACKEND_PORT="$2"
+      VIEWER_PORT="$2"
       shift 2
       ;;
     --realtime-playback)
@@ -147,13 +147,13 @@ run_component() {
 }
 
 ensure_command uv
-ensure_port_free "${BACKEND_HOST}" "${BACKEND_PORT}" "backend websocket"
+ensure_port_free "${VIEWER_HOST}" "${VIEWER_PORT}" "viewer websocket"
 if [[ "${START_FRONTEND}" == "1" ]]; then
   ensure_command npm
   ensure_port_free "${FRONTEND_HOST}" "${FRONTEND_PORT}" "frontend"
 fi
 
-ENVIRONMENT_CMD=(uv run python -m scripts.write_environment
+ENVIRONMENT_CMD=(uv run python -m world.perception.write_environment
   --source "${SOURCE}"
   --state-root "${STATE_ROOT}"
   --interval-seconds "1.0"
@@ -162,20 +162,20 @@ if [[ "${REALTIME_PLAYBACK}" == "1" ]]; then
   ENVIRONMENT_CMD+=(--realtime-playback)
 fi
 
-BACKEND_CMD=(uv run python -m viewer.stream
+VIEWER_CMD=(uv run python -m interfaces.viewer.stream
   --state-root "${STATE_ROOT}"
-  --host "${BACKEND_HOST}"
-  --port "${BACKEND_PORT}"
+  --host "${VIEWER_HOST}"
+  --port "${VIEWER_PORT}"
 )
 
 run_component environment "${ENVIRONMENT_CMD[@]}"
-run_component backend "${BACKEND_CMD[@]}"
+run_component viewer "${VIEWER_CMD[@]}"
 
 if [[ "${START_FRONTEND}" == "1" ]]; then
   FRONTEND_CMD=(bash "${ROOT_DIR}/scripts/run_tracking_frontend.sh"
     --host "${FRONTEND_HOST}"
     --port "${FRONTEND_PORT}"
-    --ws-url "ws://${BACKEND_HOST}:${BACKEND_PORT}"
+    --ws-url "ws://${VIEWER_HOST}:${VIEWER_PORT}"
   )
   run_component frontend "${FRONTEND_CMD[@]}"
 fi
@@ -185,12 +185,12 @@ printf '[stack] environment writer captures frames, writes perception, and runs 
 printf '[stack] stack starts the environment writer and viewer.\n'
 printf '[stack] use e-agent to bootstrap the main runner session and enter pi.\n'
 printf '[stack] successful tracking-init inside e-agent now enables continuous tracking in the same session.\n'
-printf '[stack] backend ws: ws://%s:%s\n' "${BACKEND_HOST}" "${BACKEND_PORT}"
+printf '[stack] viewer ws: ws://%s:%s\n' "${VIEWER_HOST}" "${VIEWER_PORT}"
 if [[ "${START_FRONTEND}" == "1" ]]; then
   printf '[stack] frontend: http://%s:%s\n' "${FRONTEND_HOST}" "${FRONTEND_PORT}"
 else
   printf '[stack] frontend is not started by stack.\n'
-  printf '[stack] start it manually: bash scripts/run_tracking_frontend.sh --host %s --port %s --ws-url ws://%s:%s\n' "${FRONTEND_HOST}" "${FRONTEND_PORT}" "${BACKEND_HOST}" "${BACKEND_PORT}"
+  printf '[stack] start it manually: bash scripts/run_tracking_frontend.sh --host %s --port %s --ws-url ws://%s:%s\n' "${FRONTEND_HOST}" "${FRONTEND_PORT}" "${VIEWER_HOST}" "${VIEWER_PORT}"
 fi
 
 wait

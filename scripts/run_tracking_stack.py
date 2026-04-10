@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STACK_SCRIPT = ROOT / "scripts" / "run_tracking_stack.sh"
 HELP_TEXT = """Usage: robot-agent-tracking-stack [options]
 
-Start the tracking stack environment (environment writer + backend websocket viewer).
+Start the tracking stack environment (environment writer + viewer websocket).
 
 Common options:
   --source <video-or-camera>

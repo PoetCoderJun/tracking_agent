@@ -5,14 +5,14 @@
 Run the real tracking service path, not a simplified approximation:
 
 - `scripts.run_tracking_perception.py`
-- `backend.tracking.service`
-- `backend.tracking.loop`
+- `capabilities.tracking.service`
+- `capabilities.tracking.loop`
 - real Pi init chat
 - real recovery behavior with `wait` / `track` / `tracking_bound`
 
 ## Setup
 
-- Sequence: `backend/tests/dataset/room`
+- Sequence: `tests/dataset/room`
 - Session: `svc_room_real_001`
 - Device: `cpu`
 - Tracker: `bytetrack.yaml`

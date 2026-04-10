@@ -13,14 +13,14 @@ Record and execute a realistic end-to-end tracking test that preserves the real-
 
 ## Test Fixture
 
-- Video: `/Users/huzujun/Desktop/new/tracking_agent/backend/tests/fixtures/demo_video.mp4`
+- Video: `/Users/huzujun/Desktop/new/tracking_agent/tests/fixtures/demo_video.mp4`
 - Pause sentinel: `/Users/huzujun/Desktop/new/tracking_agent/.runtime/test-pause.flag`
 
 ## Planned Procedure
 
 1. Clear runtime state and any lingering `write_environment` / `e-agent` / `pi` processes.
 2. Start `scripts/write_environment.py` with:
-   - `--source backend/tests/fixtures/demo_video.mp4`
+   - `--source tests/fixtures/demo_video.mp4`
    - `--realtime-playback`
    - `--pause-after-first-event-file ./.runtime/test-pause.flag`
 3. Wait for:
@@ -48,7 +48,7 @@ rm -f .runtime/test-pause.flag
 touch .runtime/test-pause.flag
 set -a && source .ENV && set +a && \
   uv run robot-agent-environment-writer \
-    --source backend/tests/fixtures/demo_video.mp4 \
+    --source tests/fixtures/demo_video.mp4 \
     --realtime-playback \
     --pause-after-first-event-file ./.runtime/test-pause.flag
 

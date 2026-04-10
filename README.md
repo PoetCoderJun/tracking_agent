@@ -34,11 +34,12 @@ set -a && source .ENV && set +a
 
 当前代码结构按 `2025 Q1答辩.pptx` 第 8/9 页收口为：
 
-- 触发层：`e-agent` / `pi` / 脚本入口负责触发 turn。
-- 环境层：`backend/perception/` 持续写入世界快照；system1 检测结果与同帧 observation 一起保存在同一份 perception snapshot 中，`backend/system1/` 只保留模型运行相关实现。
-- Runner + 状态层：`backend/cli.py`、`backend/runtime_session.py`、`backend/persistence/` 负责唯一 turn 路径和唯一 `session.json` 真相源。
-- 能力层：`backend/tracking/`、`backend/actions/`、`backend/tts.py`、`skills/` 作为普通 capability 被 runner 调用。
-- 展示层：`viewer/` 只读取共享状态，不参与调度。
+- `agent/`：唯一 runner path、session truth、continuation 和 turn orchestration。
+- `world/`：环境层；`perception`、system1 input、snapshot、cache、keyframe 与 frame artifacts 都在这里落盘。
+- `capabilities/`：模型可调用的统一能力面；`tracking`、`tts`、`feishu`、`web_search`、`describe_image`、`actions` 都按 capability 归属。
+- `skills/`：给 `pi` 的 skill contract 和 skill-local helper。skill 保持即插即用；仓库不会再为普通 skill 在平台层手写一套镜像 runtime。skill 如果需要附带执行辅助或 viewer 扩展，优先自带在自己的 `scripts/` 里。
+- `interfaces/`：共享状态读取界面；当前 `viewer` 只在这里，不参与调度。
+- `scripts/`：薄入口；只做参数解析、环境拼装和 owner dispatch。
 
 当前主路径不再保留额外的 tracking CLI 包装层，也不再依赖脚本级 loop/viewer wrapper 来进入核心运行逻辑。
 
@@ -77,7 +78,8 @@ uv run e-agent --session-id sess_001
 uv run e-agent --fresh
 ```
 
-- 在 `pi` 里成功执行 `tracking-init` 后，会自动激活同 session 的 tracking follow-up。
+- 在 `pi` 里成功完成 tracking-init 这一步后，会自动激活同 session 的 tracking follow-up。
+- 这段 follow-up 不是 skill，而是 `e-agent` supervisor 持有的持续业务流程。
 - follow-up 默认按 3 秒 cadence 继续做 `tracking-track`，如果当前目标 `track id` 丢失，也会立即触发一次恢复判断。
 - 如果在 `pi` 里重新指定了新的跟踪对象，当前 session 的 tracking memory/runtime 标记会被重置，并切到新的目标继续 follow-up。
 
@@ -95,7 +97,7 @@ uv run robot-agent-tracking-stack --source 0
 
 ```bash
 uv run robot-agent-tracking-stack \
-  --source backend/tests/fixtures/demo_video.mp4 \
+  --source tests/fixtures/demo_video.mp4 \
   --realtime-playback
 ```
 
@@ -103,7 +105,7 @@ uv run robot-agent-tracking-stack \
 
 ```bash
 uv run robot-agent-tracking-stack \
-  --source backend/tests/fixtures/demo_video.mp4 \
+  --source tests/fixtures/demo_video.mp4 \
   --realtime-playback \
   --start-frontend
 ```
@@ -135,7 +137,7 @@ uv run e-agent
 如果你要 viewer websocket：
 
 ```bash
-uv run python -m viewer.stream --state-root ./.runtime/agent-runtime
+uv run python -m interfaces.viewer.stream --state-root ./.runtime/agent-runtime
 ```
 
 ## 常用调试命令
@@ -170,10 +172,10 @@ cat ./.runtime/agent-runtime/perception/snapshot.json
 cat ./.runtime/agent-runtime/perception/snapshot.json
 ```
 
-手动做一次确定性 tracking init：
+手动做一次 skill-local tracking init：
 
 ```bash
-uv run robot-agent tracking-init \
+python -m skills.tracking.scripts.init_turn \
   --state-root ./.runtime/agent-runtime \
   --artifacts-root ./.runtime/pi-agent \
   --text "开始跟踪穿黑衣服的人"
@@ -187,10 +189,10 @@ uv run robot-agent tracking-track \
   --artifacts-root ./.runtime/pi-agent
 ```
 
-手动做一次确定性 tts speak：
+手动做一次 skill-local tts speak：
 
 ```bash
-uv run robot-agent tts-say \
+python -m skills.tts.scripts.speak_turn \
   --state-root ./.runtime/agent-runtime \
   --artifacts-root ./.runtime/pi-agent \
   --text "实验开始，请注意安全。"
@@ -198,5 +200,5 @@ uv run robot-agent tts-say \
 
 说明：
 
-- 上面这条只用于后端确定性检查。
-- 正常主路径下，不需要再手动启动单独的 `robot-agent-tracking-loop` 来保持持续跟踪。
+- 上面这条只用于确定性检查。
+- 正常主路径下，不需要再手动启动单独的 `robot-agent-tracking-loop` 来保持持续跟踪；这条持续流程由 `scripts/e_agent.py` 接管。

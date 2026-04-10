@@ -29,12 +29,13 @@ Do not use this skill for:
 1. Resolve the active session first.
 2. In this runtime, prefer `ROBOT_AGENT_SESSION_ID` and `ROBOT_AGENT_STATE_ROOT` from the environment over hardcoded runtime paths.
 3. Decide whether this turn really needs current online search.
-4. If yes, call the bundled search helper once.
-5. After the helper returns, answer the user naturally and stop.
+4. If yes, decide whether you should search directly with your own web tools or use the skill-local helper.
+5. Do not route this through backend-owned skill code.
+6. After you have the results, answer the user naturally and stop.
 
-## Helper Script
+## Local Helper
 
-Use this deterministic helper:
+If your current PI environment needs a deterministic local helper, use the skill-local script:
 
 - `python ./skills/web-search/scripts/search_turn.py --session-id <session-id> --state-root ./.runtime/agent-runtime --env-file .ENV --query ...`
 - In the normal PI runtime, prefer:
@@ -43,10 +44,11 @@ Use this deterministic helper:
 Important:
 
 - Keep the query short and focused.
-- The helper is only a thin entrypoint; backend turn logic assembles and applies the processed payload.
-- Do not inspect files, do not verify artifacts, and do not widen the turn beyond one search.
+- The helper belongs to this skill package; backend does not own web-search skill logic.
+- Keep the helper bounded to one search; do not widen the turn into extra verification work.
+- The helper returns a processed payload; the harness/runner is responsible for the final session-state commit.
 - Do not expose helper JSON to the user.
-- Do not inspect files, do not verify artifacts, and do not call extra tools after the helper returns.
+- Do not call extra tools after the helper returns.
 - Do not run follow-up searches unless the user explicitly asks for refinement.
 
 ## Output Contract
@@ -54,6 +56,6 @@ Important:
 For handled turns:
 
 1. choose this skill
-2. call exactly one helper command
-3. answer the user naturally from the helper result
+2. either search directly or call exactly one skill-local helper command
+3. answer the user naturally from the result
 4. stop immediately after answering

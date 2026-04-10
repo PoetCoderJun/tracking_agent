@@ -2,7 +2,7 @@
 
 ## Summary
 
-This run benchmarked the current local `YOLO + ByteTrack` tracking path against the custom dataset under `backend/tests/dataset` using a paper-aligned sequence success-rate metric.
+This run benchmarked the current local `YOLO + ByteTrack` tracking path against the custom dataset under `tests/dataset` using a paper-aligned sequence success-rate metric.
 
 Raw output:
 
@@ -10,14 +10,14 @@ Raw output:
 
 Implemented benchmark code:
 
-- `backend/tracking/benchmark.py`
-- `backend/tests/test_tracking_benchmark.py`
+- `capabilities/tracking/benchmark.py`
+- `tests/test_tracking_benchmark.py`
 
 ## Command
 
 ```bash
-./.venv/bin/python -m backend.tracking.benchmark \
-  --dataset-root backend/tests/dataset \
+./.venv/bin/python -m capabilities.tracking.benchmark \
+  --dataset-root tests/dataset \
   --device cpu \
   --output-json .runtime/benchmark_yolo_bytetrack_full.json
 ```

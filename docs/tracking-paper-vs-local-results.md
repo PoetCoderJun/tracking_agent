@@ -70,7 +70,7 @@ Current best files:
 
 ## Notes
 
-- The paper table includes `public dataset [5]`; our local runs above only cover the custom sequences currently stored under `backend/tests/dataset`.
+- The paper table includes `public dataset [5]`; our local runs above only cover the custom sequences currently stored under `tests/dataset`.
 - Our current evaluation pipeline is not a verbatim reproduction of the paper runtime. It is a local robot-kernel rebind benchmark built on top of `YOLO + ByteTrack` with custom rebinding and memory logic.
 - Our local `corridor1` result still lags badly and remains the weakest custom sequence.
 - Our local `corridor2`, `lab-corridor`, and `room` now outperform the paper's `ByteTrack + RPF-ReID` row under our current benchmark setup, so these numbers should be interpreted as local-system results rather than like-for-like paper reproduction.

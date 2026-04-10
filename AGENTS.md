@@ -18,15 +18,15 @@ The repository is actively being reduced from an over-engineered runtime shape t
 - At any time, prefer deleting compatibility surfaces, fallback paths, and defensive over-handling so the system stays on one clear, strict, failure-visible MVP path.
 
 ## Project Structure & Module Organization
-Core package code lives in `backend/`. Keep long-running world observation in `backend/perception/`. Keep event handling, state reduction, and capability invocation in the runner/agent path. Keep executable robot interfaces in `backend/actions/`. Tests live in `backend/tests/` and fixtures live in `backend/tests/fixtures/`. Capability-specific helper logic should stay close to the capability that owns it; avoid rebuilding a generic runtime framework around those helpers.
+Core package code lives in `agent/`, `world/`, `capabilities/`, `skills/`, and `interfaces/`. Keep long-running world observation in `world/perception/`. Keep event handling, state reduction, and capability invocation in the runner/agent path. Keep executable robot interfaces under `capabilities/` when they are model-callable powers. Tests live in `tests/` and fixtures live in `tests/fixtures/`. Capability-specific helper logic should stay close to the capability or skill that owns it; avoid rebuilding a generic runtime framework around those helpers.
 
 ## Build, Test, and Development Commands
 There is no separate build step; use Python directly from the repository root.
 
 ```bash
 python -m pytest
-python -m pytest backend/tests/test_agent_runner.py
-python -m pytest backend/tests/test_tracking_scripts.py
+python -m pytest tests/test_pi_agent_runner.py
+python -m pytest tests/test_tracking_agent.py
 ```
 
 The first command runs the full suite. The second and third target a single test module while iterating.
@@ -49,4 +49,4 @@ Use `pytest` for all coverage. Name files `test_<module>.py` and functions `test
 Current history uses short imperative commit subjects such as `Initial commit` and `Ignore video artifacts`. Keep commits focused and use the same style, for example `Add runtime state reuse tests`. PRs should include a brief summary, note any `.ENV` or API-setting changes, and list the exact test commands run. Include sample output or paths only when CLI behavior changes.
 
 ## Security & Configuration Tips
-Store secrets in `.ENV`; never commit API keys, session output, or sampled video assets. Video files are ignored by design. If you change module interfaces used by `skills/tracking/`, update the corresponding flow or helper script in the same change. Any change that affects decision flow should start from the skill contract first, then adjust backend helpers only as needed.
+Store secrets in `.ENV`; never commit API keys, session output, or sampled video assets. Video files are ignored by design. If you change module interfaces used by `skills/tracking/`, update the corresponding flow or helper script in the same change. Any change that affects decision flow should start from the skill contract first, then adjust agent/world/capability helpers only as needed.
