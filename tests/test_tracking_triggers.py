@@ -60,7 +60,7 @@ def test_derive_continuous_trigger_returns_cadence_review_when_due_and_target_pr
 
     assert trigger is not None
     assert trigger.type == TRIGGER_CADENCE_REVIEW
-    assert trigger.cause == "due_interval"
+    assert trigger.cause == "new_snapshot"
 
 
 def test_derive_continuous_trigger_returns_event_rebind_when_target_missing(tmp_path: Path) -> None:

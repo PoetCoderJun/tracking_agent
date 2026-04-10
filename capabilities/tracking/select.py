@@ -32,6 +32,8 @@ TRACKING_ROOT = ROOT / "backend" / "tracking"
 SKILL_TRACKING_ROOT = ROOT / "skills" / "tracking"
 DEFAULT_CONFIG_PATH = SKILL_TRACKING_ROOT / "references" / "robot-agent-config.json"
 CHAT_HISTORY_LIMIT = 12
+TRACKING_SELECT_MODEL = "qwen3.5-flash"
+SELECT_MODEL_MAX_ATTEMPTS = 2
 EXPLICIT_TARGET_ID_PATTERNS = (
     re.compile(r"\b(?:id|ID)\s*[:=]?\s*(\d+)\b"),
     re.compile(r"(?:id|ID)\s*为\s*(\d+)"),
@@ -303,6 +305,30 @@ def select_detection_by_track_id(detections: List[DetectionRecord], target_id: i
     return None
 
 
+def _bbox_intersects(a: List[int], b: List[int]) -> bool:
+    left = max(int(a[0]), int(b[0]))
+    top = max(int(a[1]), int(b[1]))
+    right = min(int(a[2]), int(b[2]))
+    bottom = min(int(a[3]), int(b[3]))
+    return right > left and bottom > top
+
+
+def _selected_box_overlaps_others(
+    *,
+    detections: List[DetectionRecord],
+    target_id: int,
+) -> bool:
+    selected = select_detection_by_track_id(detections, target_id)
+    if selected is None:
+        return False
+    for detection in detections:
+        if int(detection.track_id) == int(target_id):
+            continue
+        if _bbox_intersects(list(selected.bbox), list(detection.bbox)):
+            return True
+    return False
+
+
 def detection_records(detections: List[Dict[str, Any]]) -> List[DetectionRecord]:
     records: List[DetectionRecord] = []
     for detection in detections:
@@ -320,7 +346,6 @@ def detection_records(detections: List[Dict[str, Any]]) -> List[DetectionRecord]
 
 
 def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
-    raw_found = bool(result.get("found", False))
     target_id = result.get("bounding_box_id")
     if target_id is None:
         target_id = result.get("target_id")
@@ -351,28 +376,25 @@ def normalize_select_result(result: Dict[str, Any]) -> Dict[str, Any]:
         found = False
         target_id = None
         if decision == "wait":
-            if reason is None and reject_reason:
-                reason = reject_reason
-            if not reject_reason and reason is not None:
-                reject_reason = reason
+            if not reject_reason and text is not None:
+                reject_reason = text
         if decision == "ask":
             reject_reason = ""
 
-    if reason is None:
-        raise ValueError("reason is required")
-
-    return {
+    normalized = {
         "found": found and target_id is not None,
         "target_id": target_id,
         "bounding_box_id": target_id,
         "text": text,
-        "reason": reason,
         "reject_reason": reject_reason,
         "needs_clarification": needs_clarification,
         "clarification_question": clarification_question,
         "decision": decision,
         "candidate_checks": list(result.get("candidate_checks") or []),
     }
+    if reason is not None:
+        normalized["reason"] = reason
+    return normalized
 
 
 def _collect_matched_candidates(
@@ -466,7 +488,6 @@ def explicit_target_result(*, target_id: int, matched: Optional[DetectionRecord]
             "target_id": None,
             "bounding_box_id": None,
             "text": question,
-            "reason": "用户明确指定了目标 ID，但当前候选框中不存在该 ID。",
             "reject_reason": "",
             "needs_clarification": True,
             "clarification_question": question,
@@ -479,7 +500,6 @@ def explicit_target_result(*, target_id: int, matched: Optional[DetectionRecord]
         "target_id": int(target_id),
         "bounding_box_id": int(target_id),
         "text": text,
-        "reason": "用户明确指定了候选框 ID。",
         "reject_reason": "",
         "needs_clarification": False,
         "clarification_question": None,
@@ -507,37 +527,28 @@ def normalize_invalid_model_selection(
         detections=detections,
     )
     if rescued_target_id is not None:
-        rescue_reason = (
-            f"模型输出的 ID {int(target_id)} 不在当前候选列表中，"
-            f"已改用 candidate_checks 中唯一 match 的当前候选 ID {rescued_target_id}。"
-        )
-        base_reason = str(normalized.get("reason", "")).strip()
         return {
-            **normalized,
+            **{key: value for key, value in normalized.items() if key != "reason"},
             "found": True,
             "target_id": rescued_target_id,
             "bounding_box_id": rescued_target_id,
             "decision": "track",
             "text": "已确认继续跟踪该目标。" if behavior == "track" else "已确认目标。",
-            "reason": f"{base_reason} {rescue_reason}".strip() if base_reason else rescue_reason,
             "reject_reason": "",
             "needs_clarification": False,
             "clarification_question": None,
         }
 
     invalid_reason = f"模型返回的目标 ID {int(target_id)} 不在当前候选列表中，不能直接绑定。"
-    base_reason = str(normalized.get("reason", "")).strip()
-    reason = f"{base_reason} {invalid_reason}".strip() if base_reason else invalid_reason
 
     if behavior == "init":
         question = "当前候选框不足以稳定确认目标，请补充特征或直接指定候选框 ID。"
         return {
-            **normalized,
+            **{key: value for key, value in normalized.items() if key != "reason"},
             "found": False,
             "target_id": None,
             "bounding_box_id": None,
             "text": question,
-            "reason": reason,
             "reject_reason": "",
             "needs_clarification": True,
             "clarification_question": question,
@@ -545,13 +556,39 @@ def normalize_invalid_model_selection(
         }
 
     return {
-        **normalized,
+        **{key: value for key, value in normalized.items() if key != "reason"},
         "found": False,
         "target_id": None,
         "bounding_box_id": None,
         "text": "当前证据不足，保持等待原目标重新出现。",
-        "reason": reason,
         "reject_reason": invalid_reason,
+        "needs_clarification": False,
+        "clarification_question": None,
+        "decision": "wait",
+    }
+
+
+def enforce_conservative_track_decision(
+    *,
+    normalized: Dict[str, Any],
+    detections: List[DetectionRecord],
+) -> Dict[str, Any]:
+    if str(normalized.get("decision", "")).strip() != "track":
+        return normalized
+    target_id = normalized.get("target_id")
+    if target_id in (None, ""):
+        return normalized
+    if not _selected_box_overlaps_others(detections=detections, target_id=int(target_id)):
+        return normalized
+
+    overlap_reason = "当前选中的目标框与其他候选框发生重叠，不能把这个 tracker box 视为可信的单人目标框。"
+    return {
+        **{key: value for key, value in normalized.items() if key != "reason"},
+        "found": False,
+        "target_id": None,
+        "bounding_box_id": None,
+        "text": "当前目标框与其他候选框重叠，先保持等待。",
+        "reject_reason": overlap_reason,
         "needs_clarification": False,
         "clarification_question": None,
         "decision": "wait",
@@ -607,17 +644,29 @@ def _select_with_model(
     output_contract: str,
     max_tokens: int,
 ) -> tuple[Dict[str, Any], float]:
-    output = call_model(
-        api_key=settings.api_key,
-        base_url=settings.base_url,
-        timeout_seconds=settings.timeout_seconds,
-        model=model_name,
-        instruction=instruction,
-        image_paths=image_paths,
-        output_contract=output_contract,
-        max_tokens=max_tokens,
-    )
-    return normalize_select_result(parse_json_block(output["response_text"])), output["elapsed_seconds"]
+    last_error: Exception | None = None
+    total_elapsed_seconds = 0.0
+
+    for _ in range(SELECT_MODEL_MAX_ATTEMPTS):
+        output = call_model(
+            api_key=settings.api_key,
+            base_url=settings.base_url,
+            timeout_seconds=settings.timeout_seconds,
+            model=model_name,
+            instruction=instruction,
+            image_paths=image_paths,
+            output_contract=output_contract,
+            max_tokens=max_tokens,
+        )
+        total_elapsed_seconds += float(output["elapsed_seconds"])
+        try:
+            return normalize_select_result(parse_json_block(output["response_text"])), total_elapsed_seconds
+        except (json.JSONDecodeError, ValueError) as exc:
+            last_error = exc
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("select model returned no result")
 
 
 def execute_select_tool(
@@ -684,7 +733,7 @@ def execute_select_tool(
             )
             normalized, elapsed_seconds = _select_with_model(
                 settings=settings,
-                model_name=settings.sub_model,
+                model_name=TRACKING_SELECT_MODEL,
                 instruction=instruction,
                 image_paths=[overlay_path],
                 output_contract=config["contracts"]["select_init_target"],
@@ -717,7 +766,7 @@ def execute_select_tool(
                     normalized["needs_clarification"] = True
                     normalized["clarification_question"] = question
                     normalized["text"] = question
-                    normalized["reason"] = f"检测到 {len(matched_ids)} 个匹配目标，需要用户澄清。"
+                    normalized.pop("reason", None)
     else:
         if requested_target_id is not None:
             normalized = explicit_target_result(
@@ -737,7 +786,7 @@ def execute_select_tool(
             )
             normalized, elapsed_seconds = _select_with_model(
                 settings=settings,
-                model_name=settings.main_model,
+                model_name=TRACKING_SELECT_MODEL,
                 instruction=instruction,
                 image_paths=[*reference_paths, overlay_path],
                 output_contract=config["contracts"]["select_track_target"],
@@ -747,6 +796,10 @@ def execute_select_tool(
                 normalized=normalized,
                 detections=detections,
                 behavior=behavior,
+            )
+            normalized = enforce_conservative_track_decision(
+                normalized=normalized,
+                detections=detections,
             )
 
     if behavior == "track" and normalized["decision"] == "ask" and requested_target_id is None:
@@ -759,10 +812,7 @@ def execute_select_tool(
         normalized["reject_reason"] = normalized.get("reject_reason") or "当前是 track：原目标已找不到或证据不够稳定；证据不足时不能改绑。"
         if not normalized["text"]:
             normalized["text"] = "当前证据不足，保持等待原目标重新出现。"
-        if normalized["reason"]:
-            normalized["reason"] = f"{normalized['reason']} 当前是 track：原目标已找不到或证据不够稳定，已降级为 wait。".strip()
-        else:
-            normalized["reason"] = "当前是 track：原目标已找不到或证据不够稳定，已降级为 wait。"
+        normalized.pop("reason", None)
 
     crop_path = None
     rewrite_memory_input = None
@@ -785,12 +835,12 @@ def execute_select_tool(
                 ),
                 frame_id=str(frame["frame_id"]),
                 target_id=int(normalized["target_id"]),
-                confirmation_reason=normalized.get("reason"),
+                confirmation_reason=None,
                 candidate_checks=list(normalized.get("candidate_checks") or []),
             )
             break
 
-    return {
+    payload = {
         "behavior": behavior,
         "text": normalized["text"],
         "frame_id": str(frame["frame_id"]),
@@ -800,7 +850,6 @@ def execute_select_tool(
         "needs_clarification": normalized["needs_clarification"],
         "clarification_question": normalized["clarification_question"],
         "memory": str(context.get("memory", "")),
-        "reason": normalized["reason"],
         "reject_reason": str(normalized.get("reject_reason", "")).strip(),
         "candidate_checks": list(normalized.get("candidate_checks") or []),
         "decision": normalized["decision"],
@@ -813,6 +862,9 @@ def execute_select_tool(
         "elapsed_seconds": elapsed_seconds,
         "pending_question": normalized["clarification_question"] if normalized["decision"] == "ask" else None,
     }
+    if normalized.get("reason") not in (None, ""):
+        payload["reason"] = str(normalized.get("reason")).strip()
+    return payload
 
 
 def main() -> int:

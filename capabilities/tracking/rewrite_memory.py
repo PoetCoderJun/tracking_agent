@@ -23,6 +23,7 @@ from capabilities.tracking.memory import (
 
 SKILL_TRACKING_ROOT = ROOT / "skills" / "tracking"
 DEFAULT_CONFIG_PATH = SKILL_TRACKING_ROOT / "references" / "robot-agent-config.json"
+TRACKING_MEMORY_MODEL = "qwen3.5-flash"
 REFERENCE_VIEW_ALIASES = {
     "front": "front",
     "front_view": "front",
@@ -185,7 +186,7 @@ def execute_rewrite_memory_tool(
         api_key=settings.api_key,
         base_url=settings.base_url,
         timeout_seconds=settings.timeout_seconds,
-        model=settings.sub_model,
+        model=TRACKING_MEMORY_MODEL,
         instruction=prompt,
         image_paths=[crop_path, *frame_paths],
         output_contract=config["contracts"]["memory_json"],

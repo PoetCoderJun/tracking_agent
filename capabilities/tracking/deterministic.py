@@ -315,8 +315,10 @@ def _legacy_tracking_payload(select_output: Dict[str, Any]) -> Dict[str, Any]:
             if bool(select_output.get("found", False))
             else None
         ),
-        "reason": str(select_output.get("reason", "")).strip(),
     }
+    reason = str(select_output.get("reason", "")).strip()
+    if reason:
+        payload["reason"] = reason
     return ensure_rewrite_paths_exist(payload)
 
 

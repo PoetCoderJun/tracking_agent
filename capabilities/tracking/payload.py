@@ -35,8 +35,10 @@ def build_tracking_session_result(select_output: Dict[str, Any]) -> Dict[str, An
         "bounding_box_id": select_output.get("bounding_box_id"),
         "found": bool(select_output.get("found", False)),
         "text": _wait_feedback_text(select_output),
-        "reason": _optional_text(select_output.get("reason")),
     }
+    reason = _optional_text(select_output.get("reason"))
+    if reason is not None:
+        result["reason"] = reason
     if decision is not None:
         result["decision"] = decision
     reject_reason = _optional_text(select_output.get("reject_reason"))

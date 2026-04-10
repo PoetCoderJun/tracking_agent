@@ -11,12 +11,18 @@ from capabilities.tracking.context import (
     TRACKING_LIFECYCLE_SEEKING,
     normalize_tracking_state,
 )
-from capabilities.tracking.memory import tracking_memory_display_text, write_tracking_memory_snapshot
+from capabilities.tracking.memory import write_tracking_memory_snapshot
 from capabilities.tracking.rewrite_memory import execute_rewrite_memory_tool
 from capabilities.tracking.types import ACTION_ASK, ACTION_TRACK, ACTION_WAIT, TrackingDecision, TrackingTrigger
 
 TRACKING_SKILL_NAME = "tracking"
 DEFAULT_TRACKING_INTERVAL_SECONDS = 3.0
+PENDING_REWRITE_INPUT_KEY = "pending_rewrite_input"
+PENDING_REWRITE_REQUEST_ID_KEY = "pending_rewrite_request_id"
+PENDING_REWRITE_ENQUEUED_AT_KEY = "pending_rewrite_enqueued_at"
+PENDING_REWRITE_ERROR_KEY = "pending_rewrite_error"
+LAST_REWRITE_COMPLETED_AT_KEY = "last_rewrite_completed_at"
+LAST_REWRITE_REQUEST_ID_KEY = "last_rewrite_request_id"
 
 
 def _compact_response_payload(
@@ -132,8 +138,9 @@ def _session_result(decision: TrackingDecision, trigger: TrackingTrigger, reques
         "found": decision.action == ACTION_TRACK and decision.target_id not in (None, ""),
         "decision": decision.action,
         "text": decision.text,
-        "reason": decision.reason,
     }
+    if str(decision.reason or "").strip():
+        result["reason"] = str(decision.reason).strip()
     if decision.reject_reason:
         result["reject_reason"] = decision.reject_reason
     if decision.action == ACTION_ASK and decision.question:
@@ -185,31 +192,147 @@ def _tracking_state_patch(
     return patch
 
 
-def _execute_memory_effect(
+def _memory_rewrite_input(memory_effect: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    rewrite_input = None if not isinstance(memory_effect, dict) else dict(memory_effect.get("rewrite_input") or {})
+    if not rewrite_input:
+        return None
+    return rewrite_input
+
+
+def _queued_rewrite_patch(rewrite_input: Optional[Dict[str, Any]], *, request_id: str) -> Dict[str, Any]:
+    if not isinstance(rewrite_input, dict) or not rewrite_input:
+        return {
+            PENDING_REWRITE_INPUT_KEY: None,
+            PENDING_REWRITE_REQUEST_ID_KEY: None,
+            PENDING_REWRITE_ENQUEUED_AT_KEY: None,
+            PENDING_REWRITE_ERROR_KEY: None,
+        }
+    return {
+        PENDING_REWRITE_INPUT_KEY: dict(rewrite_input),
+        PENDING_REWRITE_REQUEST_ID_KEY: str(request_id).strip(),
+        PENDING_REWRITE_ENQUEUED_AT_KEY: time.time(),
+        PENDING_REWRITE_ERROR_KEY: None,
+    }
+
+
+def _clear_pending_rewrite_patch(*, request_id: str | None = None, error: str | None = None) -> Dict[str, Any]:
+    patch: Dict[str, Any] = {
+        PENDING_REWRITE_INPUT_KEY: None,
+        PENDING_REWRITE_REQUEST_ID_KEY: None,
+        PENDING_REWRITE_ENQUEUED_AT_KEY: None,
+        PENDING_REWRITE_ERROR_KEY: str(error or "").strip() or None,
+    }
+    if request_id:
+        patch[LAST_REWRITE_REQUEST_ID_KEY] = str(request_id).strip()
+    if error in (None, ""):
+        patch[LAST_REWRITE_COMPLETED_AT_KEY] = time.time()
+    return patch
+
+
+def pending_tracking_memory_rewrite(session: AgentSession) -> Optional[Dict[str, Any]]:
+    tracking_state = dict(session.capabilities.get(TRACKING_SKILL_NAME) or {})
+    rewrite_input = tracking_state.get(PENDING_REWRITE_INPUT_KEY)
+    if not isinstance(rewrite_input, dict) or not rewrite_input:
+        return None
+    normalized = dict(rewrite_input)
+    request_id = str(
+        tracking_state.get(PENDING_REWRITE_REQUEST_ID_KEY)
+        or normalized.get("request_id")
+        or ""
+    ).strip()
+    if request_id:
+        normalized["request_id"] = request_id
+    return normalized
+
+
+def drain_pending_tracking_memory_rewrite(
     *,
     sessions: AgentSessionStore,
     session_id: str,
     env_file: Path,
-    memory_effect: Optional[Dict[str, Any]],
-) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    rewrite_input = None if not isinstance(memory_effect, dict) else dict(memory_effect.get("rewrite_input") or {})
-    if not rewrite_input:
-        return None, None
+) -> Dict[str, Any]:
     session = sessions.load(session_id)
-    current_request_id = str(session.session.get("latest_request_id", "") or "").strip()
+    rewrite_input = pending_tracking_memory_rewrite(session)
+    if rewrite_input is None:
+        return {"status": "idle"}
+
+    tracking_state = normalize_tracking_state(session.capabilities.get(TRACKING_SKILL_NAME))
     target_request_id = str(rewrite_input.get("request_id", "") or "").strip()
+    current_request_id = str(session.session.get("latest_request_id", "") or "").strip()
+    target_id = rewrite_input.get("target_id")
+
     if target_request_id and current_request_id and current_request_id != target_request_id:
-        return None, rewrite_input
-    rewrite_output = execute_rewrite_memory_tool(
-        session_file=Path(session.state_paths["session_path"]),
-        arguments=rewrite_input,
-        env_file=env_file,
-    )
+        sessions.patch_skill_state(
+            session_id,
+            skill_name=TRACKING_SKILL_NAME,
+            patch=_clear_pending_rewrite_patch(request_id=target_request_id, error="stale_request"),
+        )
+        return {"status": "dropped", "reason": "stale_request", "request_id": target_request_id}
+    if target_id not in (None, "") and tracking_state.latest_target_id not in (None, ""):
+        if int(target_id) != int(tracking_state.latest_target_id):
+            sessions.patch_skill_state(
+                session_id,
+                skill_name=TRACKING_SKILL_NAME,
+                patch=_clear_pending_rewrite_patch(request_id=target_request_id, error="stale_target"),
+            )
+            return {"status": "dropped", "reason": "stale_target", "request_id": target_request_id}
+
+    try:
+        rewrite_output = execute_rewrite_memory_tool(
+            session_file=Path(session.state_paths["session_path"]),
+            arguments=dict(rewrite_input),
+            env_file=env_file,
+        )
+    except Exception as exc:
+        sessions.patch_skill_state(
+            session_id,
+            skill_name=TRACKING_SKILL_NAME,
+            patch=_clear_pending_rewrite_patch(request_id=target_request_id, error=f"rewrite_failed: {exc}"),
+        )
+        return {
+            "status": "failed",
+            "reason": "rewrite_failed",
+            "request_id": target_request_id,
+            "error": str(exc),
+        }
+
     refreshed_session = sessions.load(session_id)
+    refreshed_tracking_state = normalize_tracking_state(refreshed_session.capabilities.get(TRACKING_SKILL_NAME))
     refreshed_request_id = str(refreshed_session.session.get("latest_request_id", "") or "").strip()
     if target_request_id and refreshed_request_id and refreshed_request_id != target_request_id:
-        return None, rewrite_input
-    return rewrite_output, rewrite_input
+        sessions.patch_skill_state(
+            session_id,
+            skill_name=TRACKING_SKILL_NAME,
+            patch=_clear_pending_rewrite_patch(request_id=target_request_id, error="stale_request"),
+        )
+        return {"status": "dropped", "reason": "stale_request", "request_id": target_request_id}
+    if target_id not in (None, "") and refreshed_tracking_state.latest_target_id not in (None, ""):
+        if int(target_id) != int(refreshed_tracking_state.latest_target_id):
+            sessions.patch_skill_state(
+                session_id,
+                skill_name=TRACKING_SKILL_NAME,
+                patch=_clear_pending_rewrite_patch(request_id=target_request_id, error="stale_target"),
+            )
+            return {"status": "dropped", "reason": "stale_target", "request_id": target_request_id}
+
+    write_tracking_memory_snapshot(
+        state_root=Path(refreshed_session.state_paths["state_root"]),
+        session_id=refreshed_session.session_id,
+        memory=rewrite_output["memory"],
+        crop_path=rewrite_output.get("crop_path"),
+        reference_view=rewrite_output.get("reference_view"),
+        reset=str(rewrite_output.get("task", "")).strip() == "init",
+    )
+    sessions.patch_skill_state(
+        session_id,
+        skill_name=TRACKING_SKILL_NAME,
+        patch=_clear_pending_rewrite_patch(request_id=target_request_id),
+    )
+    return {
+        "status": "processed",
+        "request_id": target_request_id,
+        "rewrite_output": rewrite_output,
+    }
 
 
 def apply_tracking_decision(
@@ -244,17 +367,7 @@ def apply_tracking_decision(
             },
         }
     )
-    rewrite_output, rewrite_input = _execute_memory_effect(
-        sessions=sessions,
-        session_id=session_id,
-        env_file=env_file,
-        memory_effect=memory_effect,
-    )
-    if rewrite_output is not None:
-        memory_text = tracking_memory_display_text(rewrite_output.get("memory", {})).strip()
-        if memory_text:
-            session_result["text"] = f"{session_result['text']}\n{memory_text}".strip()
-            robot_response["text"] = f"{robot_response['text']}\n{memory_text}".strip()
+    rewrite_input = _memory_rewrite_input(memory_effect)
 
     sessions.apply_skill_result(session_id, {**session_result, "robot_response": dict(robot_response)})
     committed_session = sessions.load(session_id)
@@ -272,22 +385,12 @@ def apply_tracking_decision(
         request_id=str(session_result["request_id"]),
         interval_seconds=interval_seconds,
     )
+    skill_state_patch.update(
+        _queued_rewrite_patch(rewrite_input, request_id=str(session_result["request_id"]))
+    )
     sessions.patch_skill_state(session_id, skill_name=TRACKING_SKILL_NAME, patch=skill_state_patch)
 
     final_session = sessions.load(session_id)
-    if rewrite_output is not None:
-        latest_request_id = str(final_session.session.get("latest_request_id", "") or "").strip()
-        latest_result_request_id = str((final_session.latest_result or {}).get("request_id", "") or "").strip()
-        if (not latest_request_id or latest_request_id == trigger.request_id) and latest_result_request_id == trigger.request_id:
-            write_tracking_memory_snapshot(
-                state_root=Path(final_session.state_paths["state_root"]),
-                session_id=final_session.session_id,
-                memory=rewrite_output["memory"],
-                crop_path=rewrite_output.get("crop_path"),
-                reference_view=rewrite_output.get("reference_view"),
-                reset=str(rewrite_output.get("task", "")).strip() == "init",
-            )
-            final_session = sessions.load(session_id)
     return _compact_response_payload(
         session_id=session_id,
         skill_name=TRACKING_SKILL_NAME,
@@ -296,7 +399,7 @@ def apply_tracking_decision(
         robot_response=robot_response,
         tool=_behavior_for_trigger(trigger),
         tool_output=dict(decision.tool_output),
-        rewrite_output=rewrite_output,
+        rewrite_output=None,
         rewrite_memory_input=rewrite_input,
         latest_result=final_session.latest_result,
         session=final_session.session,

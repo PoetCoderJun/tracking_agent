@@ -1,5 +1,12 @@
 # Tracking Benchmark Log 2026-04-06
 
+This document is a historical log for the older bound-review benchmark result set.
+
+Latest benchmark references:
+
+- flash baseline: [tracking-benchmark-2026-04-10-qwen35flash.md](/Users/huzujun/Desktop/new/tracking_agent/docs/tracking-benchmark-2026-04-10-qwen35flash.md)
+- no-reason benchmark: [tracking-no-reason-benchmark-2026-04-11.md](/Users/huzujun/Desktop/new/tracking_agent/docs/tracking-no-reason-benchmark-2026-04-11.md)
+
 ## Setup
 
 Pipeline:
@@ -53,6 +60,7 @@ Lab-corridor result file:
 - This result is substantially better than the earlier `63.58%` and `43.05%` runs.
 - The main gain came from fixing bound-state review and rewrite gating, not from changing the model tier.
 - `qwen3.5-plus` was tested separately and did not improve the room score over the same repaired logic.
+- This file is no longer the latest benchmark summary. The repository's current recommended reference point is the `2026-04-11` no-reason benchmark.
 
 ## Pending
 
