@@ -1,5 +1,5 @@
 ---
-name: tracking_stop
+name: tracking-stop
 description: Use when the user asks to stop, cancel, clear, or end the current tracking target or continuous tracking loop.
 ---
 
@@ -39,9 +39,9 @@ Do not use this skill for:
 If your current PI environment needs a deterministic local helper, use the skill-local script:
 
 - In the normal PI runtime, prefer:
-  `python -m skills.tracking_stop.scripts.stop_turn`
+  `python ./skills/tracking-stop/scripts/stop_turn.py`
 - If the runtime env vars are not present, pass the explicit session/state arguments:
-  `python -m skills.tracking_stop.scripts.stop_turn --session-id <session-id> --state-root ./.runtime/agent-runtime`
+  `python ./skills/tracking-stop/scripts/stop_turn.py --session-id <session-id> --state-root ./.runtime/agent-runtime`
 
 Important:
 

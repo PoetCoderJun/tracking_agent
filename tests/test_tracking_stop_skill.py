@@ -35,7 +35,7 @@ def _frame_image(path: Path) -> Path:
 
 def test_tracking_stop_helper_clears_tracking_state_and_memory(tmp_path: Path) -> None:
     stop_turn = _load_script_module(
-        ROOT / "skills" / "tracking_stop" / "scripts" / "stop_turn.py",
+        ROOT / "skills" / "tracking-stop" / "scripts" / "stop_turn.py",
         "test_tracking_stop_turn",
     )
     state_root = tmp_path / "state"
@@ -83,7 +83,7 @@ def test_tracking_stop_helper_clears_tracking_state_and_memory(tmp_path: Path) -
     session = sessions.load("sess_tracking")
     memory_snapshot = read_tracking_memory_snapshot(state_root=state_root, session_id="sess_tracking")
 
-    assert payload["skill_name"] == "tracking_stop"
+    assert payload["skill_name"] == "tracking-stop"
     assert payload["tool"] == "stop"
     assert payload["session_result"]["behavior"] == "stop"
     assert payload["session_result"]["text"] == "已停止跟踪当前目标。"
@@ -101,7 +101,7 @@ def test_tracking_stop_helper_clears_tracking_state_and_memory(tmp_path: Path) -
 
 def test_tracking_stop_helper_returns_idle_message_when_nothing_is_running(tmp_path: Path) -> None:
     stop_turn = _load_script_module(
-        ROOT / "skills" / "tracking_stop" / "scripts" / "stop_turn.py",
+        ROOT / "skills" / "tracking-stop" / "scripts" / "stop_turn.py",
         "test_tracking_stop_turn_idle",
     )
     state_root = tmp_path / "state"
@@ -121,14 +121,14 @@ def test_tracking_stop_helper_returns_idle_message_when_nothing_is_running(tmp_p
     )
     session = sessions.load("sess_tracking")
 
-    assert payload["skill_name"] == "tracking_stop"
+    assert payload["skill_name"] == "tracking-stop"
     assert payload["session_result"]["text"] == "当前没有进行中的跟踪。"
     assert session.capabilities == {}
 
 
 def test_runner_commits_tracking_stop_skill_result(tmp_path: Path) -> None:
     stop_turn = _load_script_module(
-        ROOT / "skills" / "tracking_stop" / "scripts" / "stop_turn.py",
+        ROOT / "skills" / "tracking-stop" / "scripts" / "stop_turn.py",
         "test_tracking_stop_turn_runner",
     )
     state_root = tmp_path / "state"
@@ -154,7 +154,7 @@ def test_runner_commits_tracking_stop_skill_result(tmp_path: Path) -> None:
     payload = run_ordinary_skill_turn(
         sessions=sessions,
         session_id="sess_tracking",
-        skill_name="tracking_stop",
+        skill_name="tracking-stop",
         env_file=tmp_path / ".ENV",
         build_payload=lambda session, request_id, stale_guard: stop_turn.run_stop_turn(
             session_id=session.session_id,
@@ -168,7 +168,7 @@ def test_runner_commits_tracking_stop_skill_result(tmp_path: Path) -> None:
     session = sessions.load("sess_tracking")
 
     assert payload["status"] == "processed"
-    assert payload["skill_name"] == "tracking_stop"
+    assert payload["skill_name"] == "tracking-stop"
     assert session.latest_result["behavior"] == "stop"
     assert session.latest_result["text"] == "已停止跟踪当前目标。"
     assert session.capabilities["tracking"]["latest_target_id"] is None

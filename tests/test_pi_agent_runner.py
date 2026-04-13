@@ -84,7 +84,7 @@ def test_main_bootstraps_pi_runner_with_project_skills(monkeypatch, tmp_path: Pa
     assert "--model" in command
     assert skill_args
     assert any(path.endswith("/skills/tracking") for path in skill_args)
-    assert any(path.endswith("/skills/tracking_stop") for path in skill_args)
+    assert any(path.endswith("/skills/tracking-stop") for path in skill_args)
     assert any(path.endswith("/skills/tts") for path in skill_args)
     assert len(prompt_args) == 1
     assert "具身智能机器狗" in prompt_args[0]
