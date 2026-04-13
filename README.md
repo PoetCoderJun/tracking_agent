@@ -1,327 +1,205 @@
-# Tracking Agent
+# Robot Agent Runtime
 
-一个最小可运行的人体跟踪 Agent 工程，包含 3 个部分：
+这是项目当前的最简运行文档，只保留安装和启动相关内容。
 
-- Backend：接收机器人帧、保存会话状态、提供 API 和 WebSocket
-- Host Agent：读取 backend 上下文，调用 `skills/vision-tracking-skill/`，再把结果回写给 backend
-- Frontend：展示当前画面、检测框、会话结果和历史记录
+## 安装
 
-## 1. 安装指南
+需要：
 
-### 环境要求
-
-- Python `3.9.x`
-- Node.js `20.x`
+- Python `3.9`
 - `uv`
+- `pi`
 
-### 本地安装
-
-```bash
-git clone <your-repo-url>
-cd tracking_agent
-uv python install 3.9
-uv sync --python 3.9
-cd frontend
-npm install
-cd ..
-```
-
-### `.ENV`
-
-如果你要运行 `tracking-host-agent`，仓库根目录需要 `.ENV`：
+安装项目依赖：
 
 ```bash
-DASHSCOPE_API_KEY=your_api_key
+uv sync
 ```
 
-可选项：
+如果当前 shell 需要 `.ENV` 里的凭证，先执行：
 
 ```bash
-DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-DASHSCOPE_MODEL=qwen3.5-plus
-DASHSCOPE_SUB_MODEL=qwen3.5-flash
-DASHSCOPE_CHAT_MODEL=qwen3.5-flash
+set -a && source .ENV && set +a
 ```
 
-## 2. 服务器安装指南
+## 运行模型
 
-下面是一台全新 Ubuntu 机器的最小安装步骤。
+当前启动面分成三块：
 
-### 安装系统依赖
+- `world writer`：唯一常驻组件，持续写入 perception，并把同一帧的 system1 结果一起落进同一份 perception snapshot。
+- `active session`：主 runner 创建并持有的会话标识。skills 和 runtime 都从这里读写 agent state，但不负责偷偷创建或切换它。
+- `pi`：聊天入口。`e-agent` 现在会以前台 supervisor 的形式拉起 `pi` 子进程，并在同一条 session 上接管 tracking 的持续 follow-up turn。
+
+## 当前内核结构
+
+当前代码结构按 `2025 Q1答辩.pptx` 第 8/9 页收口为：
+
+- `agent/`：唯一 runner path、session truth、continuation 和 turn orchestration。
+- `world/`：环境层；`perception`、system1 input、snapshot、cache、keyframe 与 frame artifacts 都在这里落盘。
+- `capabilities/`：模型可调用的统一能力面；`tracking`、`tts`、`feishu`、`web_search`、`actions` 都按 capability 归属。
+- `skills/`：给 `pi` 的 skill contract 和 skill-local helper。skill 保持即插即用；仓库不会再为普通 skill 在平台层手写一套镜像 runtime。skill 如果需要附带执行辅助或 viewer 扩展，优先自带在自己的 `scripts/` 里。
+- `interfaces/`：共享状态读取界面；当前 `viewer` 只在这里，不参与调度。
+- `scripts/`：薄入口；只做参数解析、环境拼装和 owner dispatch。
+
+当前主路径不再保留额外的 tracking CLI 包装层，也不再依赖脚本级 loop/viewer wrapper 来进入核心运行逻辑。
+
+## 只启动 PI
+
+这是最小聊天流程，适合只想让 `pi` 进来读当前 perception、调用 skills、手动触发 turn 的场景。
+
+1. 启动常驻环境写入：
 
 ```bash
-sudo apt update
-sudo apt install -y git curl ca-certificates build-essential
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-uv python install 3.9
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+uv run robot-agent-environment-writer --source 0
 ```
 
-### 拉代码并安装依赖
+2. 直接启动主 runner：
 
 ```bash
-git clone <your-repo-url> /srv/tracking_agent
-cd /srv/tracking_agent
-uv sync --python 3.9
-cd frontend
-npm install
-cd ..
+uv run e-agent
 ```
 
-### 配置 `.ENV`
+说明：
+
+- `e-agent` 会先 bootstrap 主 runner session，然后保持为前台 supervisor，并拉起 `pi` 子进程。
+- 会显式关闭 `pi` 的默认 skills 发现，只加载仓库内 `skills/` 和你额外传入的 `--skill`。
+- `e-agent` 会给 `pi` 追加一段系统级 embodied grounding prompt：需要知道当前世界状态时，先读取 `perception/snapshot.json` 的 `latest_frame.image_path`，把那张图当作当前画面依据。
+- `e-agent` 默认直接拉起 `pi`，避免交互 TUI 在 macOS 沙箱里触发终端 raw mode 错误。
+- 如果你明确要把 `pi` 放进 macOS `sandbox-exec`，再显式传 `--pi-sandbox`。
+- 开启 `--pi-sandbox` 后，如果某个 workflow 还需要额外写目录，可以追加 `--pi-writable-dir /abs/path`。
+- 如果你要固定 session id：
 
 ```bash
-cd /srv/tracking_agent
-cat > .ENV <<'EOF'
-DASHSCOPE_API_KEY=your_api_key
-EOF
+uv run e-agent --session-id sess_001
 ```
 
-## 3. 如何让服务器运转起来
-
-### 开发模式：先用 3 个终端跑通
-
-终端 1，启动 backend：
+- 如果你要重置后再进 `pi`：
 
 ```bash
-cd /srv/tracking_agent
-uv run tracking-backend --host 0.0.0.0 --port 8001
+uv run e-agent --fresh
 ```
 
-终端 2，启动 host agent：
+- 在 `pi` 里成功完成 tracking-init 这一步后，会自动激活同 session 的 tracking follow-up。
+- 这段 follow-up 不是 skill，而是 `e-agent` supervisor 持有的持续业务流程。
+- follow-up 默认按 3 秒 cadence 继续做 `tracking-track`，如果当前目标 `track id` 丢失，也会立即触发一次恢复判断。
+- 如果在 `pi` 里重新指定了新的跟踪对象，当前 session 的 tracking memory/runtime 标记会被重置，并切到新的目标继续 follow-up。
+
+## 完整 Tracking 启动
+
+如果你要 world writer + websocket viewer 一起跑，直接用 stack：
+
+摄像头：
 
 ```bash
-cd /srv/tracking_agent
-uv run tracking-host-agent \
-  --backend-base-url http://127.0.0.1:8001
+uv run robot-agent-tracking-stack --source 0
 ```
 
-终端 3，启动前端开发服务器：
+视频：
 
 ```bash
-cd /srv/tracking_agent/frontend
-export VITE_BACKEND_PROXY_TARGET=http://127.0.0.1:8001
-npm run dev -- --host 0.0.0.0 --port 5173
+uv run robot-agent-tracking-stack \
+  --source tests/fixtures/demo_video.mp4 \
+  --realtime-playback
 ```
 
-访问地址：
-
-```text
-http://<server-ip>:5173
-```
-
-健康检查：
+如果要把前端一起拉起：
 
 ```bash
-curl http://127.0.0.1:8001/healthz
+uv run robot-agent-tracking-stack \
+  --source tests/fixtures/demo_video.mp4 \
+  --realtime-playback \
+  --start-frontend
 ```
 
-### 发送一段测试视频
+stack 启动后，再执行：
 
 ```bash
-cd /srv/tracking_agent
-uv run tracking-robot-stream \
-  --source test_data/0045.mp4 \
-  --text "跟踪穿黑衣服的人" \
-  --device cpu \
-  --tracker bytetrack.yaml
+uv run e-agent
 ```
 
-如果是本机摄像头：
+viewer 会跟随当前 active session，显示 tracking 状态、当前 memory、最新回复和展示帧。
+
+## 手动分开启动 Tracking
+
+如果你不想用 stack，也可以分开起：
+
+1. world writer：
 
 ```bash
-cd /srv/tracking_agent
-uv run tracking-robot-stream \
-  --source 0 \
-  --text "跟踪穿黑衣服的人" \
-  --device cpu \
-  --tracker bytetrack.yaml
+uv run robot-agent-environment-writer --source 0
 ```
 
-注意：
-
-- `tracking-host-agent` 默认会处理所有 session；只有你显式传 `--session-id <value>` 时，才会只处理单个 session
-- 如果你希望某个 robot stream 固定复用同一个会话，可以显式给 `tracking-robot-stream --session-id <value>`
-- 服务器没有 GPU 时，`tracking-robot-stream` 用 `--device cpu`
-- 前端开发服务器可用 `VITE_BACKEND_PROXY_TARGET` 和 `VITE_BACKEND_PROXY_WS_TARGET` 改代理地址
-- `tracking-host-agent --backend-base-url` 和 `tracking-robot-stream --backend-base-url` 都可以直接填写服务器 IP 或域名，例如 `10.0.0.8:8001`
-
-### 生产模式：后端直接托管前端
-
-如果你要在一台服务器上直接部署一个可访问的成品，推荐把前端先 build，再由 backend 直接托管静态文件。这样只需要对外暴露 backend 一个端口。
-
-构建前端：
+2. 主 runner：
 
 ```bash
-cd /srv/tracking_agent/frontend
-npm run build
+uv run e-agent
 ```
 
-启动 backend（同时提供 API、WebSocket、前端页面）：
+如果你要 viewer websocket：
 
 ```bash
-cd /srv/tracking_agent
-uv run tracking-backend \
-  --host 0.0.0.0 \
-  --port 8001 \
-  --public-base-url http://<server-ip>:8001 \
-  --frontend-dist ./frontend/dist \
-  --allow-origin http://<server-ip>:8001
+uv run python -m interfaces.viewer.stream --state-root ./.runtime/agent-runtime
 ```
 
-启动 host agent：
+## 常用调试命令
+
+看当前 active session：
 
 ```bash
-cd /srv/tracking_agent
-uv run tracking-host-agent \
-  --backend-base-url http://127.0.0.1:8001
+uv run robot-agent session-show --state-root ./.runtime/agent-runtime
 ```
 
-此时访问：
-
-```text
-http://<server-ip>:8001
-```
-
-### 一键启动 / 一键关闭 / 实时看日志
-
-仓库自带 3 个脚本，默认会把 backend 和 host-agent 的日志统一放到同一个目录：
-
-- `./scripts/server_start.sh`
-- `./scripts/server_stop.sh`
-- `./scripts/server_watch.sh`
-
-默认日志和 pid 目录：
-
-```text
-./runtime/server/logs/
-./runtime/server/pids/
-```
-
-其中：
-
-- backend 日志：`./runtime/server/logs/backend.log`
-- agent 日志：`./runtime/server/logs/host-agent.log`
-- 合并日志：`./runtime/server/logs/combined.log`
-
-一键启动：
+如果你确实想手动固定或重置主 session，仍然可以显式执行底层命令：
 
 ```bash
-cd /srv/tracking_agent
-./scripts/server_start.sh
+uv run robot-agent runner-bootstrap --session-id sess_001 --state-root ./.runtime/agent-runtime --fresh
 ```
 
-一键关闭：
+看全局 perception 最新 frame：
 
 ```bash
-cd /srv/tracking_agent
-./scripts/server_stop.sh
+uv run robot-agent-perception latest-frame --state-root ./.runtime/agent-runtime
 ```
 
-实时看合并日志：
+直接看全局 perception snapshot.json：
 
 ```bash
-cd /srv/tracking_agent
-./scripts/server_watch.sh
+cat ./.runtime/agent-runtime/perception/snapshot.json
 ```
 
-也可以直接：
+查看同一份 perception snapshot 里的 system1 字段：
 
 ```bash
-tail -F /srv/tracking_agent/runtime/server/logs/combined.log
+cat ./.runtime/agent-runtime/perception/snapshot.json
 ```
 
-脚本默认行为：
-
-- 启动前会自动执行 `frontend/npm run build`
-- backend 对外监听 `0.0.0.0:8001`
-- backend 内部回环地址默认是 `http://127.0.0.1:8001`
-- host-agent 默认处理所有 session
-
-如需覆盖默认值，可以在执行前设置这些环境变量：
+手动做一次 skill-local tracking init：
 
 ```bash
-TRACKING_SERVER_HOST=0.0.0.0
-TRACKING_SERVER_PORT=8001
-# 可选：只让 host-agent 处理某个固定 session
-TRACKING_SERVER_SESSION_ID=
-TRACKING_SERVER_PUBLIC_BASE_URL=http://<server-ip>:8001
-TRACKING_SERVER_ALLOW_ORIGIN=http://<server-ip>:8001
-TRACKING_SERVER_INTERNAL_BACKEND_URL=http://127.0.0.1:8001
-TRACKING_SERVER_RUNTIME_DIR=/srv/tracking_agent/runtime/server
-TRACKING_SERVER_ENV_FILE=/srv/tracking_agent/.ENV
-TRACKING_SERVER_SKIP_FRONTEND_BUILD=1
+python -m skills.tracking.scripts.init_turn \
+  --state-root ./.runtime/agent-runtime \
+  --artifacts-root ./.runtime/pi-agent \
+  --text "开始跟踪穿黑衣服的人"
 ```
 
-如果前端单独部署在别的域名或端口：
-
-- backend 启动时用 `--public-base-url` 生成可被前端直接访问的绝对资源地址
-- frontend 构建前设置 `VITE_BACKEND_BASE_URL=http://<backend-ip>:8001`
-- 如需显式指定 WebSocket 地址，再设置 `VITE_BACKEND_WS_BASE_URL=ws://<backend-ip>:8001`
-- backend 可用 `--allow-origin http://<frontend-origin>` 只放行指定前端来源
-
-### 需要常驻运行时，用 systemd
-
-把下面 3 个服务文件中的路径和用户名改成你自己的。
-
-`/etc/systemd/system/tracking-backend.service`
-
-```ini
-[Unit]
-Description=Tracking Agent Backend
-After=network.target
-
-[Service]
-User=ubuntu
-WorkingDirectory=/srv/tracking_agent
-Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
-ExecStart=/home/ubuntu/.local/bin/uv run tracking-backend --host 0.0.0.0 --port 8001 --public-base-url http://<server-ip>:8001 --frontend-dist ./frontend/dist --allow-origin http://<server-ip>:8001
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-`/etc/systemd/system/tracking-host-agent.service`
-
-```ini
-[Unit]
-Description=Tracking Host Agent
-After=network.target tracking-backend.service
-
-[Service]
-User=ubuntu
-WorkingDirectory=/srv/tracking_agent
-Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
-ExecStart=/home/ubuntu/.local/bin/uv run tracking-host-agent --backend-base-url http://127.0.0.1:8001
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-加载并启动：
+手动做一次确定性 tracking track：
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now tracking-backend
-sudo systemctl enable --now tracking-host-agent
+uv run robot-agent tracking-track \
+  --state-root ./.runtime/agent-runtime \
+  --artifacts-root ./.runtime/pi-agent
 ```
 
-查看状态：
+手动做一次 skill-local tts speak：
 
 ```bash
-sudo systemctl status tracking-backend
-sudo systemctl status tracking-host-agent
+python -m skills.tts.scripts.speak_turn \
+  --state-root ./.runtime/agent-runtime \
+  --artifacts-root ./.runtime/pi-agent \
+  --text "实验开始，请注意安全。"
 ```
 
-查看日志：
+说明：
 
-```bash
-journalctl -u tracking-backend -f
-journalctl -u tracking-host-agent -f
-```
+- 上面这条只用于确定性检查。
+- 正常主路径下，不需要再手动启动单独的 `robot-agent-tracking-loop` 来保持持续跟踪；这条持续流程由 `scripts/e_agent.py` 接管。

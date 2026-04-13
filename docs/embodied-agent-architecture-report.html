@@ -1,0 +1,1217 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tracking Agent：一份关于简洁与边界的架构报告</title>
+    <style>
+      :root {
+        --paper: #fdfcfa;
+        --ink: #1a1a1a;
+        --ink-light: #4a4a4a;
+        --ink-muted: #737373;
+        --accent: #8f4c32;
+        --accent-soft: #c9a189;
+        --accent-forest: #3d5a40;
+        --accent-gold: #8c6b2f;
+        --line: #e8e5df;
+        --line-strong: #d8d4cb;
+        --highlight: #f7f5f0;
+        --font-display: "Source Han Serif SC", "Noto Serif CJK SC", "STSong", Georgia, serif;
+        --font-body: "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        --font-mono: "SF Mono", "Fira Code", Consolas, monospace;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #f0ede6;
+        color: var(--ink);
+        font-family: var(--font-body);
+        font-size: 16px;
+        line-height: 1.75;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .page {
+        width: min(1000px, calc(100vw - 40px));
+        min-height: calc(100vh - 32px);
+        margin: 16px auto;
+        padding: 56px 64px 48px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        box-shadow: 0 4px 24px rgba(0,0,0,0.04);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        break-after: page;
+        page-break-after: always;
+        position: relative;
+      }
+
+      .page:last-child {
+        break-after: auto;
+        page-break-after: auto;
+      }
+
+      .page-number {
+        position: absolute;
+        bottom: 32px;
+        right: 64px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--ink-muted);
+        letter-spacing: 0.1em;
+      }
+
+      .cover .page-number,
+      .closing .page-number {
+        display: none;
+      }
+
+      /* Typography */
+      h1, h2, h3 {
+        font-family: var(--font-display);
+        font-weight: 600;
+        margin: 0;
+        line-height: 1.25;
+      }
+
+      h1 {
+        font-size: 3.2rem;
+        letter-spacing: -0.02em;
+        color: var(--ink);
+      }
+
+      h2 {
+        font-size: 2rem;
+        margin-bottom: 0.6em;
+        color: var(--ink);
+      }
+
+      h3 {
+        font-size: 1.15rem;
+        margin-bottom: 0.5em;
+        color: var(--accent-forest);
+        font-family: var(--font-body);
+        font-weight: 600;
+      }
+
+      p {
+        margin: 0 0 1em;
+        color: var(--ink-light);
+      }
+
+      p:last-child {
+        margin-bottom: 0;
+      }
+
+      .kicker {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-muted);
+        margin-bottom: 1em;
+      }
+
+      .lead {
+        font-size: 1.25rem;
+        line-height: 1.65;
+        color: var(--ink-light);
+        font-family: var(--font-display);
+      }
+
+      /* Cover */
+      .cover {
+        justify-content: center;
+      }
+
+      .cover-content {
+        max-width: 720px;
+      }
+
+      .cover h1 {
+        margin-bottom: 0.4em;
+      }
+
+      .cover-subtitle {
+        font-size: 1.35rem;
+        line-height: 1.6;
+        color: var(--ink-light);
+        margin-bottom: 2.5em;
+        max-width: 26em;
+      }
+
+      .cover-meta {
+        display: flex;
+        gap: 40px;
+        font-size: 0.9rem;
+        color: var(--ink-muted);
+      }
+
+      .cover-meta-item strong {
+        display: block;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--accent);
+        margin-bottom: 4px;
+      }
+
+      /* Content layouts */
+      .page-body {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .section-header {
+        margin-bottom: 2.5em;
+        max-width: 640px;
+      }
+
+      .section-header .kicker {
+        color: var(--accent);
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        align-items: start;
+      }
+
+      .three-col {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 32px;
+      }
+
+      .four-col {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 24px;
+      }
+
+      /* Cards */
+      .card {
+        background: var(--highlight);
+        border: 1px solid var(--line);
+        padding: 24px;
+        border-radius: 4px;
+      }
+
+      .card strong {
+        display: block;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        margin-bottom: 10px;
+      }
+
+      .card p {
+        font-size: 0.95rem;
+        line-height: 1.7;
+      }
+
+      .card-border-top {
+        border-top: 3px solid var(--accent-forest);
+      }
+
+      .card-border-gold {
+        border-top: 3px solid var(--accent-gold);
+      }
+
+      /* Architecture blocks */
+      .arch-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .arch-item {
+        background: var(--highlight);
+        border: 1px solid var(--line-strong);
+        border-top: 3px solid var(--accent-forest);
+        padding: 20px;
+        text-align: center;
+        border-radius: 3px;
+      }
+
+      .arch-item h4 {
+        font-family: var(--font-display);
+        font-size: 1.1rem;
+        margin: 0 0 8px;
+        color: var(--ink);
+      }
+
+      .arch-item p {
+        font-size: 0.85rem;
+        line-height: 1.6;
+        color: var(--ink-light);
+        margin: 0;
+      }
+
+      .arch-spine {
+        background: linear-gradient(90deg, rgba(143,76,50,0.06), rgba(143,76,50,0.02));
+        border: 1px dashed var(--line-strong);
+        padding: 16px 24px;
+        text-align: center;
+        margin-bottom: 24px;
+        border-radius: 3px;
+      }
+
+      .arch-spine strong {
+        color: var(--accent);
+        font-size: 0.85rem;
+        letter-spacing: 0.05em;
+      }
+
+      .arch-spine p {
+        margin: 6px 0 0;
+        font-size: 0.9rem;
+        color: var(--ink-light);
+      }
+
+      .arch-entry-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+
+      .arch-entry {
+        background: rgba(143,76,50,0.04);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 14px 16px;
+        text-align: center;
+      }
+
+      .arch-entry strong {
+        display: block;
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 4px;
+      }
+
+      .arch-entry p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--ink-light);
+      }
+
+      .arch-diagram {
+        border: 1px solid var(--line-strong);
+        background: linear-gradient(180deg, rgba(247,245,240,0.9), rgba(253,252,250,0.98));
+        border-radius: 4px;
+        padding: 22px;
+        margin-bottom: 20px;
+      }
+
+      .arch-lanes {
+        display: grid;
+        grid-template-columns: 1.05fr 1.3fr 1.05fr;
+        gap: 18px;
+      }
+
+      .arch-lane {
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: rgba(255,255,255,0.65);
+        padding: 18px;
+      }
+
+      .arch-lane.input {
+        border-top: 3px solid var(--accent-forest);
+      }
+
+      .arch-lane.runner {
+        border-top: 3px solid var(--accent);
+      }
+
+      .arch-lane.capability {
+        border-top: 3px solid var(--accent-gold);
+      }
+
+      .arch-lane h4 {
+        margin: 0 0 10px;
+        font-size: 1rem;
+        color: var(--ink);
+      }
+
+      .arch-lane p {
+        font-size: 0.88rem;
+        line-height: 1.65;
+      }
+
+      .arch-stack {
+        display: grid;
+        gap: 10px;
+      }
+
+      .arch-stack-item {
+        border: 1px solid var(--line);
+        background: var(--highlight);
+        border-radius: 3px;
+        padding: 12px 14px;
+      }
+
+      .arch-stack-item strong {
+        display: block;
+        font-size: 0.8rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin-bottom: 4px;
+      }
+
+      .arch-stack-item p {
+        margin: 0;
+        font-size: 0.83rem;
+        line-height: 1.6;
+        color: var(--ink-light);
+      }
+
+      /* Quote / highlight */
+      .pull-quote {
+        font-family: var(--font-display);
+        font-size: 1.5rem;
+        line-height: 1.5;
+        color: var(--ink);
+        padding-left: 24px;
+        border-left: 3px solid var(--accent-soft);
+        margin: 1.5em 0;
+      }
+
+      .pull-quote cite {
+        display: block;
+        font-family: var(--font-body);
+        font-size: 0.85rem;
+        color: var(--ink-muted);
+        margin-top: 0.6em;
+        font-style: normal;
+      }
+
+      /* Lists */
+      .bullet-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+
+      .bullet-list li {
+        position: relative;
+        padding-left: 1.4em;
+        margin-bottom: 0.8em;
+        color: var(--ink-light);
+      }
+
+      .bullet-list li::before {
+        content: "—";
+        position: absolute;
+        left: 0;
+        color: var(--accent);
+      }
+
+      /* Comparison */
+      .compare-item {
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: 3px;
+      }
+
+      .compare-item.good {
+        border-top: 3px solid var(--accent-forest);
+      }
+
+      .compare-item.bad {
+        border-top: 3px solid var(--accent);
+      }
+
+      .compare-item strong {
+        display: block;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 8px;
+      }
+
+      .compare-item.good strong { color: var(--accent-forest); }
+      .compare-item.bad strong { color: var(--accent); }
+
+      .compare-item p {
+        font-size: 0.92rem;
+        line-height: 1.65;
+        margin: 0;
+      }
+
+      /* Closing */
+      .closing {
+        justify-content: center;
+        text-align: center;
+      }
+
+      .closing-content {
+        max-width: 680px;
+        margin: 0 auto;
+      }
+
+      .closing .lead {
+        font-size: 1.4rem;
+        color: var(--ink-light);
+      }
+
+      /* Flow steps */
+      .flow-row {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 12px;
+        margin-top: 1.5em;
+      }
+
+      .flow-step {
+        background: var(--highlight);
+        border: 1px solid var(--line);
+        padding: 16px;
+        position: relative;
+      }
+
+      .flow-step::after {
+        content: "→";
+        position: absolute;
+        top: 50%;
+        right: -10px;
+        transform: translateY(-50%);
+        color: var(--line-strong);
+        font-size: 18px;
+      }
+
+      .flow-step:last-child::after {
+        content: none;
+      }
+
+      .flow-step .step-num {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--accent);
+        letter-spacing: 0.1em;
+        margin-bottom: 6px;
+      }
+
+      .flow-step h4 {
+        font-size: 0.95rem;
+        margin: 0 0 6px;
+        color: var(--ink);
+      }
+
+      .flow-step p {
+        font-size: 0.8rem;
+        line-height: 1.6;
+        color: var(--ink-muted);
+        margin: 0;
+      }
+
+      /* Print & responsive */
+      @media print {
+        body {
+          background: #fff;
+        }
+        .page {
+          width: auto;
+          min-height: 274mm;
+          margin: 0;
+          box-shadow: none;
+          border: none;
+        }
+      }
+
+      @media (max-width: 900px) {
+        .page {
+          width: calc(100vw - 24px);
+          padding: 36px 28px 32px;
+        }
+        h1 { font-size: 2.2rem; }
+        h2 { font-size: 1.5rem; }
+        .two-col, .three-col, .four-col, .arch-row, .flow-row, .arch-entry-row, .arch-lanes {
+          grid-template-columns: 1fr;
+        }
+        .flow-step::after {
+          content: "↓";
+          right: auto;
+          left: 50%;
+          bottom: -14px;
+          top: auto;
+          transform: translateX(-50%);
+        }
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- Page 1: Cover -->
+    <section class="page cover">
+      <div class="cover-content">
+        <div class="kicker">Architecture Report</div>
+        <h1>机器人的 Agent</h1>
+        <p class="cover-subtitle">
+          关键不是做一个更复杂的调度框架，<br/>
+          而是反过来思考：什么样的系统边界，<br/>
+          才能让大模型在物理世界里真正承担起慢思考的角色？
+        </p>
+        <div class="cover-meta">
+          <div class="cover-meta-item">
+            <strong>核心信条</strong>
+            让大模型在 Agent 里充分释放慢思考能力
+          </div>
+          <div class="cover-meta-item">
+            <strong>当前形态</strong>
+            一个以 Tracking 和 Speech 为能力样例的 Embodied Agent Kernel
+          </div>
+          <div class="cover-meta-item">
+            <strong>设计入口</strong>
+            对话触发，观察环境，调用工具，验证闭环
+          </div>
+        </div>
+      </div>
+      <div class="page-number">00</div>
+    </section>
+
+    <!-- Page 2: What this project is -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">01 / 出发点</div>
+          <h2>我们要做机器人的 Agent</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          机器人的底层运动控制、反射性避障、电机驱动，是快速的 System 1。而我们的目标是构建它的<strong>Agent</strong>：一个能够慢思考、拆解任务、调用工具、验证结果的认知决策层。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>Agent 应该由大模型本身来驱动</h3>
+            <p>
+              过往做 embodied agent 时，我们习惯于在一个统一的调度框架里写死业务编排逻辑：跟踪目标要写一套状态机，导航要写一套流程控制。结果是，<strong>框架越来越重，大模型被压缩成了只负责"最后一步分类"的薄层</strong>，它的拆解、推理、验证能力都被硬编码的逻辑扼杀了。
+            </p>
+            <p>
+              Tracking Agent 的核心理念是反过来的：我们要做的不是"一个会调用大模型的框架"，而是<strong>给大模型提供一个安全、确定、可观察的具身环境</strong>，让它自己去做拆解、思考、闭环和验证。runner 不是编排器，而是 Agent 的运行容器。
+            </p>
+          </div>
+          <div class="card" style="border-top: 3px solid var(--accent);">
+            <strong>Embodied Agent 的四大能力</strong>
+            <ul class="bullet-list">
+              <li><strong>拆解任务：</strong>把开放式具身目标分解为观察、澄清、计划、执行、恢复等可落地步骤。</li>
+              <li><strong>思考推理：</strong>基于环境输入、System 1 信号、设备状态与历史上下文判断当前世界状态、风险和下一步策略。</li>
+              <li><strong>调用能力：</strong>通过 CLI/API 调用沟通、移动、操作、导航、媒体与其他具身能力来影响世界。</li>
+              <li><strong>验证闭环：</strong>比较动作后的世界变化与预期是否一致，在偏差出现时修正、重试、回退或请求接管。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>与纯云端 agent（如 Operator / Computer Use）的根本区别</strong>
+          <div class="two-col" style="margin-top: 16px;">
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent);">Operator：数字世界的 Agent</h4>
+              <p style="font-size: 0.95rem;">
+                环境是标准化的网页和 API。操作可撤销、状态可重拉、并行探索没有物理风险。它的闭环验证很简单：刷新页面，看结果对不对。
+              </p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Tracking Agent：物理世界的 Agent</h4>
+              <p style="font-size: 0.95rem;">
+                环境是连续、不可逆的物理现实。Agent 必须处理<strong>时间连续性</strong>和<strong>动作后果的不可撤销性</strong>。大模型不仅要思考"做什么"，还要在每一轮验证"做了之后世界变成什么样"，并基于这个变化继续推理。
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">01</div>
+    </section>
+
+    <!-- Page 3: Architecture overview -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">02 / 架构骨架</div>
+          <h2>Agent 的工作空间</h2>
+          <p class="lead">
+            系统的全部复杂性，被收敛成给大模型提供的一个安全、确定、可观察的工作空间。没有中央调度器去限制模型的推理，只有清晰的边界来保护物理世界的安全。
+          </p>
+        </div>
+
+        <div class="arch-entry-row">
+          <div class="arch-entry">
+            <strong>Chat</strong>
+            <p>对话触发 Agent 回合</p>
+          </div>
+          <div class="arch-entry">
+            <strong>Script</strong>
+            <p>脚本和自动流程触发执行</p>
+          </div>
+          <div class="arch-entry">
+            <strong>Interface</strong>
+            <p>外部界面或设备事件进入系统</p>
+          </div>
+        </div>
+
+        <div class="arch-diagram">
+          <div class="arch-lanes">
+            <div class="arch-lane input">
+              <h4>Continuous Input Layer</h4>
+              <div class="arch-stack">
+                <div class="arch-stack-item">
+                  <strong>Perception</strong>
+                  <p>主常驻输入层。持续提供视觉、语音、设备状态与时间连续的世界快照。</p>
+                </div>
+                <div class="arch-stack-item">
+                  <strong>Reactive Input</strong>
+                  <p>承接 System 1 推理结果或中间数据产物，并把这些数据同样按需保存下来，作为后续推理的输入</p>
+                </div>
+              </div>
+
+            </div>
+
+            <div class="arch-lane runner">
+              <h4>Agent Runner</h4>
+              <div class="arch-stack">
+                <div class="arch-stack-item">
+                  <strong>Context Composer</strong>
+                  <p>把输入层、历史上下文和任务目标整理成一轮可工作的认知输入。</p>
+                </div>
+                <div class="arch-stack-item">
+                  <strong>Runner</strong>
+                  <p>大模型在这里拆解任务、推理判断，并通过唯一动作提交权决定是否调用能力。</p>
+                </div>
+                <div class="arch-stack-item">
+                  <strong>Memory</strong>
+                  <p>保存任务进度、上下文、验证结果和环境认知等，支撑跨轮慢思考与恢复。</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="arch-lane capability">
+              <h4>Capability & World</h4>
+              <div class="arch-stack">
+                <div class="arch-stack-item">
+                  <strong>Tools / Capabilities</strong>
+                  <p>Tracking、Search、Navigation、Actions 等能力通过统一 contract 被调用。</p>
+                </div>
+                <div class="arch-stack-item">
+                  <strong>Physical Action</strong>
+                  <p>动作真正作用于物理世界；其后果必须重新进入输入层，而不是停留在工具返回值里。</p>
+                </div>
+                <div class="arch-stack-item">
+                  <strong>Verification Loop</strong>
+                  <p>动作后观察、偏差修正、重试、回退与接管都依赖同一条感知回路完成闭环。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="arch-spine">
+          <strong>共享记忆脊柱</strong>
+          <p>连接 Agent 与物理现实的桥梁。大模型通过它读取世界、记录思考、追踪任务进度；其他模块通过它共享对同一现实的认知。</p>
+        </div>
+
+        <div class="three-col">
+          <div class="card card-border-top">
+            <strong>Chat-First</strong>
+            <p>对话不是触发一个函数，而是触发一整轮"理解任务—观察现实—调用能力—验证结果"的认知循环。</p>
+          </div>
+          <div class="card card-border-top">
+            <strong>One Action Authority</strong>
+            <p>后台感知、预警、恢复和评测可以常驻或并行，但真正提交 physical action 的路径只能有一条，避免并发决策污染物理因果链。</p>
+          </div>
+          <div class="card card-border-top">
+            <strong>One Agent Memory Source</strong>
+            <p>Agent 的长期记忆必须外化。观察流、动作日志可以各自持久，但 agent-owned 的长期状态应保持单一来源，避免平行记忆镜像。</p>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">02</div>
+    </section>
+
+    <!-- Page 4: Perception -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">03 / 感知层</div>
+          <h2>Agent 的思考质量，取决于观察的充分性</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          大模型在 Agent 里做的所有判断——"世界现在是什么状态""动作是否生效""下一步该做什么"——都建立在它所能观察到的环境信息之上。如果观察是残缺或过时的，再强的推理能力也会建立在沙子上。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>充分观察是 Agent 的前提</h3>
+            <p>
+              想象一下：Agent 刚刚调用了一个让机器人转头的工具，它需要验证这个动作是否成功，以及环境是否按预期发生变化。如果感知进程在 Agent 不活跃时就停止记录，那么当它准备验证时，拿到的可能是动作执行前的旧快照，或者根本没有相关帧。
+            </p>
+            <p>
+              这就是为什么感知必须是<strong>主常驻世界输入层</strong>。它不随某一轮推理的结束而停止，而是持续地、忠实地记录物理世界的变化。只有这样，Agent 在任何时候启动思考时，都能基于一份足够新鲜、足够连续的世界快照来拆解任务、推理判断和验证闭环。
+            </p>
+            <p>
+              但正式的 embodied harness 并不意味着"只有原始感知能常驻"。System 1 的推理结果——例如目标连续性判断、短时异常告警、设备状态判断、低延迟风险信号——也可以进入输入层。关键不是禁止派生推理进入，而是要求这些结果带着<strong>时间语义、来源标记和可覆盖性</strong>进入同一输入层，作为对世界可读性的补充，而不是形成第二个动作中枢。
+            </p>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-forest);">
+              <strong>核心张力</strong>
+              <p style="margin-bottom: 0;">
+                物理世界连续运转，而 Agent 的思考是离散触发的。感知层的使命就是弥合这条裂缝，让大模型的慢思考能够随时接入"当前现实"。
+              </p>
+            </div>
+            <div class="pull-quote" style="margin: 0;">
+              "Agent 不是全知的，它的智慧受限于感知的窗口。感知必须是那扇永远不会关闭的窗。"
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>常驻带来的结构性结果</strong>
+          <div class="two-col" style="margin-top: 16px;">
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">输入归一</h4>
+              <p style="font-size: 0.95rem;">
+                Agent 和 tools 不必各自去连接摄像头或解析传感器；同样，System 1 的派生判断也不应绕过输入层直接支配 Agent。原始观测、设备状态和 System 1 推理结果都应汇入同一输入层，避免大模型基于矛盾信息做决策。
+              </p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">验证就绪</h4>
+              <p style="font-size: 0.95rem;">
+                当 Agent 执行了一个动作后，它能立即查询动作之后的世界状态，完成"观察-行动-验证"的闭环。没有感知的常驻，验证就无从谈起。
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">03</div>
+    </section>
+
+    <!-- Page 5: Runner -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">04 / 运行层</div>
+          <h2>串行是具身环境里的基本秩序</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          Runner 不是一个大模型调用器，也不是一个业务流程大编排器。它是 Agent 的运行与动作提交容器：每一轮，它为大模型准备好完整的上下文（观察、记忆、可用工具），让大模型自主地完成<strong>拆解、思考、调用工具、验证结果</strong>的完整循环，并对 physical action 的提交负责。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>Runner 让 Agent 的判断能对自己的后果负责</h3>
+            <p>
+              在物理世界里，Agent 必须验证它的行动是否产生了预期效果。比如它让机器人向左转，接下来它需要观察画面，确认环境是否按预期变化、机器人是否确实转动了。如果这个验证还没完成，下一轮的指令又发了出去，Agent 就会失去对因果链的追踪。
+            </p>
+            <p>
+              所以 runner 坚持<strong>动作提交串行</strong>：一个完整的"思考-行动-验证"循环必须结束后，才能开启下一个动作循环。这不是为了限制大模型的能力，而是因为<strong>串行是具身环境里的基本秩序</strong>。正式 embodied harness 可以并行存在常驻感知、低延迟预警、后台 recovery 和 eval，但一旦涉及 physical action commit，必须保持单一提交权。只有在一个因果干净的物理空间里，Agent 才能可靠地验证自己的推理，并为自己的判断负责。
+            </p>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent);">
+              <strong>为什么只允许动作提交串行</strong>
+              <p style="margin-bottom: 0;">
+                并发在数字世界里是效率，在物理世界里常常意味着因果污染。可以并行的是观察、预警、评测和恢复建议；不能并行的是两个独立决策流同时提交身体动作。串行是对物理世界因果律的尊重。
+              </p>
+            </div>
+            <div class="pull-quote" style="margin: 0;">
+              "Runner 不是业务编排器，而是物理动作的串行提交权。"
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>一轮循环里的四件事</strong>
+          <div class="four-col" style="margin-top: 16px;">
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">1. 观察</h4>
+              <p style="font-size: 0.9rem;">runner 组装当前感知快照、历史对话和外部记忆。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">2. 思考</h4>
+              <p style="font-size: 0.9rem;">大模型基于上下文自主拆解任务、推理判断。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">3. 行动</h4>
+              <p style="font-size: 0.9rem;">模型决定调用哪个 tool（CLI/API），runner 把关并执行。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">4. 验证</h4>
+              <p style="font-size: 0.9rem;">结果和环境变化被写回状态，供下一轮验证预期。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">04</div>
+    </section>
+
+    <!-- Page 6: State -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">05 / 状态层</div>
+          <h2>Agent 需要外部记忆来支持慢思考</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          大模型的上下文窗口是它的"工作记忆"，容量有限且随每次调用而刷新。但 Agent 的慢思考往往需要跨越多个轮次：拆解任务、追踪子任务进度、记录验证结果、修正之前的假设。这些都需要一个<strong>外部长期记忆</strong>。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>状态是 Agent 的笔记本</h3>
+            <p>
+              假设 Agent 把一个复杂任务拆解成了三步：观察环境、确认当前状态、执行后续动作。执行到第二步时，它需要记得第一步已经确认了哪些线索、排除了哪些风险。如果这些信息只存在于大模型的上下文里，一旦进程重启或 token 超限，整个任务拆解就断裂了。
+            </p>
+            <p>
+              外部状态就是 Agent 的<strong>笔记本</strong>。它把任务进度、验证结果、环境认知都显式地写下来，不仅自己能随时查阅，系统里的其他模块——viewer、recovery、人类操作员——也能读到同一页笔记。这让人和机器能够对物理现实达成共识，也让 Agent 的思考可以跨轮次持续推进。
+            </p>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-forest);">
+              <strong>外部记忆支撑的长程能力</strong>
+              <ul class="bullet-list">
+                <li><strong>任务拆解追踪：</strong>记录复杂任务分解后的子步骤和完成状态。</li>
+                <li><strong>跨轮验证：</strong>保存"之前做了什么""结果如何"，供下一轮修正推理。</li>
+                <li><strong>环境认知同步：</strong>让 recovery 进程、viewer、人类操作员共享同一现实。</li>
+                <li><strong>故障恢复：</strong>Agent 重启后能从笔记中断点续传，而不是从零开始。</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>状态外化的本质</strong>
+          <p style="margin-bottom: 0;">
+            Pi agent 负责思考，但不垄断系统真相。所有跨轮延续的信息——当前目标、最新检测结果、任务拆解进度、验证记录——都被显式地写回共享状态。这不是为了调试方便，而是为了让 Agent 的慢思考能够在一个<strong>稳定、可恢复、可共享</strong>的认知基础上持续进行。外部记忆让机器人的 Agent 真正拥有了断点续传的能力。
+          </p>
+        </div>
+      </div>
+      <div class="page-number">05</div>
+    </section>
+
+    <!-- Page 7: Skills -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">06 / 技能层</div>
+          <h2>下游能力是工具，Agent 通过调用工具来闭环</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          在这个架构中，skill 的下游实现会被打包成标准的 CLI 或 API。Agent 不需要知道摄像头怎么驱动、语音怎么合成，它只需要知道：当我调用某个 tool 时，物理世界会发生什么变化，以及我如何在调用后验证这个变化。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>Tool 是 Agent 影响物理世界的接口</h3>
+            <p>
+              大模型在 Agent 里的推理可能是："用户要求我去确认环境状态并执行一个动作，我需要先调用某个 tool 影响世界，再持续观察结果确认闭环。"这些 tool 对 Agent 来说就像函数调用：传入参数、获得结果、观察副作用。
+            </p>
+            <p>
+              但 tool 本身<strong>不能越俎代庖地控制系统</strong>。它只负责在被调用时执行自己的局部能力，并把结果返回给 Agent。runner 作为 Agent 的守门人，确保任何 tool 的调用都建立在完整的全局上下文之上，避免多个 tool 同时盲操同一个机器人。
+            </p>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-gold);">
+              <strong>Tool 的四条契约</strong>
+              <ul class="bullet-list">
+                <li>以 CLI/API 形式暴露，Agent 通过标准接口调用。</li>
+                <li>不直接控制硬件调度，只响应单次调用并返回结果，动作提交仍受 runner 把关。</li>
+                <li>必须说清前置条件、副作用和调用后如何验证，避免 Agent 在物理世界里"盲打"。</li>
+                <li>不维护独立状态，所有跨轮信息由 Agent 写入共享状态。</li>
+              </ul>
+            </div>
+            <div class="pull-quote" style="margin: 0;">
+              "tool 是 Agent 伸进物理世界的手，而 runner 确保这只手不会在没有想清楚时就乱动。"
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>能力的生长方式</strong>
+          <p style="margin-bottom: 0;">
+            当新的下游能力（如导航、抓取）被其他组实现并封装成 CLI/API 时，Agent 不需要改动自己的内核逻辑就能调用它。只要新 tool 遵守"前置条件清晰、单次调用、结果可验证、不维护独立状态"的契约，它就能自然成为 Agent 思考-行动-验证循环中的一环。系统不是因为 tool 变多而变复杂，而是因为 Agent 逐渐拥有了更多可以支配的身体与世界接口。
+          </p>
+        </div>
+      </div>
+      <div class="page-number">06</div>
+    </section>
+
+    <!-- Page 8: Current shape -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">07 / 当前形态</div>
+          <h2>我们做出了一个 embodied agent 的认知内核</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          当前项目真正完成的，并不是某一个具体任务，而是一个<strong>能够承载 embodied cognition 的最小内核</strong>。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>内核已经具备的关键特征</h3>
+            <p>
+              这个内核以对话作为 Agent 的入口，让感知保持常驻，使大模型在任意一轮都能接入当前现实。它坚持单一的动作提交路径，让每一次行动都能被放进清晰的因果链中验证。它把跨轮信息写入共享状态，而不是让长期认知漂浮在 prompt 里。
+            </p>
+            <p>
+              更重要的是，它把 tracking、speech 乃至未来更多能力都收敛成可调用的 tools，而不是框架内置的逻辑。这意味着，内核不是为某一个 skill 定制出来的脚手架，而是一个<strong>可以让不同 embodied capabilities 被统一组织起来的认知底座</strong>。
+            </p>
+            <p>
+              这份内核说明刻意强调的是当前仓库的最小形态：先把<strong>主常驻输入层、单一动作提交权、单一 agent state</strong>站稳。更正式的 embodied harness 在更严苛的延迟目标下，往往还会长出常驻低延迟辅助层与后台 recovery/eval 面，但这些层应建立在上述硬边界之上，而不是反客为主地重新长成一个重调度框架。
+            </p>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom: 16px; border-top: 3px solid var(--accent-gold);">
+              <strong>Tracking 的角色</strong>
+              <p style="margin-bottom: 0;">
+                Tracking 是当下最能暴露 Agent 特性的能力样例。它要求语言 grounding、持续观察、动作后验证和异常修正——这些都是 embodied cognition 的核心张力。
+              </p>
+            </div>
+            <div class="card card-border-top">
+              <strong>Speech 的角色</strong>
+              <p style="margin-bottom: 0;">
+                Speech 说明这个内核不只服务于视觉或空间任务。任何能返回结构化结果的能力，都能自然接入同一个 Agent 工作空间。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="pull-quote" style="margin: 0;">
+          "我们现在做成的，不是一个 tracking agent，而是一个以 tracking 和 speech 为能力样例的 embodied agent kernel。"
+        </div>
+      </div>
+      <div class="page-number">07</div>
+    </section>
+
+    <!-- Page 9: Embodied Harness -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">08 / Harness 设计原则</div>
+          <h2>Embodied Agent 不是把 Claude Code 接上摄像头</h2>
+          <p class="lead" style="max-width: 720px; margin-bottom: 1.6em;">
+            普通的 coding agent 工作在文件、终端、网页和 API 组成的数字环境里；Embodied Agent 工作在连续变化、部分可观测、带噪声且不可撤销的物理世界里。Embodied Harness 的增量，不是多接几个 tool，而是让 agent 真正具备<strong>读世界、跨时间持续工作、在不确定中恢复、并安全影响现实</strong>的能力。
+          </p>
+        </div>
+
+        <div class="two-col" style="margin-bottom: 28px;">
+          <div class="card card-border-top">
+            <strong>普通 Pi Agent / Claude Code</strong>
+            <p>
+              面对的是相对静态、可重读、可撤销的数字环境。代码可以重新读取，网页可以刷新，失败可以回滚，单轮正确性往往比长期连续性更重要。
+            </p>
+          </div>
+          <div class="card card-border-gold">
+            <strong>Embodied Agent Harness</strong>
+            <p>
+              面对的是持续变化、部分可见、动作有代价的真实世界。它必须保证环境输入持续可读、系统真相显式可追踪、行动后果可验证、异常发生后可恢复。
+            </p>
+          </div>
+        </div>
+
+        <div class="four-col" style="margin-bottom: 24px;">
+          <div class="card card-border-top">
+            <strong>原则 01</strong>
+            <p>Perception 不是按需调用的 tool，而是系统的主常驻世界输入层。agent 读到的应是可验证、带时间语义的环境快照，而不是临时抓取的零散片段。</p>
+          </div>
+          <div class="card card-border-top">
+            <strong>原则 02</strong>
+            <p>输入层不只接原始传感器，也接设备状态、System 1 推理结果和低延迟告警；但所有派生结果都必须带来源、时间语义和置信度。</p>
+          </div>
+          <div class="card card-border-top">
+            <strong>原则 03</strong>
+            <p>状态不能只藏在 prompt 里。任务阶段、目标绑定、关键判断和恢复线索都必须外化为共享真相源，支撑跨轮连续执行。</p>
+          </div>
+          <div class="card card-border-top">
+            <strong>原则 04</strong>
+            <p>时间、恢复和动作约束是一级设计对象。恢复、等待、重绑、评测可以常驻，但物理动作必须由单一 action authority 串行提交。</p>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>架构草案：Embodied Harness 的七个结构件</strong>
+          <div class="three-col" style="margin-top: 16px;">
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Perception Backbone</h4>
+              <p style="font-size: 0.9rem;">持续接入视觉、语音和设备状态，输出结构化 observation，而不是把原始流直接塞给模型。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Reactive Input Layer</h4>
+              <p style="font-size: 0.9rem;">承接 System 1 推理结果或中间数据产物，并把这些数据同样按需保存下来，作为后续推理的输入。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Context Composer</h4>
+              <p style="font-size: 0.9rem;">根据当前任务裁切最小必要上下文，把环境、历史和状态整理成一轮可工作的认知输入。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Session State Backbone</h4>
+              <p style="font-size: 0.9rem;">保存目标、阶段、判断依据、执行结果和恢复线索，成为跨轮唯一真相源。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Serialized Action Runner</h4>
+              <p style="font-size: 0.9rem;">负责每一轮的 framing、推理执行和结果解释，并作为物理动作的唯一提交权，让 agent 自己完成拆解、调用与验证。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Capability Surface</h4>
+              <p style="font-size: 0.9rem;">把 tracking、speech、navigation 等能力收敛成统一 contract，使新能力可以按同一方式接入。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Recovery & Eval Layer</h4>
+              <p style="font-size: 0.9rem;">负责异常恢复、shadow verification、重绑建议、人工接管和回放评测，保证 agent 对物理后果负责。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">08</div>
+    </section>
+
+    <!-- Page 10: Kernel vs Formal Harness -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">09 / 对照关系</div>
+          <h2>当前最小内核，不等于正式 Harness 的全部</h2>
+          <p class="lead" style="max-width: 720px; margin-bottom: 1.6em;">
+            这两者不是互相否定的关系，而是<strong>分层递进</strong>的关系：当前仓库先把最小、严格、 failure-visible 的 embodied kernel 站稳；正式 embodied harness 则是在这些硬边界之上，为更低延迟、更长时连续性和更复杂恢复需求增加常驻能力。
+          </p>
+        </div>
+
+        <div class="two-col" style="margin-bottom: 28px;">
+          <div class="card card-border-top">
+            <strong>当前仓库：最小 Kernel</strong>
+            <p>
+              目标是先把 chat-first、主常驻输入层、单一动作提交权、单一 agent state source 建立起来，让系统在最少结构下就能形成清晰的"观察-思考-行动-验证"闭环。
+            </p>
+            <p style="margin-bottom: 0;">
+              它强调的是边界清晰、路径单一、失败可见、易于调试，优先避免 runtime 面和编排面的过早膨胀。
+            </p>
+          </div>
+          <div class="card card-border-gold">
+            <strong>正式系统：Embodied Harness</strong>
+            <p>
+              在不打破上述硬边界的前提下，正式系统往往会再长出 Reactive Input Layer、后台 recovery/eval、常驻低延迟辅助能力，以及更明确的动作前检查、异常回退和人工接管面。
+            </p>
+            <p style="margin-bottom: 0;">
+              它强调的是在连续物理世界里维持可读性、低延迟和恢复力，而不是回到一个 workflow-heavy 的大框架。
+            </p>
+          </div>
+        </div>
+
+        <div class="three-col" style="margin-bottom: 24px;">
+          <div class="card card-border-top">
+            <strong>不变的硬边界</strong>
+            <p>无论系统是否升级，主常驻输入层、单一 physical action authority、显式 agent state 和可验证 tool contract 都不应被破坏。</p>
+          </div>
+          <div class="card card-border-top">
+            <strong>可以增加的层</strong>
+            <p>可以增加的是低延迟派生输入、后台 recovery/eval、shadow verification、rebind 建议和人工接管接口，但它们都应服务于同一动作提交权，而不是另起炉灶。</p>
+          </div>
+          <div class="card card-border-top">
+            <strong>升级触发条件</strong>
+            <p>只有当延迟目标、恢复复杂度、任务连续性要求或多设备协同压力真实存在时，才值得把最小 kernel 向正式 harness 推进。</p>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>一个更准确的理解方式</strong>
+          <p style="margin-bottom: 0;">
+            如果说当前仓库是在回答"怎样用最小结构做出一个真正 chat-first 的 embodied Agent"，那么正式 embodied harness 回答的则是"在不牺牲边界清晰度的前提下，怎样让这个 Agent 长时间、低延迟、可恢复地活在物理世界里"。前者是底座，后者是扩展，而不是两套互斥哲学。
+          </p>
+        </div>
+      </div>
+      <div class="page-number">09</div>
+    </section>
+
+    <!-- Page 11: Future & Boundaries -->
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">10 / 未来与边界</div>
+          <h2>Agent 不做 System 1 的事，也不做硬编码编排</h2>
+        </div>
+
+        <p class="lead" style="max-width: 640px; margin-bottom: 1.6em;">
+          一个好的架构，不仅要说明能走多远，更要说明会在哪里停下来。Tracking Agent 的定位非常清晰：它是机器人的 Agent，而不是 System 1；它是大模型思考的运行容器，而不是替代大模型做思考的硬编码框架。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 32px;">
+          <div>
+            <h3>Agent 不做 System 1 的事</h3>
+            <p>
+              底层的运动控制、反射性避障、电机驱动、实时传感器融合，是快速的 System 1。这些领域有成熟的 OS 和实时控制方案。Agent 的职责层级更高：它要在 System 1 提供的能力之上，回答"在当前这个不确定的物理环境里，下一步该做什么"。
+            </p>
+            <p>
+              如果我们把实时控制、传感器协议封装、硬件抽象都吞进 Agent，边界就会膨胀，大模型的慢思考会被底层细节淹没，对物理连续性的严格控制也会被侵蚀。
+            </p>
+          </div>
+          <div>
+            <h3>Agent 不做硬编码编排</h3>
+            <p>
+              传统框架试图用硬编码逻辑去编排"先做什么、后做什么"，结果是框架越来越重，大模型被压缩成了分类器。我们的选择是反过来的：<strong>让大模型 itself 成为编排者</strong>。
+            </p>
+            <p>
+              Runner 提供的不是业务流程编排逻辑，而是一个<strong>安全、确定、可观察的具身控制面</strong>。单一路径不是框架在限制模型，而是为了让大模型在一个因果清晰的物理空间里，自主地完成拆解、思考、调用和验证，同时把物理动作的提交权保持在一个严格边界内。
+            </p>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>明确不做的事情</strong>
+          <div class="three-col" style="margin-top: 16px;">
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent);">不做多 agent 并发提交 physical actions</h4>
+              <p style="font-size: 0.95rem;">物理动作不可并发。后台观察、恢复、评测可以并行存在，但 Agent 必须以串行方式指挥身体，确保每一轮都能验证结果。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent);">不做实时控制</h4>
+              <p style="font-size: 0.95rem;">毫秒级的避障、平衡、电机反馈是 System 1 的事。Agent 只负责秒级或分钟级的决策和任务规划。</p>
+            </div>
+            <div>
+              <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent);">不允许隐式记忆</h4>
+              <p style="font-size: 0.95rem;">Agent 的外部记忆必须完全显式。没有"方便起见"的内部缓存，所有跨轮信息落盘共享。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">10</div>
+    </section>
+
+    <!-- Page 12: Closing -->
+    <section class="page closing">
+      <div class="closing-content">
+        <div class="kicker" style="color: var(--accent);">Closing Note</div>
+        <h2 style="margin-bottom: 0.6em;">Agent 不是框架，<br/>而是大模型与物理世界之间的信任协议。</h2>
+        <p class="lead">
+          当感知为 Agent 提供充分的观察，runner 为它守护串行的行动与验证空间，tool 以标准接口供它调用，而共享状态支撑它的慢思考与长期记忆——大模型才能在这个安全、确定、可观察的具身工作空间里，真正释放拆解、思考、闭环与验证的能力。
+        </p>
+        <p style="color: var(--ink-muted); margin-top: 2em;">
+          Tracking Agent 正是这种协议的工程化表达：<br/>
+          简洁、有边界、环境扎根、让大模型 itself 来思考。
+        </p>
+      </div>
+      <div class="page-number">11</div>
+    </section>
+
+  </body>
+</html>

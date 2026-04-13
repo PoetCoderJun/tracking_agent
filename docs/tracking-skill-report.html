@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tracking Agent：设计思路、方法框架与下一步方向</title>
+    <style>
+      :root {
+        --paper: #fdfcfa;
+        --ink: #1a1a1a;
+        --ink-light: #4a4a4a;
+        --ink-muted: #737373;
+        --accent: #8f4c32;
+        --accent-soft: #c9a189;
+        --accent-forest: #3d5a40;
+        --accent-gold: #8c6b2f;
+        --line: #e8e5df;
+        --line-strong: #d8d4cb;
+        --highlight: #f7f5f0;
+        --font-display: "Source Han Serif SC", "Noto Serif CJK SC", "STSong", Georgia, serif;
+        --font-body: "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        --font-mono: "SF Mono", "Fira Code", Consolas, monospace;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #f0ede6;
+        color: var(--ink);
+        font-family: var(--font-body);
+        font-size: 16px;
+        line-height: 1.75;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .page {
+        width: min(1080px, calc(100vw - 40px));
+        min-height: calc(100vh - 32px);
+        margin: 16px auto;
+        padding: 56px 64px 48px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        box-shadow: 0 4px 24px rgba(0,0,0,0.04);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        break-after: page;
+        page-break-after: always;
+        position: relative;
+      }
+
+      .page:last-child {
+        break-after: auto;
+        page-break-after: auto;
+      }
+
+      .page-number {
+        position: absolute;
+        bottom: 32px;
+        right: 64px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--ink-muted);
+        letter-spacing: 0.1em;
+      }
+
+      .cover .page-number,
+      .closing .page-number {
+        display: none;
+      }
+
+      h1, h2, h3, h4 {
+        font-family: var(--font-display);
+        font-weight: 600;
+        margin: 0;
+        line-height: 1.2;
+      }
+
+      h1 {
+        font-size: 3.3rem;
+        letter-spacing: -0.03em;
+      }
+
+      h2 {
+        font-size: 2.15rem;
+        margin-bottom: 0.4em;
+      }
+
+      h3 {
+        font-size: 1.12rem;
+        color: var(--accent-forest);
+        margin-bottom: 0.45em;
+      }
+
+      h4 {
+        font-size: 1rem;
+        color: var(--ink);
+      }
+
+      p {
+        margin: 0 0 1em;
+        color: var(--ink-light);
+      }
+
+      p:last-child {
+        margin-bottom: 0;
+      }
+
+      .kicker {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-muted);
+        margin-bottom: 1em;
+      }
+
+      .lead {
+        font-size: 1.24rem;
+        line-height: 1.68;
+        color: var(--ink-light);
+        font-family: var(--font-display);
+      }
+
+      .cover {
+        justify-content: center;
+      }
+
+      .cover-content {
+        max-width: 800px;
+      }
+
+      .cover-subtitle {
+        font-size: 1.35rem;
+        line-height: 1.62;
+        color: var(--ink-light);
+        margin: 0 0 2.4em;
+        max-width: 28em;
+      }
+
+      .cover-meta {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 28px;
+        color: var(--ink-muted);
+        font-size: 0.92rem;
+      }
+
+      .cover-meta strong {
+        display: block;
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--accent);
+        margin-bottom: 6px;
+      }
+
+      .page-body {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .section-header {
+        margin-bottom: 2.1em;
+        max-width: 760px;
+      }
+
+      .section-header .kicker {
+        color: var(--accent);
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: 1.04fr 0.96fr;
+        gap: 34px;
+        align-items: start;
+      }
+
+      .three-col {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+
+      .card {
+        background: var(--highlight);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 22px;
+      }
+
+      .card strong {
+        display: block;
+        margin-bottom: 10px;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+      }
+
+      .card p {
+        font-size: 0.94rem;
+        line-height: 1.68;
+      }
+
+      .card-border-top {
+        border-top: 3px solid var(--accent-forest);
+      }
+
+      .card-border-gold {
+        border-top: 3px solid var(--accent-gold);
+      }
+
+      .message-line {
+        font-family: var(--font-display);
+        font-size: 1.72rem;
+        line-height: 1.5;
+        color: var(--ink);
+        max-width: 15em;
+      }
+
+      .pull-quote {
+        font-family: var(--font-display);
+        font-size: 1.46rem;
+        line-height: 1.52;
+        color: var(--ink);
+        padding-left: 22px;
+        border-left: 3px solid var(--accent-soft);
+        margin: 1.3em 0 0;
+      }
+
+      .bullet-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+
+      .bullet-list li {
+        position: relative;
+        padding-left: 1.3em;
+        margin-bottom: 0.7em;
+        color: var(--ink-light);
+      }
+
+      .bullet-list li::before {
+        content: "—";
+        position: absolute;
+        left: 0;
+        color: var(--accent);
+      }
+
+      .signal-list {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .signal-item {
+        background: var(--highlight);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 14px;
+      }
+
+      .signal-item strong {
+        display: block;
+        font-size: 0.77rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        margin-bottom: 6px;
+      }
+
+      .signal-item p {
+        margin: 0;
+        font-size: 0.88rem;
+        line-height: 1.58;
+      }
+
+      .pipeline {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 14px;
+        margin: 1.3em 0 1.2em;
+      }
+
+      .pipeline-stage {
+        background: linear-gradient(180deg, #fbf8f3, #f5efe6);
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        padding: 18px 16px;
+        position: relative;
+        min-height: 212px;
+      }
+
+      .pipeline-stage::after {
+        content: "→";
+        position: absolute;
+        top: 50%;
+        right: -12px;
+        transform: translateY(-50%);
+        color: var(--accent-soft);
+        font-size: 20px;
+      }
+
+      .pipeline-stage:last-child::after {
+        content: none;
+      }
+
+      .stage-kicker {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        color: var(--accent);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+      }
+
+      .pipeline-stage p {
+        font-size: 0.86rem;
+        line-height: 1.6;
+        margin-bottom: 0.85em;
+      }
+
+      .stage-output {
+        border-top: 1px dashed var(--line-strong);
+        padding-top: 10px;
+      }
+
+      .stage-output strong {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        color: var(--accent-forest);
+        text-transform: uppercase;
+      }
+
+      .stage-output span {
+        display: block;
+        font-size: 0.8rem;
+        color: var(--ink-muted);
+        line-height: 1.55;
+      }
+
+      .visual-panel {
+        background: linear-gradient(180deg, #faf6ef, #f4eee4);
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        padding: 18px;
+      }
+
+      .visual-panel strong {
+        display: block;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        margin-bottom: 12px;
+      }
+
+      .mock-frame {
+        height: 228px;
+        border-radius: 4px;
+        border: 1px solid rgba(0,0,0,0.08);
+        background: linear-gradient(135deg, #e6ddcf, #d4c5ad);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .mock-person {
+        position: absolute;
+        border: 2px solid var(--accent-forest);
+        background: rgba(61,90,64,0.08);
+      }
+
+      .mock-person.alt {
+        border-color: var(--accent);
+        background: rgba(143,76,50,0.08);
+      }
+
+      .mock-tag {
+        position: absolute;
+        top: -22px;
+        left: 0;
+        font-size: 11px;
+        color: #fff;
+        background: var(--accent-forest);
+        padding: 2px 7px;
+        border-radius: 999px;
+      }
+
+      .mock-person.alt .mock-tag {
+        background: var(--accent);
+      }
+
+      .memory-strip {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .memory-shot {
+        height: 118px;
+        border-radius: 4px;
+        border: 1px solid rgba(0,0,0,0.08);
+        background: linear-gradient(135deg, #d5c8b6, #bda78e);
+        position: relative;
+      }
+
+      .memory-shot span {
+        position: absolute;
+        left: 10px;
+        bottom: 10px;
+        font-size: 11px;
+        color: #fff;
+        background: rgba(26,26,26,0.65);
+        padding: 3px 8px;
+        border-radius: 999px;
+        letter-spacing: 0.06em;
+      }
+
+      .real-image {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+
+      .memory-image {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+
+      .memory-placeholder {
+        height: 118px;
+        border-radius: 4px;
+        border: 1px dashed var(--line-strong);
+        background: linear-gradient(135deg, #f2ede4, #e5dccd);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 12px;
+        color: var(--ink-muted);
+        font-size: 0.84rem;
+        line-height: 1.55;
+      }
+
+      .memory-text {
+        margin-top: 12px;
+        border: 1px dashed var(--line-strong);
+        border-radius: 4px;
+        background: rgba(255,255,255,0.6);
+        padding: 12px 14px;
+        font-size: 0.9rem;
+        line-height: 1.66;
+        color: var(--ink-light);
+      }
+
+      .compare-item {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 20px;
+      }
+
+      .compare-item.bad {
+        border-top: 3px solid var(--accent);
+      }
+
+      .compare-item.good {
+        border-top: 3px solid var(--accent-forest);
+      }
+
+      .compare-item strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .compare-item.bad strong {
+        color: var(--accent);
+      }
+
+      .compare-item.good strong {
+        color: var(--accent-forest);
+      }
+
+      .compare-item p {
+        margin: 0;
+        font-size: 0.92rem;
+        line-height: 1.64;
+      }
+
+      .closing {
+        justify-content: center;
+        text-align: center;
+      }
+
+      .closing-content {
+        max-width: 860px;
+        margin: 0 auto;
+      }
+
+      .closing .lead {
+        font-size: 1.36rem;
+        color: var(--ink-light);
+      }
+
+      @media print {
+        body { background: #fff; }
+        .page {
+          width: auto;
+          min-height: 274mm;
+          margin: 0;
+          box-shadow: none;
+          border: none;
+        }
+      }
+
+      @media (max-width: 980px) {
+        .page {
+          width: calc(100vw - 24px);
+          padding: 36px 28px 32px;
+        }
+        h1 { font-size: 2.35rem; }
+        h2 { font-size: 1.62rem; }
+        .cover-meta,
+        .two-col,
+        .three-col,
+        .pipeline,
+        .signal-list,
+        .memory-strip {
+          grid-template-columns: 1fr;
+        }
+        .pipeline-stage::after {
+          content: "↓";
+          right: auto;
+          left: 50%;
+          top: auto;
+          bottom: -14px;
+          transform: translateX(-50%);
+        }
+      }
+    </style>
+  </head>
+  <body>
+
+    <section class="page cover">
+      <div class="cover-content">
+        <div class="kicker">Tracking Agent Presentation</div>
+        <h1>Tracking Agent</h1>
+        <p class="cover-subtitle">
+          一个把“看得快”和“想得清”接在一起的目标跟踪方案：<br/>
+          前面用高频视觉链路持续看人，后面用 Tracking Agent 负责目标理解、恢复判断和记忆延续。
+        </p>
+        <div class="cover-meta">
+          <div>
+            <strong>核心结论</strong>
+            跟踪难点不在看见人，而在持续确认“是不是同一个人”
+          </div>
+          <div>
+            <strong>方法特点</strong>
+            高频链路负责稳定，慢思考只在关键时刻介入
+          </div>
+          <div>
+            <strong>最终目标</strong>
+            让目标跟踪真正服务于智能跟随等机器人场景
+          </div>
+        </div>
+      </div>
+      <div class="page-number">00</div>
+    </section>
+
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">01 / 核心问题</div>
+          <h2>核心 message：目标跟踪真正难的不是检测，而是目标同一性</h2>
+        </div>
+
+        <div class="two-col" style="align-items: center;">
+          <div>
+            <p class="message-line" style="margin-bottom: 1.1em;">
+              机器人真正要回答的，不是“这一帧里有谁”，而是“用户说的那个人，现在还是不是同一个人”。
+            </p>
+            <div class="signal-list">
+              <div class="signal-item">
+                <strong>真实难点</strong>
+                <p>遮挡、交叉、转身、短时离场后，身份很容易断掉。</p>
+              </div>
+              <div class="signal-item">
+                <strong>业务后果</strong>
+                <p>一旦认错人，后续跟随、导航和交互都会建立在错误目标上。</p>
+              </div>
+              <div class="signal-item">
+                <strong>为什么单靠视觉不够</strong>
+                <p>视觉会告诉你“像不像”，但不会告诉你“用户最初说的是谁”。</p>
+              </div>
+              <div class="signal-item">
+                <strong>为什么需要智能体</strong>
+                <p>必须把自然语言、历史记忆和当前画面一起放进判断里。</p>
+              </div>
+            </div>
+          </div>
+          <div class="visual-panel">
+            <strong>这一页只讲一个结论</strong>
+            <p style="font-size: 1.04rem; line-height: 1.76; color: var(--ink); margin-bottom: 0;">
+              对真实机器人来说，目标跟踪不是一个“把框画准”的问题，而是一个“能不能持续跟住用户真正指定的那个人”的问题。<br/><br/>
+              所以它天然需要三样东西一起工作：
+            </p>
+            <ul class="bullet-list" style="margin-top: 14px;">
+              <li>高频视觉链路，保证系统一直看得见世界。</li>
+              <li>轻量身份证据，帮助判断是否还是同一个人。</li>
+              <li>Tracking Agent，负责在关键时刻做更高层的判断。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">01</div>
+    </section>
+
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">02 / 方法框架</div>
+          <h2>核心 message：方法不是单点模型，而是一条“看见 → 保持 → 判断 → 记住”的完整链路</h2>
+        </div>
+
+        <div class="pipeline">
+          <div class="pipeline-stage">
+            <div class="stage-kicker">01</div>
+            <h4>目标检测<br/>YOLO</h4>
+            <p>先把每一帧画面里的候选人找出来，为后续链路提供稳定输入。</p>
+            <div class="stage-output">
+              <strong>产出</strong>
+              <span>当前画面中的人框与候选列表</span>
+            </div>
+          </div>
+          <div class="pipeline-stage">
+            <div class="stage-kicker">02</div>
+            <h4>短时跟踪<br/>ByteTrack</h4>
+            <p>把相邻画面串起来，为每个候选人保持短时间内的连续身份。</p>
+            <div class="stage-output">
+              <strong>产出</strong>
+              <span>连续轨迹、候选编号、短时位置变化</span>
+            </div>
+          </div>
+          <div class="pipeline-stage">
+            <div class="stage-kicker">03</div>
+            <h4>轻量身份辅助<br/>端侧 ReID</h4>
+            <p>在端侧补充身份线索，帮助系统在相似人之间判断“像不像同一个人”。</p>
+            <div class="stage-output">
+              <strong>产出</strong>
+              <span>相似度证据、前后视角的身份辅助线索</span>
+            </div>
+          </div>
+          <div class="pipeline-stage">
+            <div class="stage-kicker">04</div>
+            <h4>Tracking Agent<br/>高层判断</h4>
+            <p>结合用户的话、当前画面和历史记忆，决定是继续跟、等待恢复还是重新确认。</p>
+            <div class="stage-output">
+              <strong>产出</strong>
+              <span>目标判断、恢复决策、异常处理策略</span>
+            </div>
+          </div>
+          <div class="pipeline-stage">
+            <div class="stage-kicker">05</div>
+            <h4>记忆更新<br/>持续服务下一轮</h4>
+            <p>把本轮确认过的图像证据和文字记忆留下来，服务后续判断。</p>
+            <div class="stage-output">
+              <strong>产出</strong>
+              <span>目标正面图、背面图、文字摘要、历史判断</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="background: transparent; border-style: dashed;">
+          <strong>这页只讲一个结论</strong>
+          <p style="margin-bottom: 0;">
+            这套方法的价值，不在于某一个模块更强，而在于它把“高频视觉稳定性”和“高层目标判断”接成了同一条链，因此既能跑得动，又能在关键时刻做出更像人的判断。
+          </p>
+        </div>
+      </div>
+      <div class="page-number">02</div>
+    </section>
+
+    <section class="page">
+      <div class="page-body">
+        <div class="section-header">
+          <div class="kicker">03 / 模型看到什么</div>
+          <h2>核心 message：Tracking Agent 不只看当前画面，还会带着目标记忆一起判断</h2>
+        </div>
+
+        <p class="lead" style="max-width: 780px; margin-bottom: 1.6em;">
+          这里最大的不同是：Tracking Agent 不是只看一张当前图，而是把“用户最初说的话”“当前画面上的候选人”“目标之前长什么样”“最近几轮发生了什么”一起放进判断里。所以它更像是在“理解一个目标”，而不是在“做一次图片分类”。
+        </p>
+
+        <div class="two-col" style="margin-bottom: 24px;">
+          <div class="visual-panel">
+            <strong>输入一：当前工作画面</strong>
+            <img
+              class="real-image"
+              src="../.runtime/report-viewer/artifacts/viewer_stage_frame_000019.png"
+              alt="viewer 真实工作画面"
+            />
+            <div class="memory-text">
+              这里直接展示的是 viewer 的真实工作画面。可以清楚看到：在多人、易混淆的场景里，系统最终锁定的是前景中背对镜头的 `14` 号候选目标。
+            </div>
+          </div>
+
+          <div class="visual-panel">
+            <strong>输入二：目标记忆</strong>
+            <div class="memory-strip">
+              <div style="position: relative;">
+                <img
+                  class="memory-image"
+                  src="../.runtime/report-viewer/artifacts/sessions/report_viewer/reference_crops/frame_000019_id_14.jpg"
+                  alt="真实目标背身图像记忆"
+                />
+              </div>
+              <div style="position: relative;">
+                <img
+                  class="memory-image"
+                  src="../.runtime/report-viewer/artifacts/sessions/report_viewer/reference_crops/frame_000029_id_6.jpg"
+                  alt="真实目标正面图像记忆"
+                />
+              </div>
+            </div>
+            <div class="memory-text">
+              真实文字记忆摘录：<br/>
+              男性，戴眼镜，穿黑色圆领短袖T恤与卡其色运动短裤，脚穿白色运动鞋和白色中筒袜；正面可见胸前白色小标识。与相似人的关键区别是短裤颜色与长度，以及上衣前胸的小标识。<br/><br/>
+              这组前后图来自同一条真实会话：左图是多人场景里第一次锁定目标时的背身视角，右图是后续继续跟踪后重新确认到的正面视角。
+            </div>
+          </div>
+        </div>
+
+        <div class="signal-list">
+          <div class="signal-item">
+            <strong>语言输入</strong>
+            <p>用户最初怎么描述这个人，例如“穿黑衣服的人”“刚进门的那个人”。</p>
+          </div>
+          <div class="signal-item">
+            <strong>视觉输入</strong>
+            <p>当前画面中有哪些候选人，每个候选人在哪里、看起来像谁。</p>
+          </div>
+          <div class="signal-item">
+            <strong>图像记忆</strong>
+            <p>此前已经确认过的目标正面和背面证据，用于后续比对。</p>
+          </div>
+          <div class="signal-item">
+            <strong>文字记忆</strong>
+            <p>目标特征、最近位置变化、最近几轮判断结果和关键线索。</p>
+          </div>
+        </div>
+      </div>
+      <div class="page-number">03</div>
+    </section>
+
+    <section class="page closing">
+      <div class="closing-content">
+        <div class="kicker" style="color: var(--accent);">04 / 为什么有效与下一步</div>
+        <h2 style="margin-bottom: 0.6em;">核心 message：这套方法的优势是“平时省、关键时刻准”，下一步要把它做得更稳、更能落到场景里。</h2>
+
+        <div class="two-col" style="text-align: left; margin-top: 2em; margin-bottom: 2em;">
+          <div>
+            <h3>为什么这条路是对的</h3>
+            <p>
+              这套方法把绝大多数简单时刻交给高频视觉链路，把真正容易出错的边界时刻交给 Tracking Agent。这样做的好处是：平时不浪费高成本推理，关键时刻又能把自然语言、视觉证据和历史记忆一起拉进来做判断。
+            </p>
+            <h3 style="margin-top: 1.4em;">当前还差什么</h3>
+            <p>
+              目前系统已经能在真实链路里发生目标重确认和短时恢复，但还存在两个不足：一是有时会保守等待太久，二是重新找回后还不够稳。这意味着方法方向是对的，但证据强度和后续维持还要继续加强。
+            </p>
+          </div>
+          <div>
+            <h3>下一步方法演进</h3>
+            <p>
+              继续增强目标恢复能力，把轻量身份特征、目标正反面视觉记忆和时序约束结合得更紧，让系统在遮挡、交叉和短时离场时更快、更稳地把人找回来。
+            </p>
+            <h3 style="margin-top: 1.4em;">下一步场景落地</h3>
+            <p>
+              继续把 Tracking Agent 与后续跟随、导航等执行链路打通，让它从“能判断跟谁”走向“能稳定支撑完整的智能跟随场景”。
+            </p>
+          </div>
+        </div>
+
+        <p class="lead">
+          对老板来说，可以把 Tracking Agent 理解为一个“会判断、会记住、会保守处理异常”的目标跟踪层。<br/>
+          它不是替代前面的视觉链路，而是把前面的“看得见”真正升级成后面的“跟得住”。
+        </p>
+      </div>
+      <div class="page-number">04</div>
+    </section>
+
+  </body>
+</html>

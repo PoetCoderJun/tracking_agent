@@ -18,6 +18,8 @@ __pycache__/
 .venv/
 venv/
 env/
+.pi/
+.omx/
 build/
 dist/
 node_modules/
@@ -33,7 +35,10 @@ node_modules/
 logs/
 sessions/
 runtime/
+.runtime/
+claw/target/
 *.pt
+*.omx
 
 # Generated weekly deck artifacts and local media scratch files.
 docs/weekly_ppt_deck/*.pptx
