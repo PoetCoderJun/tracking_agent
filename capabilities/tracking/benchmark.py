@@ -38,7 +38,7 @@ DEFAULT_DATASET_ROOT = PROJECT_ROOT / "tests" / "dataset"
 DEFAULT_MODEL = "yolov8n.pt"
 DEFAULT_TRACKER = "bytetrack.yaml"
 DEFAULT_DISTANCE_THRESHOLD_PX = 50.0
-DEFAULT_PIPELINE = "paper_stream"
+DEFAULT_PIPELINE = "rebind_fsm"
 DEFAULT_TRACKER_FPS = 8.0
 DEFAULT_REBIND_AFTER_MISSED_FRAMES = 1
 DEFAULT_OBSERVATION_INTERVAL_SECONDS = 1.0
@@ -72,14 +72,13 @@ class SequenceBenchmarkResult:
     first_labeled_frame: int
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Benchmark the local YOLO + ByteTrack tracking stack on tests/dataset "
-            "using the paper's sequence success-rate style metric."
+            "Run the tracking benchmark against tests/dataset using the current continuous-tracking runtime path by default."
         )
     )
-    parser.add_argument("--dataset-root", default=str(DEFAULT_DATASET_ROOT))
+    parser.add_argument("--dataset-root", default=str(DEFAULT_DATASET_ROOT), help=argparse.SUPPRESS)
     parser.add_argument(
         "--sequence",
         action="append",
@@ -87,66 +86,61 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional sequence filter. Repeat the flag to run a subset.",
     )
-    parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--tracker", default=DEFAULT_TRACKER)
-    parser.add_argument("--device", default=None)
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=argparse.SUPPRESS)
+    parser.add_argument("--tracker", default=DEFAULT_TRACKER, help=argparse.SUPPRESS)
+    parser.add_argument("--device", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "--pipeline",
         choices=["paper_stream", "project_perception", "stack_chain", "rebind_fsm"],
         default=DEFAULT_PIPELINE,
-        help=(
-            "paper_stream uses direct streamed YOLO+ByteTrack over the whole video. "
-            "project_perception uses scripts/run_tracking_perception.py sampling behavior. "
-            "stack_chain runs the project perception cadence plus tracking init/track state transitions. "
-            "rebind_fsm runs an 8fps tracking state machine: after N consecutive misses, every new tracker frame triggers rebinding."
-        ),
+        help=argparse.SUPPRESS,
     )
-    parser.add_argument("--conf", type=float, default=0.25)
-    parser.add_argument("--imgsz", type=int, default=None)
-    parser.add_argument("--person-class-id", type=int, default=0)
+    parser.add_argument("--conf", type=float, default=0.25, help=argparse.SUPPRESS)
+    parser.add_argument("--imgsz", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--person-class-id", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument(
         "--vid-stride",
         type=int,
         default=1,
-        help="Tracking stride used by the project_perception or stack_chain pipelines. Larger means lower inference frequency.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--tracker-fps",
         type=float,
         default=DEFAULT_TRACKER_FPS,
-        help="Tracker-frame sampling rate used by the rebind_fsm pipeline.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--rebind-after-missed-frames",
         type=int,
         default=DEFAULT_REBIND_AFTER_MISSED_FRAMES,
-        help="Enter recovery after this many consecutive tracker-frame misses in rebind_fsm.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--observation-interval-seconds",
         type=float,
         default=DEFAULT_OBSERVATION_INTERVAL_SECONDS,
-        help="Observation emission cadence used by the stack_chain pipeline.",
+        help=argparse.SUPPRESS,
     )
-    parser.add_argument("--env-file", default=".ENV")
-    parser.add_argument("--device-id", default="robot_01")
-    parser.add_argument("--continue-text", default="继续跟踪")
+    parser.add_argument("--env-file", default=".ENV", help=argparse.SUPPRESS)
+    parser.add_argument("--device-id", default="robot_01", help=argparse.SUPPRESS)
+    parser.add_argument("--continue-text", default="继续跟踪", help=argparse.SUPPRESS)
     parser.add_argument(
         "--benchmark-run-root",
         default="./.runtime/tracking-benchmark",
-        help="Runtime root for stack_chain benchmark state and artifacts.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--distance-threshold-px",
         type=float,
         default=DEFAULT_DISTANCE_THRESHOLD_PX,
-        help="Count a frame as success when predicted-target and GT box centers are closer than this threshold.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--frame-step",
         type=int,
         default=1,
-        help="Evaluate every Nth frame. Use 1 for paper-like per-frame evaluation.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--max-frames",
@@ -154,8 +148,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional cap per sequence for quick smoke runs.",
     )
-    parser.add_argument("--output-json", default="")
-    return parser.parse_args()
+    parser.add_argument("--output-json", default="", help="Optional path to save the JSON report.")
+    return parser.parse_args(argv)
 
 
 def parse_label_line(line: str) -> tuple[int, List[int] | None]:
@@ -1400,7 +1394,7 @@ def benchmark_dataset(
             ),
             "missing_gt_note": "Frames whose labels use zero-sized boxes are skipped because there is no visible GT bbox to score.",
             "pipeline_note": (
-                "project_perception evaluates only frames actually processed by scripts/run_tracking_perception.py. "
+                "project_perception evaluates only frames actually emitted by the project perception cadence. "
                 "paper_stream evaluates the whole sampled video stream directly. "
                 "rebind_fsm keeps tracker continuity at tracker_fps but only drives the tracking mini-agent from world snapshots emitted every observation_interval_seconds."
             ),

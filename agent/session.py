@@ -8,6 +8,12 @@ from typing import Any, Dict, List, Optional
 from agent.session_store import ActiveSessionStore, LiveSessionStore
 
 
+def _refresh_viewer_snapshot(*, state_root: Path, session_id: str | None = None) -> None:
+    from interfaces.viewer.stream import write_agent_viewer_snapshot
+
+    write_agent_viewer_snapshot(state_root=state_root, session_id=session_id)
+
+
 def _latest_language_snapshot(session: Dict[str, Any]) -> Dict[str, Any]:
     history = session.get("conversation_history") or []
     latest_text = ""
@@ -182,6 +188,7 @@ class AgentSessionStore:
 
     def start_fresh_session(self, session_id: str, *, device_id: str = "") -> AgentSession:
         self._store.start_fresh_session(session_id=session_id, device_id=device_id)
+        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id, device_id=device_id)
 
     def append_chat_request(
@@ -198,6 +205,7 @@ class AgentSessionStore:
             text=text,
             request_id=request_id,
         )
+        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id, device_id=device_id)
 
     def apply_skill_result(
@@ -212,6 +220,7 @@ class AgentSessionStore:
             result,
             session_payload=None if base_session is None else base_session.session,
         )
+        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_latest_result(
@@ -228,25 +237,30 @@ class AgentSessionStore:
             expected_request_id=expected_request_id,
             expected_frame_id=expected_frame_id,
         )
+        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def clear_turn_state(self, session_id: str) -> AgentSession:
         self._store.reset_session_context(session_id)
+        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_user_preferences(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
         self._ensure_session(session_id)
         self._store.patch_agent_state(session_id, user_preferences=patch)
+        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_environment(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
         self._ensure_session(session_id)
         self._store.patch_agent_state(session_id, environment_map=patch)
+        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_runner_state(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
         self._ensure_session(session_id)
         self._store.patch_agent_state(session_id, runner_state=patch)
+        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_skill_state(
@@ -258,6 +272,7 @@ class AgentSessionStore:
     ) -> AgentSession:
         self._ensure_session(session_id)
         self._store.patch_agent_state(session_id, skill_cache={skill_name: patch})
+        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def acquire_turn(
@@ -324,4 +339,5 @@ def bootstrap_runner_session(
         else sessions.load(resolved_session_id, device_id=device_id)
     )
     ActiveSessionStore(state_root).write(resolved_session_id)
+    _refresh_viewer_snapshot(state_root=state_root, session_id=resolved_session_id)
     return session

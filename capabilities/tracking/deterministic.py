@@ -370,6 +370,34 @@ def _select_init_payload(
     )
 
 
+def _rewrite_init_memory_sync(
+    *,
+    sessions: AgentSessionStore,
+    session,
+    session_id: str,
+    select_output: Dict[str, Any],
+    env_file: Path,
+) -> Dict[str, Any]:
+    rewrite_memory_input = dict(select_output.get("rewrite_memory_input") or {})
+    if not rewrite_memory_input or not bool(select_output.get("found", False)):
+        return select_output
+
+    rewrite_output = execute_rewrite_memory_tool(
+        session_file=Path(session.state_paths["session_path"]),
+        arguments=rewrite_memory_input,
+        env_file=env_file,
+    )
+    apply_tracking_rewrite_output(
+        sessions=sessions,
+        session_id=session_id,
+        rewrite_output=rewrite_output,
+    )
+
+    updated_output = dict(select_output)
+    updated_output.pop("rewrite_memory_input", None)
+    return updated_output
+
+
 def process_tracking_init_direct(
     *,
     sessions: AgentSessionStore,
@@ -424,6 +452,13 @@ def process_tracking_init_direct(
                 text=text,
                 env_file=env_file,
                 artifacts_root=artifacts_root,
+            )
+            select_output = _rewrite_init_memory_sync(
+                sessions=sessions,
+                session=session,
+                session_id=session_id,
+                select_output=select_output,
+                env_file=env_file,
             )
         except Exception as exc:
             select_output = {

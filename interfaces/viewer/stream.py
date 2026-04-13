@@ -1,19 +1,28 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-from websockets.exceptions import ConnectionClosed
-from websockets.legacy.server import WebSocketServerProtocol, serve
+from typing import Any, Dict, List, Optional
 
 from agent.project_paths import resolve_project_path
+from agent.session_store import LiveSessionStore, resolve_session_id
+from capabilities.tracking.visualization import save_detection_visualization
+from interfaces.viewer.skill_modules import build_viewer_modules
 from world.perception import recent_frames
 from world.perception.service import LocalPerceptionService
-from agent.session_store import ActiveSessionStore, LiveSessionStore, resolve_session_id
-from interfaces.viewer.skill_modules import build_viewer_modules
+
+VIEWER_DIRNAME = "viewer"
+VIEWER_STATE_FILENAME = "latest.json"
+VIEWER_FRAME_FILENAME = "latest.jpg"
+VIEWER_MEMORY_HISTORY_FILENAME = "memory_history.json"
+
+
+@dataclass(frozen=True)
+class _RenderedDetection:
+    track_id: int | None
+    bbox: List[int]
 
 
 def _enriched_conversation_history(
@@ -46,6 +55,160 @@ def _enriched_conversation_history(
                 normalized["debug"] = debug_payload
         enriched.append(normalized)
     return enriched
+
+
+def _viewer_dir(state_root: Path) -> Path:
+    return Path(state_root) / VIEWER_DIRNAME
+
+
+def viewer_state_path(*, state_root: Path) -> Path:
+    return _viewer_dir(state_root) / VIEWER_STATE_FILENAME
+
+
+def viewer_frame_path(*, state_root: Path) -> Path:
+    return _viewer_dir(state_root) / VIEWER_FRAME_FILENAME
+
+
+def viewer_memory_history_path(*, state_root: Path) -> Path:
+    return _viewer_dir(state_root) / VIEWER_MEMORY_HISTORY_FILENAME
+
+
+def _write_json_atomic(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    tmp_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=True),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+
+def _normalized_track_id(raw_track_id: Any) -> int | None:
+    if raw_track_id in (None, ""):
+        return None
+    try:
+        return int(raw_track_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalized_bbox(raw_bbox: Any) -> List[int] | None:
+    if not isinstance(raw_bbox, list) or len(raw_bbox) != 4:
+        return None
+    try:
+        return [int(value) for value in raw_bbox]
+    except (TypeError, ValueError):
+        return None
+
+
+def _display_frame_ref(payload: Dict[str, Any]) -> Dict[str, Any] | None:
+    tracking_module = payload.get("modules", {}).get("tracking")
+    if isinstance(tracking_module, dict):
+        display_frame = tracking_module.get("display_frame")
+        if isinstance(display_frame, dict):
+            return display_frame
+    latest_frame = payload.get("observation", {}).get("latest_frame")
+    return latest_frame if isinstance(latest_frame, dict) else None
+
+
+def _read_json_file(path: Path) -> Any:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _load_memory_history(path: Path) -> tuple[str | None, List[Dict[str, Any]]]:
+    raw_payload = _read_json_file(path)
+    if isinstance(raw_payload, dict):
+        session_id = raw_payload.get("session_id")
+        raw_history = raw_payload.get("history")
+        return (
+            None if session_id in (None, "") else str(session_id).strip(),
+            list(raw_history) if isinstance(raw_history, list) else [],
+        )
+    if isinstance(raw_payload, list):
+        return None, list(raw_payload)
+    return None, []
+
+
+def _append_memory_snapshot(
+    *,
+    payload: Dict[str, Any],
+    existing_history: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    tracking_module = payload.get("modules", {}).get("tracking")
+    if not isinstance(tracking_module, dict):
+        return existing_history
+
+    memory = str(tracking_module.get("current_memory", "") or "").strip()
+    if not memory:
+        return existing_history
+
+    next_entry = {
+        "updated_at": str(payload.get("updated_at", "") or "").strip(),
+        "frame_id": payload.get("summary", {}).get("frame_id", ""),
+        "target_id": payload.get("summary", {}).get("target_id"),
+        "behavior": ((payload.get("agent", {}) or {}).get("latest_result") or {}).get("behavior", "memory"),
+        "memory": memory,
+    }
+    key = f"{next_entry['updated_at']}|{next_entry['frame_id']}|{next_entry['memory']}"
+    if existing_history:
+        last = existing_history[-1]
+        last_key = f"{last.get('updated_at', '')}|{last.get('frame_id', '')}|{last.get('memory', '')}"
+        if last_key == key:
+            return existing_history
+    return [*existing_history, next_entry]
+
+
+def _rendered_detections(display_frame: Dict[str, Any]) -> List[_RenderedDetection]:
+    detections: List[_RenderedDetection] = []
+    for raw_detection in list(display_frame.get("detections") or []):
+        if not isinstance(raw_detection, dict):
+            continue
+        bbox = _normalized_bbox(raw_detection.get("bbox"))
+        if bbox is None:
+            continue
+        detections.append(
+            _RenderedDetection(
+                track_id=_normalized_track_id(
+                    raw_detection.get("track_id", raw_detection.get("target_id"))
+                ),
+                bbox=bbox,
+            )
+        )
+    return detections
+
+
+def _render_latest_frame(
+    *,
+    state_root: Path,
+    payload: Dict[str, Any],
+) -> Path | None:
+    display_frame = _display_frame_ref(payload)
+    if display_frame is None:
+        return None
+
+    source_path_raw = str(display_frame.get("image_path", "") or "").strip()
+    if not source_path_raw:
+        return None
+
+    source_path = resolve_project_path(source_path_raw)
+    if not source_path.exists() or not source_path.is_file():
+        return None
+
+    output_path = viewer_frame_path(state_root=state_root)
+    save_detection_visualization(
+        source_path,
+        _rendered_detections(display_frame),
+        output_path,
+        highlighted_track_id=_normalized_track_id(
+            display_frame.get("target_id", payload.get("summary", {}).get("target_id"))
+        ),
+    )
+    return output_path
 
 
 def build_agent_viewer_payload(*, state_root: Path, session_id: str | None = None) -> Dict[str, Any]:
@@ -118,60 +281,63 @@ def build_agent_viewer_payload(*, state_root: Path, session_id: str | None = Non
     }
 
 
-def _file_signature(*, state_root: Path, session_id: str | None = None) -> Tuple[int, int, int]:
-    active_session_path = ActiveSessionStore(state_root).path()
-    active_session_mtime = active_session_path.stat().st_mtime_ns if active_session_path.exists() else -1
-    resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
-    if resolved_session_id is None:
-        return (active_session_mtime, -1, -1)
+def write_agent_viewer_snapshot(
+    *,
+    state_root: Path,
+    session_id: str | None = None,
+    output_path: Path | None = None,
+) -> Dict[str, Any]:
+    resolved_state_root = resolve_project_path(state_root)
+    payload = build_agent_viewer_payload(
+        state_root=resolved_state_root,
+        session_id=session_id,
+    )
+    memory_history_path = viewer_memory_history_path(state_root=resolved_state_root)
+    payload_session_id = None if payload.get("session_id") in (None, "") else str(payload.get("session_id")).strip()
+    existing_session_id, normalized_memory_history = _load_memory_history(memory_history_path)
+    if payload_session_id and existing_session_id and payload_session_id != existing_session_id:
+        normalized_memory_history = []
+    updated_memory_history = _append_memory_snapshot(
+        payload=payload,
+        existing_history=normalized_memory_history,
+    )
+    tracking_module = payload.get("modules", {}).get("tracking")
+    if isinstance(tracking_module, dict):
+        tracking_module["memory_history"] = updated_memory_history
 
-    session_path = LiveSessionStore(state_root=state_root).session_path(resolved_session_id)
-    perception_path = state_root / "perception" / "snapshot.json"
-    session_mtime = session_path.stat().st_mtime_ns if session_path.exists() else -1
-    perception_mtime = perception_path.stat().st_mtime_ns if perception_path.exists() else -1
-    return (active_session_mtime, session_mtime, perception_mtime)
+    rendered_frame = _render_latest_frame(
+        state_root=resolved_state_root,
+        payload=payload,
+    )
+    display_frame = _display_frame_ref(payload)
+    if display_frame is not None:
+        display_frame["rendered_image_path"] = (
+            None if rendered_frame is None else str(rendered_frame.resolve())
+        )
+
+    resolved_output_path = (
+        viewer_state_path(state_root=resolved_state_root)
+        if output_path is None
+        else resolve_project_path(output_path)
+    )
+    payload["artifacts"] = {
+        "viewer_state_path": str(resolved_output_path.resolve()),
+        "viewer_frame_path": None if rendered_frame is None else str(rendered_frame.resolve()),
+    }
+    _write_json_atomic(
+        memory_history_path,
+        {
+            "session_id": payload_session_id,
+            "history": updated_memory_history,
+        },
+    )
+    _write_json_atomic(resolved_output_path, payload)
+    return payload
 
 
-class AgentViewerStreamServer:
-    def __init__(
-        self,
-        *,
-        state_root: Path,
-        session_id: str | None = None,
-        host: str = "127.0.0.1",
-        port: int = 8765,
-        poll_interval: float = 1.0,
-    ):
-        self._state_root = state_root
-        self._session_id = session_id
-        self._host = host
-        self._port = port
-        self._poll_interval = poll_interval
-
-    async def _handler(self, websocket: WebSocketServerProtocol) -> None:
-        last_signature: Optional[Tuple[int, int, int]] = None
-        while True:
-            try:
-                signature = _file_signature(state_root=self._state_root, session_id=self._session_id)
-                if signature != last_signature:
-                    payload = build_agent_viewer_payload(
-                        state_root=self._state_root,
-                        session_id=self._session_id,
-                    )
-                    await websocket.send(json.dumps(payload, ensure_ascii=False))
-                    last_signature = signature
-                await asyncio.sleep(self._poll_interval)
-            except ConnectionClosed:
-                return
-
-    async def serve_forever(self) -> None:
-        async with serve(self._handler, self._host, self._port):
-            await asyncio.Future()
-
-
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Start the tracking viewer websocket stream for one session or the active session."
+        description="Write the latest viewer snapshot from local runtime state."
     )
     parser.add_argument(
         "--session-id",
@@ -179,22 +345,33 @@ def parse_args() -> argparse.Namespace:
         help="Optional. If omitted, follows the current active session.",
     )
     parser.add_argument("--state-root", default="./.runtime/agent-runtime")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--poll-interval", type=float, default=1.0)
-    return parser.parse_args()
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional output path. Defaults to <state-root>/viewer/latest.json.",
+    )
+    return parser.parse_args(argv)
 
 
 def main() -> int:
     args = parse_args()
-    server = AgentViewerStreamServer(
+    payload = write_agent_viewer_snapshot(
         state_root=resolve_project_path(args.state_root),
         session_id=args.session_id,
-        host=args.host,
-        port=args.port,
-        poll_interval=args.poll_interval,
+        output_path=None if args.output in (None, "") else resolve_project_path(args.output),
     )
-    asyncio.run(server.serve_forever())
+    print(
+        json.dumps(
+            {
+                "session_id": payload.get("session_id"),
+                "available": bool(payload.get("available")),
+                "viewer_state_path": payload.get("artifacts", {}).get("viewer_state_path"),
+                "viewer_frame_path": payload.get("artifacts", {}).get("viewer_frame_path"),
+            },
+            ensure_ascii=True,
+        ),
+        flush=True,
+    )
     return 0
 
 

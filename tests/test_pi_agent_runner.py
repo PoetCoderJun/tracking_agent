@@ -4,7 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 
-import scripts.e_agent as e_agent
+import agent.e_agent as e_agent
 
 from agent.runner import commit_skill_turn, run_ordinary_skill_turn
 from agent.session import AgentSessionStore
@@ -84,15 +84,19 @@ def test_main_bootstraps_pi_runner_with_project_skills(monkeypatch, tmp_path: Pa
     assert "--model" in command
     assert skill_args
     assert any(path.endswith("/skills/tracking") for path in skill_args)
+    assert any(path.endswith("/skills/tracking_stop") for path in skill_args)
     assert any(path.endswith("/skills/tts") for path in skill_args)
     assert len(prompt_args) == 1
     assert "具身智能机器狗" in prompt_args[0]
     assert str((state_root / "perception" / "snapshot.json").resolve()) in prompt_args[0]
+    assert str((state_root / "tracking_memory" / active_session["session_id"] / "memory.json").resolve()) in prompt_args[0]
     assert "当前启动时还没有可用的 latest_frame.image_path" in prompt_args[0]
+    assert "当前还没有可用的跟踪特征记忆" in prompt_args[0]
 
 
 def test_vision_grounding_prompt_uses_latest_frame_path_when_available(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
+    session_id = "sess_tracking"
     snapshot_path = state_root / "perception" / "snapshot.json"
     image_path = (tmp_path / "frame.jpg").resolve()
     image_path.write_bytes(b"frame")
@@ -120,11 +124,12 @@ def test_vision_grounding_prompt_uses_latest_frame_path_when_available(tmp_path:
         encoding="utf-8",
     )
 
-    prompt = e_agent._vision_grounding_prompt(state_root=state_root)
+    prompt = e_agent._vision_grounding_prompt(state_root=state_root, session_id=session_id)
 
     assert str(snapshot_path.resolve()) in prompt
     assert f"当前启动时 latest_frame.image_path={str(image_path)}" in prompt
     assert "不要把这个启动时路径当作长期真相" in prompt
+    assert str((state_root / "tracking_memory" / session_id / "memory.json").resolve()) in prompt
 
 
 def test_chat_reply_updates_main_session_dialogue(tmp_path: Path) -> None:

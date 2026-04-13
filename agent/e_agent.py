@@ -12,6 +12,7 @@ from agent.project_paths import resolve_project_path
 from agent.runner import run_due_tracking_step
 from agent.session import AgentSessionStore, bootstrap_runner_session
 from capabilities.tracking.context import TRACKING_LIFECYCLE_STOPPED
+from capabilities.tracking.memory import tracking_memory_file
 from skills.catalog import project_skill_paths
 from world.perception.service import LocalPerceptionService
 
@@ -21,17 +22,17 @@ DEFAULT_TRACKING_POLL_SECONDS = 0.25
 
 def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Bootstrap the main runner session, then supervise a pi child with project skills loaded."
+        description="Start the PI TUI on the active robot-agent session and supervise continuous tracking follow-up."
     )
     parser.add_argument("--session-id", default=None)
-    parser.add_argument("--device-id", default="robot_01")
-    parser.add_argument("--state-root", default="./.runtime/agent-runtime")
+    parser.add_argument("--device-id", default="robot_01", help=argparse.SUPPRESS)
+    parser.add_argument("--state-root", default="./.runtime/agent-runtime", help=argparse.SUPPRESS)
     parser.add_argument("--fresh", action="store_true")
-    parser.add_argument("--pi-bin", default="pi")
+    parser.add_argument("--pi-bin", default="pi", help=argparse.SUPPRESS)
     parser.add_argument(
         "--pi-sandbox",
         action="store_true",
-        help="Run pi inside the macOS sandbox wrapper with the project tree kept read-only.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--unsafe-no-pi-sandbox",
@@ -42,13 +43,13 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         "--pi-writable-dir",
         action="append",
         default=[],
-        help="Extra directory that pi may write when the default project-readonly sandbox is enabled.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--skill",
         action="append",
         default=[],
-        help="Optional extra skill path to append after the default project skills.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--supervisor-poll-seconds",
@@ -82,8 +83,9 @@ def _skill_args(extra_skills: List[str]) -> List[str]:
     return args
 
 
-def _vision_grounding_prompt(*, state_root: Path) -> str:
+def _vision_grounding_prompt(*, state_root: Path, session_id: str) -> str:
     snapshot_path = (state_root / "perception" / "snapshot.json").resolve()
+    tracking_memory_path = tracking_memory_file(state_root=state_root, session_id=session_id).resolve()
     latest_frame = LocalPerceptionService(state_root=state_root).read_latest_frame() or {}
     latest_frame_path = str(latest_frame.get("image_path", "")).strip()
     if latest_frame_path:
@@ -104,6 +106,10 @@ def _vision_grounding_prompt(*, state_root: Path) -> str:
         "当前画面的真实来源是 snapshot.json 里的 latest_frame.image_path；"
         "读取到这个路径后，把那张图像当作你判断世界状态的依据，只回答真实可见内容，不要猜测。\n"
         f"{latest_frame_note}\n"
+        "如果你想知道当前正在跟踪的人的已确认特征、正反面描述或区分点，"
+        "先读取当前 session 的 tracking memory，"
+        f"路径是 {tracking_memory_path}。\n"
+        "如果 tracking memory 不存在或为空，就明确说明当前还没有可用的跟踪特征记忆。\n"
         "如果 snapshot.json 不存在、latest_frame 为空、或图片文件不存在，就明确说明当前没有可用画面。"
     )
 
@@ -112,6 +118,7 @@ def _pi_command(
     args: argparse.Namespace,
     *,
     state_root: Path,
+    session_id: str,
     resolved_pi_args: List[str] | None = None,
 ) -> List[str]:
     raw_pi_args = list(resolved_pi_args if resolved_pi_args is not None else _resolved_pi_args(list(args.pi_args or [])))
@@ -123,7 +130,7 @@ def _pi_command(
         "--no-skills",
         *_skill_args(list(args.skill or [])),
         "--append-system-prompt",
-        _vision_grounding_prompt(state_root=state_root),
+        _vision_grounding_prompt(state_root=state_root, session_id=session_id),
         *raw_pi_args,
     ]
 
@@ -279,7 +286,12 @@ def _supervise_pi(
     resolved_pi_args: List[str],
 ) -> int:
     command = _sandboxed_command(
-        _pi_command(args, state_root=state_root, resolved_pi_args=resolved_pi_args),
+        _pi_command(
+            args,
+            state_root=state_root,
+            session_id=session_id,
+            resolved_pi_args=resolved_pi_args,
+        ),
         args,
         env,
     )

@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw
 
 
 class DetectionLike(Protocol):
-    track_id: int
+    track_id: int | None
     bbox: Sequence[int]
 
 
@@ -41,10 +41,11 @@ def save_detection_visualization(
             left, top, right, bottom = _clamp_bbox(detection.bbox, canvas.size)
             is_target = (
                 highlighted_track_id is not None
+                and detection.track_id is not None
                 and int(detection.track_id) == int(highlighted_track_id)
             )
             color = TARGET_COLOR if is_target else CANDIDATE_COLOR
-            label = f"ID {int(detection.track_id)}"
+            label = "ID ?" if detection.track_id is None else f"ID {int(detection.track_id)}"
             chip_width = max(52, int(len(label) * 8 + 12))
             chip_height = 20
 

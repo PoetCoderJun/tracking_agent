@@ -71,43 +71,44 @@ def supervisor_tracking_step(
     interval_seconds: float = 3.0,
 ) -> Dict[str, Any]:
     session = sessions.load(session_id, device_id=device_id)
+    pending_rewrite = pending_tracking_memory_rewrite(session)
+    if pending_rewrite is not None:
+        rewrite_request_id = str(pending_rewrite.get("request_id", "") or f"rewrite:{session_id}").strip()
+        acquired = sessions.acquire_turn(
+            session_id=session_id,
+            owner_id=owner_id,
+            turn_kind="tracking-rewrite",
+            request_id=rewrite_request_id,
+            device_id=device_id,
+            wait=False,
+        )
+        if acquired is None:
+            return {"status": "busy", "reason": "lease_held", "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS}
+        try:
+            rewrite_payload = drain_pending_tracking_memory_rewrite(
+                sessions=sessions,
+                session_id=session_id,
+                env_file=env_file,
+            )
+        finally:
+            sessions.release_turn(
+                session_id=session_id,
+                owner_id=owner_id,
+                request_id=rewrite_request_id,
+                device_id=device_id,
+            )
+        return {
+            "status": f"rewrite_{rewrite_payload.get('status', 'idle')}",
+            "request_id": rewrite_request_id,
+            "trigger": "background_rewrite",
+            "cause": "pending_rewrite",
+            "payload": rewrite_payload,
+            "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS,
+        }
+
     runtime_status = tracking_runtime_status(session)
     trigger = derive_continuous_trigger(session)
     if trigger is None:
-        pending_rewrite = pending_tracking_memory_rewrite(session)
-        if pending_rewrite is not None:
-            rewrite_request_id = str(pending_rewrite.get("request_id", "") or f"rewrite:{session_id}").strip()
-            acquired = sessions.acquire_turn(
-                session_id=session_id,
-                owner_id=owner_id,
-                turn_kind="tracking-rewrite",
-                request_id=rewrite_request_id,
-                device_id=device_id,
-                wait=False,
-            )
-            if acquired is None:
-                return {"status": "busy", "reason": "lease_held", "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS}
-            try:
-                rewrite_payload = drain_pending_tracking_memory_rewrite(
-                    sessions=sessions,
-                    session_id=session_id,
-                    env_file=env_file,
-                )
-            finally:
-                sessions.release_turn(
-                    session_id=session_id,
-                    owner_id=owner_id,
-                    request_id=rewrite_request_id,
-                    device_id=device_id,
-                )
-            return {
-                "status": f"rewrite_{rewrite_payload.get('status', 'idle')}",
-                "request_id": rewrite_request_id,
-                "trigger": "background_rewrite",
-                "cause": "pending_rewrite",
-                "payload": rewrite_payload,
-                "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS,
-            }
         return {
             "status": runtime_status["status"],
             "target_present": runtime_status.get("target_present", False),

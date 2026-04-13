@@ -9,17 +9,16 @@ Do not force every message into this skill.
 Use this skill only when the user is identifying which current candidate person should become the target.
 
 Natural-language requests like `请跟踪穿黑衣服的人` should be treated as target-selection requests.
+If the request is a clear bind/init request, the first tool action should be the tracking helper.
 Do not inspect repository files or runtime directories before deciding whether this skill applies.
-If this runtime already provides `ROBOT_AGENT_SESSION_ID` / `ROBOT_AGENT_STATE_ROOT`, use them directly instead of discovering the active session by reading `.runtime`.
+If this runtime already provides `ROBOT_AGENT_SESSION_ID` / `ROBOT_AGENT_STATE_ROOT`, use them directly instead of discovering the active session by reading `.runtime` or echoing env vars first.
 
 ## For each applicable user message
 
-1. Read the current turn context.
-2. Inspect the latest candidate set and the active session state when needed.
-3. Interpret the message as a target-selection request.
-4. Decide whether the current evidence is sufficient to identify one person.
-5. If yes, call backend `init`.
-6. If not, ask one focused clarification question about stable appearance differences.
+1. Decide whether the turn is bind/init, ambiguous, or lifecycle/status.
+2. For a clear bind/init request, call the tracking helper immediately.
+3. For an ambiguous request, ask one focused clarification question about stable appearance differences.
+4. For lifecycle/status/continuation requests, do not use init.
 
 ## Common but non-exhaustive moves
 
@@ -49,7 +48,6 @@ This skill should only call backend `init` for deterministic execution.
 It should not handle:
 
 - lifecycle control
+- long-running tracking control
 - status/explanation turns
-- long-running tracking control
 - memory rewrite
-- long-running tracking control

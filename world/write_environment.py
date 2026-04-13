@@ -38,37 +38,41 @@ from world.perception.stream import (
 )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "World writer workflow. Captures frames, writes perception state, "
-            "then synchronously runs system1 YOLO + ByteTrack on the same emitted frames."
+            "Start the always-on write environment. Pass a camera index such as 0 or a video file path. "
+            "Other runtime parameters stay on project defaults."
         )
     )
-    parser.add_argument("--source", default=DEFAULT_CAMERA_SOURCE)
-    parser.add_argument("--observation-text", default="")
-    parser.add_argument("--state-root", default="./.runtime/agent-runtime")
-    parser.add_argument("--vid-stride", type=int, default=1)
-    parser.add_argument("--sample-every", type=int, default=1)
-    parser.add_argument("--interval-seconds", type=float, default=1.0)
-    parser.add_argument("--realtime-playback", action="store_true")
-    parser.add_argument("--pause-after-first-event-file", default=None)
-    parser.add_argument("--max-events", type=int, default=None)
-    parser.add_argument("--observation-window-seconds", type=float, default=5.0)
-    parser.add_argument("--keyframe-retention-seconds", type=float, default=10.0)
-    parser.add_argument("--system1-model", default=DEFAULT_SYSTEM1_MODEL)
-    parser.add_argument("--system1-tracker", default=DEFAULT_SYSTEM1_TRACKER)
-    parser.add_argument("--system1-device", default=None)
-    parser.add_argument("--system1-conf", type=float, default=0.25)
-    parser.add_argument("--system1-imgsz", type=int, default=None)
-    parser.add_argument("--system1-person-class-id", type=int, default=DEFAULT_PERSON_CLASS_ID)
-    parser.add_argument("--system1-result-window-seconds", type=float, default=5.0)
+    parser.add_argument("--source", default=DEFAULT_CAMERA_SOURCE, help="Camera index like 0, or a video file path.")
+    parser.add_argument("--observation-text", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--state-root", default="./.runtime/agent-runtime", help=argparse.SUPPRESS)
+    parser.add_argument("--vid-stride", type=int, default=1, help=argparse.SUPPRESS)
+    parser.add_argument("--sample-every", type=int, default=1, help=argparse.SUPPRESS)
+    parser.add_argument("--interval-seconds", type=float, default=1.0, help=argparse.SUPPRESS)
+    parser.add_argument("--realtime-playback", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--pause-after-first-event-file", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--max-events", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--observation-window-seconds", type=float, default=5.0, help=argparse.SUPPRESS)
+    parser.add_argument("--keyframe-retention-seconds", type=float, default=10.0, help=argparse.SUPPRESS)
+    parser.add_argument("--system1-model", default=DEFAULT_SYSTEM1_MODEL, help=argparse.SUPPRESS)
+    parser.add_argument("--system1-tracker", default=DEFAULT_SYSTEM1_TRACKER, help=argparse.SUPPRESS)
+    parser.add_argument("--system1-device", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--system1-conf", type=float, default=0.25, help=argparse.SUPPRESS)
+    parser.add_argument("--system1-imgsz", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--system1-person-class-id", type=int, default=DEFAULT_PERSON_CLASS_ID, help=argparse.SUPPRESS)
+    parser.add_argument("--system1-result-window-seconds", type=float, default=5.0, help=argparse.SUPPRESS)
     parser.add_argument(
         "--disable-system1",
         action="store_true",
-        help="Write perception only and skip the in-process system1 inference step.",
+        help=argparse.SUPPRESS,
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    source = normalize_source(str(args.source).strip())
+    if not is_camera_source(source):
+        args.realtime_playback = True
+    return args
 
 
 def _prepare_world_writer(

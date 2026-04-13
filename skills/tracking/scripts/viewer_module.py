@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import base64
-import mimetypes
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.project_paths import resolve_project_path
 from capabilities.tracking.context import (
     TRACKING_LIFECYCLE_BOUND,
     TRACKING_LIFECYCLE_RUNNING,
@@ -14,18 +11,6 @@ from capabilities.tracking.context import (
     tracking_state_snapshot,
 )
 from capabilities.tracking.memory import read_tracking_memory_snapshot, tracking_memory_display_text
-
-
-def _image_data_url(path_value: Any) -> Optional[str]:
-    raw = str(path_value or "").strip()
-    if not raw:
-        return None
-    path = resolve_project_path(raw)
-    if not path.exists() or not path.is_file():
-        return None
-    mime_type, _ = mimetypes.guess_type(path.name)
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime_type or 'image/jpeg'};base64,{encoded}"
 
 
 def _target_bbox(
@@ -127,8 +112,15 @@ def build_viewer_module(
         resolved_target_id = tracking_state.get("latest_target_id")
 
     display_frame = None
+    result_frame_id = str(latest_result.get("frame_id", "") or "").strip()
     if recent_frames and resolved_target_id not in (None, ""):
-        display_frame = dict(recent_frames[-1])
+        if result_frame_id:
+            for frame in reversed(recent_frames):
+                if str(frame.get("frame_id", "")).strip() == result_frame_id:
+                    display_frame = dict(frame)
+                    break
+        if display_frame is None:
+            display_frame = dict(recent_frames[-1])
 
     display_frame_payload = None
     if display_frame is not None:
@@ -140,7 +132,6 @@ def build_viewer_module(
                 tracking_state=tracking_state,
                 display_frame=display_frame,
             ),
-            "image_data_url": _image_data_url(display_frame.get("image_path")),
         }
 
     return {

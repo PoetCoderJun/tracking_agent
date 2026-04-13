@@ -1,1 +1,1 @@
-"""Viewer assets and websocket stream service over shared runtime state."""
+"""Viewer assets and local snapshot helpers over shared runtime state."""

@@ -1,16 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-const DEFAULT_WS_URL = import.meta.env.VITE_TRACKING_VIEWER_WS_URL || "ws://127.0.0.1:8765";
-const RECONNECT_DELAY_MS = 2000;
-const HISTORY_STORAGE_PREFIX = "tracking-viewer-history:";
+const VIEWER_STATE_URL = "/viewer-state.json";
+const VIEWER_FRAME_URL = "/viewer-frame.jpg";
+const POLL_INTERVAL_MS = 1000;
 
 function formatTime(value) {
   if (!value) {
-    return "未连接";
+    return "未同步";
   }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    return "未连接";
+    return "未同步";
   }
   return parsed.toLocaleTimeString();
 }
@@ -19,21 +19,31 @@ function formatBoundingBoxIdValue(rawId) {
   return rawId === null || rawId === undefined || rawId === "" ? "未绑定" : String(rawId);
 }
 
-function deriveViewerStatus(viewerState, connectionState) {
+function syncStateLabel(syncState) {
+  if (syncState === "ready") {
+    return "已同步";
+  }
+  if (syncState === "error") {
+    return "读取失败";
+  }
+  return "读取中";
+}
+
+function deriveViewerStatus(viewerState, syncState) {
   const trackingModule = viewerState?.modules?.tracking || {};
   const summaryStatusLabel = viewerState?.summary?.status_label;
   const summaryStatusKind = viewerState?.summary?.status_kind;
-  if (connectionState === "disconnected") {
+  if (syncState === "error") {
     return {
       kind: "disconnected",
-      label: "连接断开",
+      label: "读取失败",
       badgeClass: "status-badge-warn",
     };
   }
-  if (connectionState === "connecting") {
+  if (syncState === "loading") {
     return {
       kind: "connecting",
-      label: "连接中",
+      label: "读取中",
       badgeClass: "status-badge-neutral",
     };
   }
@@ -51,7 +61,6 @@ function deriveViewerStatus(viewerState, connectionState) {
       badgeClass: "status-badge-neutral",
     };
   }
-
   if (summaryStatusKind === "tracking") {
     return {
       kind: "tracking",
@@ -95,94 +104,9 @@ function deriveViewerStatus(viewerState, connectionState) {
   }
   return {
     kind: "idle",
-      label: "等待状态",
-      badgeClass: "status-badge-neutral",
-    };
-}
-
-function DetectionOverlay({ displayFrame, imageSize }) {
-  if (!displayFrame || !imageSize.width || !imageSize.height) {
-    return null;
-  }
-
-  const targetId = displayFrame.target_id;
-  const detections = Array.isArray(displayFrame?.detections) ? displayFrame.detections : [];
-  const bbox =
-    Array.isArray(displayFrame?.bbox) && displayFrame.bbox.length === 4
-      ? displayFrame.bbox
-      : detections.find((detection) => {
-          const detectionTrackId = detection?.track_id ?? detection?.target_id ?? null;
-          return targetId !== null && detectionTrackId !== null && String(detectionTrackId) === String(targetId);
-        })?.bbox ?? null;
-  const viewBox = `0 0 ${imageSize.width} ${imageSize.height}`;
-
-  return (
-    <svg className="overlay" viewBox={viewBox} preserveAspectRatio="none">
-      {detections.map((detection) => {
-        const detectionBbox = Array.isArray(detection?.bbox) ? detection.bbox : null;
-        const detectionTrackId = detection.track_id ?? detection.target_id ?? null;
-        if (detectionBbox === null) {
-          return null;
-        }
-        if (
-          targetId !== null &&
-          detectionTrackId !== null &&
-          String(detectionTrackId) === String(targetId)
-        ) {
-          return null;
-        }
-        const [x1, y1, x2, y2] = detectionBbox;
-        return (
-          <g key={`candidate-${detectionTrackId ?? "unknown"}-${x1}-${y1}-${x2}-${y2}`}>
-            <rect
-              x={x1}
-              y={y1}
-              width={Math.max(1, x2 - x1)}
-              height={Math.max(1, y2 - y1)}
-              className="bbox bbox-candidate"
-            />
-            <rect
-              x={x1}
-              y={Math.max(2, y1 - 24)}
-              width={34}
-              height={20}
-              rx={8}
-              className="bbox-label-bg bbox-label-bg-candidate"
-            />
-            <text x={x1 + 6} y={Math.max(18, y1 - 8)} className="bbox-label">
-              {String(detectionTrackId ?? "?")}
-            </text>
-          </g>
-        );
-      })}
-      {bbox ? (
-        <g>
-          <rect
-            x={bbox[0]}
-            y={bbox[1]}
-            width={Math.max(1, bbox[2] - bbox[0])}
-            height={Math.max(1, bbox[3] - bbox[1])}
-            className="bbox bbox-target"
-          />
-          <rect
-            x={bbox[0]}
-            y={Math.max(2, bbox[1] - 28)}
-            width={42}
-            height={22}
-            rx={8}
-            className="bbox-label-bg bbox-label-bg-target"
-          />
-          <text
-            x={bbox[0] + 7}
-            y={Math.max(18, bbox[1] - 10)}
-            className="bbox-label bbox-label-target"
-          >
-            {String(targetId ?? "?")}
-          </text>
-        </g>
-      ) : null}
-    </svg>
-  );
+    label: "等待状态",
+    badgeClass: "status-badge-neutral",
+  };
 }
 
 function MemoryEntry({ entry }) {
@@ -217,188 +141,59 @@ function ConversationEntry({ entry }) {
   );
 }
 
-function historyStorageKey(sessionId) {
-  return `${HISTORY_STORAGE_PREFIX}${sessionId}`;
-}
-
-function loadStoredHistory(sessionId) {
-  if (!sessionId) {
-    return { conversationHistory: [], memoryHistory: [] };
-  }
-  try {
-    const raw = window.localStorage.getItem(historyStorageKey(sessionId));
-    if (!raw) {
-      return { conversationHistory: [], memoryHistory: [] };
-    }
-    const parsed = JSON.parse(raw);
-    return {
-      conversationHistory: Array.isArray(parsed?.conversationHistory) ? parsed.conversationHistory : [],
-      memoryHistory: Array.isArray(parsed?.memoryHistory) ? parsed.memoryHistory : [],
-    };
-  } catch {
-    return { conversationHistory: [], memoryHistory: [] };
-  }
-}
-
-function mergeConversationHistory(existing, incoming) {
-  const merged = [...existing];
-  const indexByKey = new Map(
-    merged.map((entry, index) => [`${entry.timestamp || ""}|${entry.role || ""}|${entry.text || ""}`, index]),
-  );
-  for (const entry of incoming || []) {
-    const key = `${entry?.timestamp || ""}|${entry?.role || ""}|${entry?.text || ""}`;
-    const existingIndex = indexByKey.get(key);
-    if (existingIndex !== undefined) {
-      merged[existingIndex] = entry;
-      continue;
-    }
-    indexByKey.set(key, merged.length);
-    merged.push(entry);
-  }
-  return merged;
-}
-
-function appendMemorySnapshot(existing, viewerState) {
-  const memory = String(viewerState?.modules?.tracking?.current_memory || "").trim();
-  if (!memory) {
-    return existing;
-  }
-  const nextEntry = {
-    updated_at: viewerState?.updated_at || "",
-    frame_id: viewerState?.summary?.frame_id || "",
-    target_id: viewerState?.summary?.target_id ?? null,
-    behavior: viewerState?.agent?.latest_result?.behavior || "memory",
-    memory,
-  };
-  const key = `${nextEntry.updated_at}|${nextEntry.frame_id}|${nextEntry.memory}`;
-  const last = existing[existing.length - 1];
-  if (last) {
-    const lastKey = `${last.updated_at || ""}|${last.frame_id || ""}|${last.memory || ""}`;
-    if (lastKey === key) {
-      return existing;
-    }
-  }
-  return [...existing, nextEntry];
-}
-
 export default function App() {
   const [viewerState, setViewerState] = useState(null);
-  const [connectionState, setConnectionState] = useState("connecting");
+  const [syncState, setSyncState] = useState("loading");
   const [error, setError] = useState("");
-  const [lastMessageAt, setLastMessageAt] = useState(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [refreshSeed, setRefreshSeed] = useState(0);
   const imageRef = useRef(null);
   const stageHostRef = useRef(null);
-  const reconnectTimerRef = useRef(null);
-  const lastSessionIdRef = useRef("");
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [stageHostSize, setStageHostSize] = useState({ width: 0, height: 0 });
-  const [conversationLog, setConversationLog] = useState([]);
-  const [memoryLog, setMemoryLog] = useState([]);
-  const [lastGoodDisplayFrame, setLastGoodDisplayFrame] = useState(null);
-  const sessionId = viewerState?.session_id || "";
-
-  useEffect(() => {
-    if (!sessionId) {
-      setConversationLog([]);
-      setMemoryLog([]);
-      return;
-    }
-    const stored = loadStoredHistory(sessionId);
-    setConversationLog(stored.conversationHistory);
-    setMemoryLog(stored.memoryHistory);
-  }, [sessionId]);
-
-  useEffect(() => {
-    if (sessionId === lastSessionIdRef.current) {
-      return;
-    }
-    lastSessionIdRef.current = sessionId;
-    setLastGoodDisplayFrame(null);
-    setImageSize({ width: 0, height: 0 });
-  }, [sessionId]);
-
-  useEffect(() => {
-    if (!sessionId || !viewerState) {
-      return;
-    }
-    setConversationLog((current) =>
-      mergeConversationHistory(current, viewerState?.agent?.conversation_history || []),
-    );
-    setMemoryLog((current) => appendMemorySnapshot(current, viewerState));
-  }, [sessionId, viewerState]);
-
-  useEffect(() => {
-    if (!sessionId) {
-      return;
-    }
-    window.localStorage.setItem(
-      historyStorageKey(sessionId),
-      JSON.stringify({
-        conversationHistory: conversationLog,
-        memoryHistory: memoryLog,
-      }),
-    );
-  }, [sessionId, conversationLog, memoryLog]);
 
   useEffect(() => {
     let disposed = false;
-    let socket = null;
+    let timerId = null;
 
-    function connect() {
+    async function pollSnapshot() {
       if (disposed) {
         return;
       }
-
-      setConnectionState("connecting");
-      socket = new window.WebSocket(DEFAULT_WS_URL);
-
-      socket.addEventListener("open", () => {
+      setSyncState((current) => (current === "ready" ? current : "loading"));
+      try {
+        const response = await window.fetch(`${VIEWER_STATE_URL}?t=${Date.now()}&r=${refreshSeed}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(`读取 viewer 快照失败：${response.status}`);
+        }
+        const payload = await response.json();
         if (disposed) {
           return;
         }
-        setConnectionState("connected");
+        setViewerState(payload);
+        setSyncState("ready");
         setError("");
-      });
-
-      socket.addEventListener("message", (event) => {
+        setLastSyncedAt(new Date());
+      } catch (fetchError) {
         if (disposed) {
           return;
         }
-        try {
-          const payload = JSON.parse(event.data);
-          setViewerState(payload);
-          setLastMessageAt(new Date());
-          setError("");
-        } catch (parseError) {
-          setError(parseError instanceof Error ? parseError.message : "无法解析 websocket 数据。");
+        setSyncState("error");
+        setError(fetchError instanceof Error ? fetchError.message : "无法读取本地 viewer 快照。");
+      } finally {
+        if (!disposed) {
+          timerId = window.setTimeout(pollSnapshot, POLL_INTERVAL_MS);
         }
-      });
-
-      socket.addEventListener("error", () => {
-        if (disposed) {
-          return;
-        }
-        setError("Viewer websocket 已断开。");
-      });
-
-      socket.addEventListener("close", () => {
-        if (disposed) {
-          return;
-        }
-        setConnectionState("disconnected");
-        reconnectTimerRef.current = window.setTimeout(connect, RECONNECT_DELAY_MS);
-      });
+      }
     }
 
-    connect();
+    pollSnapshot();
     return () => {
       disposed = true;
-      if (reconnectTimerRef.current !== null) {
-        window.clearTimeout(reconnectTimerRef.current);
-      }
-      if (socket) {
-        socket.close();
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
       }
     };
   }, [refreshSeed]);
@@ -421,24 +216,7 @@ export default function App() {
     return () => {
       image.removeEventListener("load", updateSize);
     };
-  }, [viewerState?.modules?.tracking?.display_frame?.frame_id, viewerState?.modules?.tracking?.display_frame?.image_data_url, viewerState?.observation?.latest_frame?.frame_id, viewerState?.observation?.latest_frame?.image_data_url]);
-
-  useEffect(() => {
-    const nextDisplayFrame =
-      viewerState?.modules?.tracking?.display_frame || viewerState?.observation?.latest_frame || null;
-    if (!nextDisplayFrame?.image_data_url) {
-      return;
-    }
-    setLastGoodDisplayFrame((current) => {
-      if (
-        current?.frame_id === nextDisplayFrame.frame_id &&
-        current?.image_data_url === nextDisplayFrame.image_data_url
-      ) {
-        return current;
-      }
-      return nextDisplayFrame;
-    });
-  }, [viewerState?.modules?.tracking?.display_frame, viewerState?.observation?.latest_frame]);
+  }, [viewerState?.summary?.frame_id, viewerState?.updated_at]);
 
   useEffect(() => {
     const host = stageHostRef.current;
@@ -459,13 +237,16 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
 
-  const liveDisplayFrame = viewerState?.modules?.tracking?.display_frame || viewerState?.observation?.latest_frame || null;
-  const displayFrame = liveDisplayFrame?.image_data_url ? liveDisplayFrame : lastGoodDisplayFrame;
-  const showingFallbackFrame =
-    !liveDisplayFrame?.image_data_url && Boolean(lastGoodDisplayFrame?.image_data_url);
-  const viewerStatus = deriveViewerStatus(viewerState, connectionState);
-  const memoryHistory = [...memoryLog].reverse();
-  const conversationHistory = [...conversationLog].reverse();
+  const displayFrame = viewerState?.modules?.tracking?.display_frame || viewerState?.observation?.latest_frame || null;
+  const displayImageUrl =
+    displayFrame?.rendered_image_path && viewerState?.updated_at
+      ? `${VIEWER_FRAME_URL}?v=${encodeURIComponent(
+          `${displayFrame.frame_id || "frame"}-${viewerState.updated_at}`,
+        )}`
+      : "";
+  const viewerStatus = deriveViewerStatus(viewerState, syncState);
+  const memoryHistory = [...(viewerState?.modules?.tracking?.memory_history || [])].reverse();
+  const conversationHistory = [...(viewerState?.agent?.conversation_history || [])].reverse();
   const viewerStageStyle = useMemo(() => {
     if (!imageSize.width || !imageSize.height || !stageHostSize.width || !stageHostSize.height) {
       return null;
@@ -487,13 +268,19 @@ export default function App() {
     <div className="viewer-shell">
       <header className="topbar surface">
         <div className="topbar-meta">
-          <span className={`connection-chip connection-chip-${connectionState}`}>{connectionState}</span>
+          <span
+            className={`connection-chip connection-chip-${
+              syncState === "ready" ? "connected" : syncState === "error" ? "disconnected" : "connecting"
+            }`}
+          >
+            {syncStateLabel(syncState)}
+          </span>
           <span className="meta-chip">
             {viewerState?.session_id ? `active ${viewerState.session_id}` : "等待 active session"}
           </span>
-          <span className="meta-chip">{lastMessageAt ? `收到 ${formatTime(lastMessageAt)}` : "等待消息"}</span>
+          <span className="meta-chip">{lastSyncedAt ? `同步 ${formatTime(lastSyncedAt)}` : "等待快照"}</span>
           <button type="button" className="refresh-button" onClick={() => setRefreshSeed((value) => value + 1)}>
-            重新连接
+            立即刷新
           </button>
         </div>
       </header>
@@ -522,28 +309,23 @@ export default function App() {
               className={viewerStageStyle ? "stage-canvas stage-canvas-fitted" : "stage-canvas"}
               style={viewerStageStyle || undefined}
             >
-              {displayFrame?.image_data_url ? (
+              {displayImageUrl ? (
                 <>
                   <img
                     ref={imageRef}
                     className="stage-image"
-                    src={displayFrame.image_data_url}
-                    alt={`当前结果帧 ${displayFrame.frame_id || ""}`}
+                    src={displayImageUrl}
+                    alt={`当前结果帧 ${displayFrame?.frame_id || ""}`}
                   />
-                  <DetectionOverlay displayFrame={displayFrame} imageSize={imageSize} />
                   <div className="stage-note">
                     <strong>{viewerStatus.label}</strong>
-                    {showingFallbackFrame ? (
-                      <span className="stage-note-inline">
-                        当前显示的是上一张可靠画面：{lastGoodDisplayFrame?.frame_id || "未知帧"}
-                      </span>
-                    ) : null}
+                    <span>当前显示的是 runtime 最新落盘结果帧，Bounding Box 已经直接写进图片。</span>
                   </div>
                 </>
               ) : (
                 <div className="empty-stage">
                   <strong>等待画面</strong>
-                  <span>启动 tracking perception 后会自动创建随机 active session，viewer 会只跟随这一条会话。</span>
+                  <span>tracking 结果会写到本地 `viewer/latest.jpg` 和 `viewer/latest.json`，这里直接读取它们。</span>
                 </div>
               )}
             </div>
