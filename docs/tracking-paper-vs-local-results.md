@@ -10,16 +10,17 @@ Source table columns:
 - `room†`
 - `public dataset [5]`
 
-| Methods | corridor1† | corridor2† | lab-corridor† | room† | public dataset [5] |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Zhong’s Method [29] | 63.8 | 66.8 | 75.8 | 44.7 | 75.8 |
-| SiamRPN++ [30] | 44.8 | 55.9 | 46.1 | 42.6 | 93.6 |
-| STARK [31] | 44.3 | 83.8 | 73.1 | 65.8 | 96.5 |
-| SORT [32] + RPF-ReID | 67.3 | 37.9 | 31.1 | 82.4 | 96.1 |
-| OC-SORT [33] + RPF-ReID | 67.3 | 37.9 | 31.1 | 82.4 | 96.1 |
-| Pure ByteTrack| 27.74 | 23.76 | 18.92 | 42.86 |
-| ByteTrack [34] + RPF-ReID | 69.1 | 20.2 | 54.2 | 82.4 | 96.3 |
-| ByteTrack+TrackingAgent | 78.38 | 93.85 | 94.19 | 100.00 |
+
+| Methods | corridor1 | lab-corridor | corridor2 | room |
+| --- | ---: | ---: | ---: | ---: |
+| Zhong’s Method | 63.8 | 75.8 | 66.8 | 44.7 |
+| SiamRPN++ | 44.8 | 46.1 | 55.9 | 42.6 |
+| STARK | 44.3 | 73.1 | 83.8 | 65.8 |
+| ByteTrack | 27.74 | 18.92 | 23.76 | 42.86 |
+| SORT + RPF-ReID | 67.3 | 31.1 | 37.9 | 82.4 |
+| OC-SORT + RPF-ReID | 67.3 | 31.1 | 37.9 | 82.4 |
+| ByteTrack + RPF-ReID | 69.1 | 54.2 | 20.2 | 82.4 |
+| ByteTrack + TrackingAgent (no-reason) | **78.38** | **94.19** | **93.85** | **100.00** |
 
 ## Our Local Results
 
@@ -71,14 +72,3 @@ Current best files:
 - Historical flash and no-reason benchmark logs:
   - [tracking-benchmark-2026-04-10-qwen35flash.md](/Users/huzujun/Desktop/new/tracking_agent/docs/tracking-benchmark-2026-04-10-qwen35flash.md)
   - [tracking-no-reason-benchmark-2026-04-11.md](/Users/huzujun/Desktop/new/tracking_agent/docs/tracking-no-reason-benchmark-2026-04-11.md)
-
-| Methods | corridor1 | lab-corridor | corridor2 | room |
-| --- | ---: | ---: | ---: | ---: |
-| Zhong’s Method | 63.8 | 75.8 | 66.8 | 44.7 |
-| SiamRPN++ | 44.8 | 46.1 | 55.9 | 42.6 |
-| STARK | 44.3 | 73.1 | 83.8 | 65.8 |
-| ByteTrack | 27.74 | 18.92 | 23.76 | 42.86 |
-| SORT + RPF-ReID | 67.3 | 31.1 | 37.9 | 82.4 |
-| OC-SORT + RPF-ReID | 67.3 | 31.1 | 37.9 | 82.4 |
-| ByteTrack + RPF-ReID | 69.1 | 54.2 | 20.2 | 82.4 |
-| ByteTrack + TrackingAgent (no-reason) | **78.38** | **94.19** | **93.85** | **100.00** |
