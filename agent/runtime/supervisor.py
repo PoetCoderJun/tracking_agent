@@ -17,7 +17,7 @@ from skills.catalog import project_skill_paths
 from world.perception.service import LocalPerceptionService
 
 DEFAULT_TRACKING_POLL_SECONDS = 0.25
-VISION_GROUNDING_PROMPT_PATH = PROJECT_ROOT / "agent" / "prompts" / "vision_grounding_system.md"
+VISION_GROUNDING_PROMPT_PATH = PROJECT_ROOT / "agent" / "prompts" / "System Prompt.md"
 
 
 def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
