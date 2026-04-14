@@ -42,7 +42,6 @@ Current strategy summary:
 
 - `rebind_fsm`
 - tracker fps `8`
-- `rebind_after_missed_frames = 1`
 - no `reason` field in tracking select output
 - async/background rewrite writeback
 - keep tracking memory schema unchanged

@@ -54,7 +54,6 @@ def test_run_sequence_benchmark_uses_single_runtime_path(monkeypatch: pytest.Mon
         observation_interval_seconds=1.0,
         benchmark_run_root=tmp_path / "runs",
         tracker_fps=8.0,
-        rebind_after_missed_frames=1,
     )
 
     assert calls == ["rebind"]
@@ -159,7 +158,6 @@ def test_run_sequence_benchmark_reuses_production_surfaces(monkeypatch: pytest.M
         benchmark_run_root=tmp_path / "runs",
         observation_interval_seconds=1.0,
         tracker_fps=8.0,
-        rebind_after_missed_frames=1,
     )
 
     assert calls == ["init", "runner"]
@@ -209,7 +207,6 @@ def test_benchmark_dataset_report_has_no_pipeline_metadata(monkeypatch: pytest.M
         observation_interval_seconds=1.0,
         benchmark_run_root=tmp_path / "runs",
         tracker_fps=8.0,
-        rebind_after_missed_frames=1,
     )
 
     assert "pipeline" not in report

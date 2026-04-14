@@ -22,3 +22,4 @@ def test_tracking_benchmark_parse_args_has_no_pipeline_option() -> None:
     args = tracking_benchmark.parse_args([])
 
     assert not hasattr(args, "pipeline")
+    assert not hasattr(args, "rebind_after_missed_frames")
