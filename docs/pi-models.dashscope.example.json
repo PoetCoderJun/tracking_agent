@@ -1,0 +1,48 @@
+{
+  "providers": {
+    "dashscope": {
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "apiKey": "!printenv DASHSCOPE_API_KEY",
+      "api": "openai-completions",
+      "authHeader": true,
+      "models": [
+        {
+          "id": "qwen3.6-plus",
+          "name": "DashScope Qwen 3.6 Plus",
+          "reasoning": false,
+          "input": ["text", "image"],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 1000000,
+          "maxTokens": 16384,
+          "compat": {
+            "supportsDeveloperRole": false,
+            "thinkingFormat": "qwen"
+          }
+        },
+        {
+          "id": "qwen3.5-flash",
+          "name": "DashScope Qwen 3.5 Flash",
+          "reasoning": false,
+          "input": ["text"],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 128000,
+          "maxTokens": 16384,
+          "compat": {
+            "supportsDeveloperRole": false,
+            "thinkingFormat": "qwen"
+          }
+        }
+      ]
+    }
+  }
+}

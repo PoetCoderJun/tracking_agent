@@ -94,6 +94,15 @@ npm install -g @mariozechner/pi-coding-agent
 pi --help
 ```
 
+如果你希望 `pi` 自己也通过 DashScope 访问 Qwen，把仓库里的示例配置复制到 `~/.pi/agent/models.json`：
+
+```bash
+mkdir -p ~/.pi/agent
+cp ./docs/pi-models.dashscope.example.json ~/.pi/agent/models.json
+```
+
+Windows 下对应路径是 `%USERPROFILE%\\.pi\\agent\\models.json`。示例文件里的 `apiKey` 读取的是当前 shell 的 `DASHSCOPE_API_KEY`，所以启动 `pi` 或 `uv run e-agent` 前需要先导出这个环境变量；如果你已经在当前 shell 里执行过 `set -a && source .ENV && set +a`，这一步就已经满足了。
+
 安装依赖：
 
 ```bash
