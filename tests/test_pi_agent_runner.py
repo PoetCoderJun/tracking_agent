@@ -83,7 +83,7 @@ def test_main_bootstraps_pi_runner_with_project_skills(monkeypatch, tmp_path: Pa
     assert "--no-skills" in command
     assert "--model" in command
     assert skill_args
-    assert any(path.endswith("/skills/tracking") for path in skill_args)
+    assert any(path.endswith("/skills/tracking-init") for path in skill_args)
     assert any(path.endswith("/skills/tracking-stop") for path in skill_args)
     assert any(path.endswith("/skills/tts") for path in skill_args)
     assert len(prompt_args) == 1
@@ -337,12 +337,12 @@ def test_tracking_skill_trigger_updates_session_with_clarification_when_frames_m
     )
     session = sessions.load("sess_tracking")
 
-    assert payload["skill_name"] == "tracking"
+    assert payload["skill_name"] == "tracking-init"
     assert payload["tool"] == "init"
     assert payload["session_result"]["needs_clarification"] is True
     assert "当前无法确认目标" in payload["session_result"]["text"]
     assert session.latest_result["function"] == "chat"
-    assert session.capabilities["tracking"]["pending_question"] == "当前无法确认目标，请补充描述。"
+    assert session.capabilities["tracking-init"]["pending_question"] == "当前无法确认目标，请补充描述。"
 
 
 def test_tracking_clarification_reply_routes_back_to_init_path(tmp_path: Path, monkeypatch) -> None:
@@ -352,7 +352,7 @@ def test_tracking_clarification_reply_routes_back_to_init_path(tmp_path: Path, m
     sessions.start_fresh_session("sess_tracking", device_id="robot_01")
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking",
+        skill_name="tracking-init",
         patch={
             "pending_question": "当前无法确认目标，请补充描述。",
             "latest_target_id": None,
@@ -364,7 +364,7 @@ def test_tracking_clarification_reply_routes_back_to_init_path(tmp_path: Path, m
 
     def _fake_init(**kwargs):
         captured.update(kwargs)
-        return {"status": "processed", "skill_name": "tracking", "tool": "init"}
+        return {"status": "processed", "skill_name": "tracking-init", "tool": "init"}
 
     monkeypatch.setattr(tracking_deterministic, "process_tracking_init_direct", _fake_init)
 
@@ -386,7 +386,7 @@ def test_tracking_clarification_reply_routes_back_to_init_path(tmp_path: Path, m
 
 def test_web_search_skill_helper_uses_latest_user_text_without_committing(tmp_path: Path) -> None:
     search_turn = _load_script_module(
-        ROOT / "skills" / "web-search" / "scripts" / "search_turn.py",
+        ROOT / "skills" / "web_search" / "scripts" / "search_turn.py",
         "test_web_search_turn",
     )
     state_root = tmp_path / "state"

@@ -93,32 +93,44 @@ def _empty_state() -> Dict[str, Any]:
     }
 
 
+def _invalid_state_error(message: str) -> ValueError:
+    return ValueError(f"Invalid session state: {message}. Start with a fresh runtime state.")
+
+
+def _legacy_state_keys(payload: Dict[str, Any]) -> List[str]:
+    legacy_keys = []
+    for key in ("user_preferences", "environment_map", "runner_state", "skill_cache", "capabilities"):
+        if key in payload:
+            legacy_keys.append(key)
+    return legacy_keys
+
+
 def _normalized_state(payload: Dict[str, Any]) -> Dict[str, Any]:
-    state = _empty_state()
+    legacy_keys = _legacy_state_keys(payload)
+    if legacy_keys:
+        joined = ", ".join(sorted(legacy_keys))
+        raise _invalid_state_error(f"legacy top-level agent-state fields are unsupported ({joined})")
+
     raw_state = payload.get("state")
-    if isinstance(raw_state, dict):
-        state["user_preferences"] = _normalized_section(raw_state.get("user_preferences"))
-        state["environment"] = _normalized_section(raw_state.get("environment"))
-        state["runner"] = _normalized_section(raw_state.get("runner"))
-        state["capabilities"] = _normalized_section(raw_state.get("capabilities"))
-        return state
-    state["user_preferences"] = _normalized_section(payload.get("user_preferences"))
-    state["environment"] = _normalized_section(payload.get("environment_map"))
-    state["runner"] = _normalized_section(payload.get("runner_state"))
-    capabilities = _normalized_section(payload.get("skill_cache"))
-    if not capabilities:
-        capabilities = _normalized_section(payload.get("capabilities"))
-    state["capabilities"] = capabilities
-    return state
+    if not isinstance(raw_state, dict):
+        raise _invalid_state_error("`state` must exist and be an object")
+
+    normalized: Dict[str, Any] = {}
+    for key in ("user_preferences", "environment", "runner", "capabilities"):
+        section = raw_state.get(key)
+        if not isinstance(section, dict):
+            raise _invalid_state_error(f"`state.{key}` must exist and be an object")
+        normalized[key] = _normalized_section(section)
+    return normalized
 
 
 def _state_with_updates(
     state: Dict[str, Any],
     *,
     user_preferences: Optional[Dict[str, Any]] = None,
-    environment_map: Optional[Dict[str, Any]] = None,
-    runner_state: Optional[Dict[str, Any]] = None,
-    skill_cache: Optional[Dict[str, Any]] = None,
+    environment: Optional[Dict[str, Any]] = None,
+    runner: Optional[Dict[str, Any]] = None,
+    capabilities: Optional[Dict[str, Any]] = None,
     replace: bool = False,
 ) -> Dict[str, Any]:
     base = _normalized_state({"state": state})
@@ -128,20 +140,20 @@ def _state_with_updates(
     else:
         normalized = _normalized_section(user_preferences)
         updated["user_preferences"] = normalized if replace else _merge_nested(base["user_preferences"], normalized)
-    if environment_map is None:
+    if environment is None:
         updated["environment"] = {} if replace else base["environment"]
     else:
-        normalized = _normalized_section(environment_map)
+        normalized = _normalized_section(environment)
         updated["environment"] = normalized if replace else _merge_nested(base["environment"], normalized)
-    if runner_state is None:
+    if runner is None:
         updated["runner"] = {} if replace else base["runner"]
     else:
-        normalized = _normalized_section(runner_state)
+        normalized = _normalized_section(runner)
         updated["runner"] = normalized if replace else _merge_nested(base["runner"], normalized)
-    if skill_cache is None:
+    if capabilities is None:
         updated["capabilities"] = {} if replace else base["capabilities"]
     else:
-        normalized = _normalized_section(skill_cache)
+        normalized = _normalized_section(capabilities)
         updated["capabilities"] = normalized if replace else _merge_nested(base["capabilities"], normalized)
     return updated
 
@@ -180,15 +192,15 @@ class BackendSession:
         return _normalized_section(self.state.get("user_preferences"))
 
     @property
-    def environment_map(self) -> Dict[str, Any]:
+    def environment(self) -> Dict[str, Any]:
         return _normalized_section(self.state.get("environment"))
 
     @property
-    def runner_state(self) -> Dict[str, Any]:
+    def runner(self) -> Dict[str, Any]:
         return _normalized_section(self.state.get("runner"))
 
     @property
-    def skill_cache(self) -> Dict[str, Any]:
+    def capabilities(self) -> Dict[str, Any]:
         return _normalized_section(self.state.get("capabilities"))
 
 
@@ -541,9 +553,9 @@ class BackendStore:
         *,
         device_id: str = "",
         user_preferences: Optional[Dict[str, Any]] = None,
-        environment_map: Optional[Dict[str, Any]] = None,
-        runner_state: Optional[Dict[str, Any]] = None,
-        skill_cache: Optional[Dict[str, Any]] = None,
+        environment: Optional[Dict[str, Any]] = None,
+        runner: Optional[Dict[str, Any]] = None,
+        capabilities: Optional[Dict[str, Any]] = None,
     ) -> BackendSession:
         with self._lock:
             session = self.load_or_create_session(session_id=session_id, device_id=device_id)
@@ -558,9 +570,9 @@ class BackendStore:
                 state=_state_with_updates(
                     session.state,
                     user_preferences=user_preferences,
-                    environment_map=environment_map,
-                    runner_state=runner_state,
-                    skill_cache=skill_cache,
+                    environment=environment,
+                    runner=runner,
+                    capabilities=capabilities,
                 ),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
@@ -574,9 +586,9 @@ class BackendStore:
         *,
         device_id: str = "",
         user_preferences: Optional[Dict[str, Any]] = None,
-        environment_map: Optional[Dict[str, Any]] = None,
-        runner_state: Optional[Dict[str, Any]] = None,
-        skill_cache: Optional[Dict[str, Any]] = None,
+        environment: Optional[Dict[str, Any]] = None,
+        runner: Optional[Dict[str, Any]] = None,
+        capabilities: Optional[Dict[str, Any]] = None,
     ) -> BackendSession:
         with self._lock:
             session = self.load_or_create_session(session_id=session_id, device_id=device_id)
@@ -591,9 +603,9 @@ class BackendStore:
                 state=_state_with_updates(
                     session.state,
                     user_preferences=user_preferences,
-                    environment_map=environment_map,
-                    runner_state=runner_state,
-                    skill_cache=skill_cache,
+                    environment=environment,
+                    runner=runner,
+                    capabilities=capabilities,
                     replace=True,
                 ),
                 created_at=session.created_at,
@@ -607,9 +619,9 @@ class BackendStore:
             session_id,
             device_id=device_id,
             user_preferences={},
-            environment_map={},
-            runner_state={},
-            skill_cache={},
+            environment={},
+            runner={},
+            capabilities={},
         )
 
     def reset_session_context(self, session_id: str) -> BackendSession:
@@ -645,7 +657,7 @@ class BackendStore:
     ) -> BackendSession | None:
         with self._lock:
             session = self.load_or_create_session(session_id=session_id, device_id=device_id)
-            runner_state = _normalized_section(session.runner_state)
+            runner_state = _normalized_section(session.runner)
             now = time.time()
 
             current_owner_id = str(runner_state.get("owner_id", "") or "").strip()
@@ -683,7 +695,7 @@ class BackendStore:
                 latest_result=session.latest_result,
                 result_history=session.result_history,
                 conversation_history=session.conversation_history,
-                state=_state_with_updates(session.state, runner_state=updated_runner_state),
+                state=_state_with_updates(session.state, runner=updated_runner_state),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
@@ -700,7 +712,7 @@ class BackendStore:
     ) -> BackendSession:
         with self._lock:
             session = self.load_or_create_session(session_id=session_id, device_id=device_id)
-            runner_state = _normalized_section(session.runner_state)
+            runner_state = _normalized_section(session.runner)
             current_owner_id = str(runner_state.get("owner_id", "") or "").strip()
             current_request_id = str(runner_state.get("turn_request_id", "") or "").strip()
             if current_owner_id != str(owner_id).strip():
@@ -726,7 +738,7 @@ class BackendStore:
                 latest_result=session.latest_result,
                 result_history=session.result_history,
                 conversation_history=session.conversation_history,
-                state=_state_with_updates(session.state, runner_state=updated_runner_state),
+                state=_state_with_updates(session.state, runner=updated_runner_state),
                 created_at=session.created_at,
                 updated_at=_utc_now(),
             )
@@ -773,10 +785,6 @@ from agent.active_session import (  # noqa: E402
     resolve_session_id,
 )
 
-LiveDetection = BackendDetection
-LiveSession = BackendSession
-LiveSessionStore = BackendStore
-
 __all__ = [
     "ALLOWED_RESULT_FIELDS",
     "ActiveSessionRecord",
@@ -784,8 +792,5 @@ __all__ = [
     "BackendDetection",
     "BackendSession",
     "BackendStore",
-    "LiveDetection",
-    "LiveSession",
-    "LiveSessionStore",
     "resolve_session_id",
 ]

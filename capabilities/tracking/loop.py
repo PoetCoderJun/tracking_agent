@@ -80,7 +80,7 @@ def supervisor_tracking_step(
         acquired = sessions.acquire_turn(
             session_id=session_id,
             owner_id=owner_id,
-            turn_kind="tracking-rewrite",
+            turn_kind="tracking-init-rewrite",
             request_id=rewrite_request_id,
             device_id=device_id,
             wait=False,
@@ -121,7 +121,7 @@ def supervisor_tracking_step(
     acquired = sessions.acquire_turn(
         session_id=session_id,
         owner_id=owner_id,
-        turn_kind="tracking",
+        turn_kind="tracking-init-runtime",
         request_id=trigger.request_id,
         device_id=device_id,
         wait=False,

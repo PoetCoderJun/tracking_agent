@@ -39,7 +39,7 @@ def test_derive_continuous_trigger_returns_cadence_review_when_due_and_target_pr
     sessions.start_fresh_session("sess_tracking", device_id="robot_01")
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking",
+        skill_name="tracking-init",
         patch={
             "latest_target_id": 15,
             "next_tracking_turn_at": 0.0,
@@ -69,7 +69,7 @@ def test_derive_continuous_trigger_returns_event_rebind_when_target_missing(tmp_
     sessions.start_fresh_session("sess_tracking", device_id="robot_01")
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking",
+        skill_name="tracking-init",
         patch={
             "latest_target_id": 15,
             "next_tracking_turn_at": 9999999999.0,
@@ -99,7 +99,7 @@ def test_derive_continuous_trigger_returns_none_when_waiting_for_user(tmp_path: 
     sessions.start_fresh_session("sess_tracking", device_id="robot_01")
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking",
+        skill_name="tracking-init",
         patch={
             "latest_target_id": 15,
             "pending_question": "请确认目标。",
@@ -134,7 +134,7 @@ def test_derive_continuous_trigger_reuses_latest_request_id(tmp_path: Path) -> N
     )
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking",
+        skill_name="tracking-init",
         patch={
             "latest_target_id": 15,
             "next_tracking_turn_at": 0.0,

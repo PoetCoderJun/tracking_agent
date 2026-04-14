@@ -11,7 +11,7 @@ They do different jobs.
 
 Path ownership should also stay split:
 
-- `skills/tracking/` is the `tracking-init` skill surface.
+- `skills/tracking-init/` is the `tracking-init` skill surface.
 - `skills/tracking-stop/` is the stop/clear skill surface.
 - `capabilities/tracking/` is the continuous tracking Python runtime surface.
 
@@ -63,7 +63,7 @@ Its control flow is intentionally short:
 1. derive trigger
 2. `Re(trigger)`
 3. `Act(observation)`
-4. `commit(decision)`
+4. `persist(decision)`
 
 The mini-agent should stay readable at a glance.
 
@@ -128,18 +128,19 @@ There are exactly three trigger concepts:
 - triggered when the latest snapshot shows that the bound target is gone or no longer trustworthy
 - used to recover the correct current `track_id`
 
-## 7. Commit
+## 7. Persist
 
-All continuous tracking side effects are committed in one place.
+All continuous tracking authoritative state updates are persisted in one place.
 
-Commit is responsible for:
+That writer is responsible for:
 
 - persisting assistant result text
 - updating tracking state
 - writing tracking memory
 - enforcing stale-request safety
 
-There must not be multiple writers for tracking lifecycle state.
+This is not a generic framework concept.
+It is a narrow single-writer rule for tracking lifecycle truth, because async supervision, leases, and queued rewrite work make split writers error-prone.
 
 ## 8. Frequency Model
 
@@ -162,3 +163,4 @@ Benchmark should follow the same model as runtime:
 - keep tracker continuity internally
 - drive the mini-agent only from emitted world snapshots
 - do not let benchmark use raw tracker frames as direct tracking-agent input
+- reuse the same production tracking entry/supervision/writer surfaces instead of benchmark-private apply paths

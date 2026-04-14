@@ -94,7 +94,7 @@ def build_viewer_module(
 ) -> Dict[str, Any] | None:
     raw_state = dict(session.get("state") or {})
     capabilities = dict(raw_state.get("capabilities") or {})
-    tracking_state = tracking_state_snapshot(capabilities.get("tracking"))
+    tracking_state = tracking_state_snapshot(capabilities.get("tracking-init"))
     memory_snapshot = read_tracking_memory_snapshot(
         state_root=state_root,
         session_id=str(session.get("session_id", "")).strip(),

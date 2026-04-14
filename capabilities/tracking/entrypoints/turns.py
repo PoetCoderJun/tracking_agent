@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from agent.project_paths import resolve_project_path
 from agent.session import AgentSessionStore
@@ -17,17 +17,11 @@ from capabilities.tracking.policy.select import (
     rewrite_memory_frame_paths,
 )
 from capabilities.tracking.runtime.context import (
-    TRACKING_LIFECYCLE_BOUND,
-    TRACKING_LIFECYCLE_INACTIVE,
-    TRACKING_LIFECYCLE_SCHEDULED,
-    TRACKING_LIFECYCLE_SEEKING,
-    build_tracking_context,
     build_tracking_init_context,
     normalize_tracking_state,
 )
 from capabilities.tracking.runtime.effects import (
     apply_tracking_decision,
-    apply_tracking_payload_compat,
     decision_from_select_output,
 )
 from capabilities.tracking.runtime.triggers import latest_tracking_frame
@@ -38,8 +32,7 @@ from capabilities.tracking.runtime.types import (
 )
 from capabilities.tracking.state.memory import read_tracking_memory_snapshot, write_tracking_memory_snapshot
 
-TRACKING_SKILL_NAME = "tracking"
-DEFAULT_TRACKING_INTERVAL_SECONDS = 3.0
+TRACKING_SKILL_NAME = "tracking-init"
 DEFAULT_PI_TURN_OWNER_ID = "pi"
 DEFAULT_TRACKING_TURN_OWNER_ID = "tracking-supervisor"
 
@@ -262,74 +255,6 @@ def recover_latest_tracking_rewrite_if_stale(*, sessions: AgentSessionStore, ses
     return None
 
 
-def apply_processed_tracking_payload(
-    *,
-    sessions: AgentSessionStore,
-    session_id: str,
-    pi_payload: Dict[str, Any],
-    env_file: Path,
-) -> Dict[str, Any]:
-    return apply_tracking_payload_compat(
-        sessions=sessions,
-        session_id=session_id,
-        pi_payload=pi_payload,
-        env_file=env_file,
-    )
-
-
-def _legacy_skill_state_patch(select_output: Dict[str, Any]) -> Dict[str, Any]:
-    patch: Dict[str, Any] = {}
-    target_description = str(select_output.get("target_description", "") or "").strip()
-    if target_description:
-        patch["target_description"] = target_description
-
-    decision = str(select_output.get("decision", "") or "").strip()
-    clarification_question = str(select_output.get("clarification_question", "") or "").strip()
-    if decision == "ask" and clarification_question and bool(select_output.get("needs_clarification", False)):
-        patch["pending_question"] = clarification_question
-        patch["lifecycle_status"] = TRACKING_LIFECYCLE_SEEKING
-        return patch
-
-    if not bool(select_output.get("found", False)):
-        patch["pending_question"] = None
-        patch["lifecycle_status"] = TRACKING_LIFECYCLE_SEEKING if decision == "wait" else TRACKING_LIFECYCLE_INACTIVE
-        return patch
-
-    target_id = select_output.get("target_id")
-    if target_id not in (None, ""):
-        patch["latest_target_id"] = int(target_id)
-    patch["pending_question"] = None
-    patch["lifecycle_status"] = (
-        TRACKING_LIFECYCLE_SCHEDULED
-        if str(select_output.get("behavior", "")).strip() == "init"
-        else TRACKING_LIFECYCLE_BOUND
-    )
-    return patch
-
-
-def _legacy_tracking_payload(select_output: Dict[str, Any]) -> Dict[str, Any]:
-    from capabilities.tracking.payload import build_tracking_robot_response, build_tracking_session_result, ensure_rewrite_paths_exist
-
-    payload = {
-        "status": "processed",
-        "skill_name": TRACKING_SKILL_NAME,
-        "session_result": build_tracking_session_result(select_output),
-        "skill_state_patch": _legacy_skill_state_patch(select_output),
-        "robot_response": build_tracking_robot_response(select_output),
-        "tool": str(select_output.get("behavior", "")).strip(),
-        "tool_output": dict(select_output),
-        "rewrite_memory_input": (
-            dict(select_output.get("rewrite_memory_input") or {})
-            if bool(select_output.get("found", False))
-            else None
-        ),
-    }
-    reason = str(select_output.get("reason", "")).strip()
-    if reason:
-        payload["reason"] = reason
-    return ensure_rewrite_paths_exist(payload)
-
-
 def _build_init_trigger(*, request_id: str, text: str, frame_id: str | None) -> TrackingTrigger:
     return TrackingTrigger(
         type=TRIGGER_CHAT_INIT,
@@ -347,11 +272,11 @@ def _build_followup_trigger(*, session, request_id: str, text: str) -> TrackingT
     bound_request_id = str(session.session.get("latest_request_id", "") or "").strip() or request_id
     return TrackingTrigger(
         type=TRIGGER_EVENT_REBIND,
-        cause="compat_followup",
+        cause="direct_request",
         frame_id=frame_id,
         request_id=bound_request_id,
         requested_text=str(text),
-        source="compat_followup",
+        source="tracking_direct",
     )
 
 
@@ -415,7 +340,6 @@ def process_tracking_init_direct(
     request_id: str,
     env_file: Path,
     artifacts_root: Path,
-    apply_tracking_payload: Callable[..., Dict[str, Any]] | None = None,
     append_chat_request: bool = True,
     acquire_turn: bool = True,
     turn_owner_id: str | None = None,
@@ -484,10 +408,6 @@ def process_tracking_init_direct(
                 "target_description": str(text),
             }
 
-        if apply_tracking_payload is not None:
-            payload = _legacy_tracking_payload(select_output)
-            return apply_tracking_payload(session_id=session_id, pi_payload=payload, env_file=env_file)
-
         decision = decision_from_select_output(
             trigger=trigger,
             select_output=select_output,
@@ -522,7 +442,6 @@ def process_tracking_request_direct(
     artifacts_root: Path,
     excluded_track_ids: list[int] | None = None,
     append_chat_request: bool = True,
-    apply_tracking_payload: Callable[..., Dict[str, Any]] | None = None,
     acquire_turn: bool = True,
     turn_owner_id: str | None = None,
     wait_for_turn: bool = True,
@@ -533,7 +452,9 @@ def process_tracking_request_direct(
         or os.environ.get("ROBOT_AGENT_TURN_OWNER_ID")
         or (DEFAULT_PI_TURN_OWNER_ID if append_chat_request else DEFAULT_TRACKING_TURN_OWNER_ID)
     ).strip()
-    resolved_turn_kind = str(turn_kind or ("pi:tracking-track" if append_chat_request else "tracking")).strip()
+    resolved_turn_kind = str(
+        turn_kind or ("pi:tracking-init-followup" if append_chat_request else "tracking-init-runtime")
+    ).strip()
     if acquire_turn:
         acquired = sessions.acquire_turn(
             session_id=session_id,
@@ -563,28 +484,12 @@ def process_tracking_request_direct(
                 request_id=request_id,
                 env_file=env_file,
                 artifacts_root=artifacts_root,
-                apply_tracking_payload=apply_tracking_payload,
                 append_chat_request=False,
                 acquire_turn=False,
                 turn_owner_id=resolved_turn_owner_id,
                 wait_for_turn=wait_for_turn,
                 turn_kind="pi:tracking-init-followup",
             )
-        if apply_tracking_payload is not None:
-            payload = _legacy_tracking_payload(
-                execute_select_tool(
-                    tracking_context=build_tracking_context(
-                        session,
-                        request_id=request_id,
-                        excluded_track_ids=excluded_track_ids,
-                    ),
-                    behavior="track",
-                    arguments={"user_text": str(text)},
-                    env_file=env_file,
-                    artifacts_root=artifacts_root,
-                )
-            )
-            return apply_tracking_payload(session_id=session_id, pi_payload=payload, env_file=env_file)
 
         trigger = _build_followup_trigger(session=session, request_id=request_id, text=text)
         return run_tracking_agent_turn(

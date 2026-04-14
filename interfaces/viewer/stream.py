@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent.project_paths import resolve_project_path
-from agent.session_store import LiveSessionStore, resolve_session_id
+from agent.session_store import BackendStore, resolve_session_id
 from capabilities.tracking.artifacts.visualization import save_detection_visualization
 from interfaces.viewer.skill_modules import build_viewer_modules
 from world.perception import recent_frames
@@ -102,7 +102,7 @@ def _normalized_bbox(raw_bbox: Any) -> List[int] | None:
 
 
 def _display_frame_ref(payload: Dict[str, Any]) -> Dict[str, Any] | None:
-    tracking_module = payload.get("modules", {}).get("tracking")
+    tracking_module = payload.get("modules", {}).get("tracking-init")
     if isinstance(tracking_module, dict):
         display_frame = tracking_module.get("display_frame")
         if isinstance(display_frame, dict):
@@ -139,7 +139,7 @@ def _append_memory_snapshot(
     payload: Dict[str, Any],
     existing_history: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    tracking_module = payload.get("modules", {}).get("tracking")
+    tracking_module = payload.get("modules", {}).get("tracking-init")
     if not isinstance(tracking_module, dict):
         return existing_history
 
@@ -212,7 +212,7 @@ def _render_latest_frame(
 
 
 def build_agent_viewer_payload(*, state_root: Path, session_id: str | None = None) -> Dict[str, Any]:
-    store = LiveSessionStore(state_root=state_root)
+    store = BackendStore(state_root=state_root)
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
     if resolved_session_id is None:
         return {
@@ -301,7 +301,7 @@ def write_agent_viewer_snapshot(
         payload=payload,
         existing_history=normalized_memory_history,
     )
-    tracking_module = payload.get("modules", {}).get("tracking")
+    tracking_module = payload.get("modules", {}).get("tracking-init")
     if isinstance(tracking_module, dict):
         tracking_module["memory_history"] = updated_memory_history
 

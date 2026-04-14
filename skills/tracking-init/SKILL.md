@@ -65,9 +65,9 @@ Do not use this skill for:
 If your current PI environment needs a deterministic local helper, use the tracking skill's own script:
 
 - In the normal PI runtime, prefer:
-  `python -m skills.tracking.scripts.init_turn --text "..."`
+  `python ./skills/tracking-init/scripts/init_turn.py --text "..."`
 - If the runtime env vars are not present, pass the explicit session/state arguments:
-  `python -m skills.tracking.scripts.init_turn --session-id <session-id> --state-root ./.runtime/agent-runtime --artifacts-root ./.runtime/pi-agent --text "..."`
+  `python ./skills/tracking-init/scripts/init_turn.py --session-id <session-id> --state-root ./.runtime/agent-runtime --artifacts-root ./.runtime/pi-agent --text "..."`
 
 Important:
 

@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 ROOT = Path(__file__).resolve().parents[3]
 TRACKING_INIT_SELECT_PROMPT_PATH = (
-    ROOT / "skills" / "tracking" / "references" / "prompts" / "tracking-init-select.md"
+    ROOT / "skills" / "tracking-init" / "references" / "prompts" / "tracking-init-select.md"
 )
 CONTINUOUS_TRACKING_SELECT_PROMPT_PATH = (
     ROOT / "capabilities" / "tracking" / "policy" / "references" / "prompts" / "continuous-tracking-select.md"

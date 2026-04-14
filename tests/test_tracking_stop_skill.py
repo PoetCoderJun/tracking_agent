@@ -49,7 +49,7 @@ def test_tracking_stop_helper_clears_tracking_state_and_memory(tmp_path: Path) -
     )
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking",
+        skill_name="tracking-init",
         patch={
             "target_description": "穿黑衣服的人",
             "latest_target_id": 15,
@@ -88,13 +88,13 @@ def test_tracking_stop_helper_clears_tracking_state_and_memory(tmp_path: Path) -
     assert payload["session_result"]["behavior"] == "stop"
     assert payload["session_result"]["text"] == "已停止跟踪当前目标。"
     assert session.latest_result is None
-    assert session.capabilities["tracking"]["latest_target_id"] is None
-    assert session.capabilities["tracking"]["pending_question"] is None
-    assert session.capabilities["tracking"]["next_tracking_turn_at"] is None
-    assert session.capabilities["tracking"]["lifecycle_status"] == TRACKING_LIFECYCLE_STOPPED
-    assert session.capabilities["tracking"]["stop_reason"] == "manual_stop"
-    assert session.capabilities["tracking"][PENDING_REWRITE_INPUT_KEY] is None
-    assert session.capabilities["tracking"][PENDING_REWRITE_REQUEST_ID_KEY] is None
+    assert session.capabilities["tracking-init"]["latest_target_id"] is None
+    assert session.capabilities["tracking-init"]["pending_question"] is None
+    assert session.capabilities["tracking-init"]["next_tracking_turn_at"] is None
+    assert session.capabilities["tracking-init"]["lifecycle_status"] == TRACKING_LIFECYCLE_STOPPED
+    assert session.capabilities["tracking-init"]["stop_reason"] == "manual_stop"
+    assert session.capabilities["tracking-init"][PENDING_REWRITE_INPUT_KEY] is None
+    assert session.capabilities["tracking-init"][PENDING_REWRITE_REQUEST_ID_KEY] is None
     assert memory_snapshot["memory"]["core"] == ""
     assert memory_snapshot["front_crop_path"] == ""
 
@@ -142,7 +142,7 @@ def test_runner_commits_tracking_stop_skill_result(tmp_path: Path) -> None:
     )
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking",
+        skill_name="tracking-init",
         patch={
             "target_description": "穿黑衣服的人",
             "latest_target_id": 15,
@@ -171,5 +171,5 @@ def test_runner_commits_tracking_stop_skill_result(tmp_path: Path) -> None:
     assert payload["skill_name"] == "tracking-stop"
     assert session.latest_result["behavior"] == "stop"
     assert session.latest_result["text"] == "已停止跟踪当前目标。"
-    assert session.capabilities["tracking"]["latest_target_id"] is None
-    assert session.capabilities["tracking"]["lifecycle_status"] == TRACKING_LIFECYCLE_STOPPED
+    assert session.capabilities["tracking-init"]["latest_target_id"] is None
+    assert session.capabilities["tracking-init"]["lifecycle_status"] == TRACKING_LIFECYCLE_STOPPED

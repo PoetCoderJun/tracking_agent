@@ -113,7 +113,7 @@ def load_tracking_context(session_file: Path) -> Dict[str, Any]:
     raw_session = load_json(session_file)
     raw_state = dict(raw_session.get("state") or {})
     capabilities = dict(raw_state.get("capabilities") or {})
-    tracking_state = dict((capabilities.get("tracking") or {}))
+    tracking_state = dict((capabilities.get("tracking-init") or {}))
     excluded_track_ids = normalized_track_ids(tracking_state.get("excluded_track_ids"))
     state_root = session_file.resolve().parents[2]
     session_id = str(raw_session["session_id"])

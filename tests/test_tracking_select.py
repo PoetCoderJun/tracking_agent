@@ -51,7 +51,7 @@ def test_tracking_prompt_ownership_and_runtime_config_are_separated() -> None:
     assert TRACKING_INIT_SELECT_PROMPT_PATH.exists()
     assert CONTINUOUS_TRACKING_SELECT_PROMPT_PATH.exists()
     assert TRACKING_RUNTIME_CONFIG_PATH.exists()
-    assert "skills/tracking/" in str(TRACKING_INIT_SELECT_PROMPT_PATH)
+    assert "skills/tracking-init/" in str(TRACKING_INIT_SELECT_PROMPT_PATH)
     assert "capabilities/tracking/" in str(CONTINUOUS_TRACKING_SELECT_PROMPT_PATH)
     assert "capabilities/tracking/" in str(TRACKING_RUNTIME_CONFIG_PATH)
     assert "prompt_files" not in config

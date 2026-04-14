@@ -5,8 +5,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from agent.session import AgentSession, AgentSessionStore
-
-TRACKING_SKILL_NAME = "tracking"
 DEFAULT_PI_TURN_OWNER_ID = "pi"
 STALE_TURN_REASON = "stale_request"
 
@@ -43,7 +41,7 @@ def _compact_response_payload(
     latest_result_patch: Optional[Dict[str, Any]],
     skill_state_patch: Optional[Dict[str, Any]],
     user_preferences_patch: Optional[Dict[str, Any]],
-    environment_map_patch: Optional[Dict[str, Any]],
+    environment_patch: Optional[Dict[str, Any]],
     robot_response: Optional[Dict[str, Any]],
     tool: Any,
     tool_output: Optional[Dict[str, Any]],
@@ -65,7 +63,7 @@ def _compact_response_payload(
         "latest_result_patch": latest_result_patch,
         "skill_state_patch": skill_state_patch,
         "user_preferences_patch": user_preferences_patch,
-        "environment_map_patch": environment_map_patch,
+        "environment_map_patch": environment_patch,
         "robot_response": robot_response,
         "tool_output": tool_output,
         "rewrite_output": rewrite_output,
@@ -260,16 +258,7 @@ def commit_skill_turn(
             )
 
     try:
-        if skill_name == TRACKING_SKILL_NAME:
-            from capabilities.tracking.entrypoints.turns import apply_processed_tracking_payload
-
-            return apply_processed_tracking_payload(
-                sessions=sessions,
-                session_id=session_id,
-                pi_payload=pi_payload,
-                env_file=env_file,
-            )
-
+        _ = env_file
         tool_output = _as_optional_dict(pi_payload.get("tool_output"), "tool_output")
         rewrite_output = _as_optional_dict(pi_payload.get("rewrite_output"), "rewrite_output")
         rewrite_memory_input = _as_optional_dict(pi_payload.get("rewrite_memory_input"), "rewrite_memory_input")
@@ -293,9 +282,9 @@ def commit_skill_turn(
         if user_preferences_patch:
             sessions.patch_user_preferences(session_id, user_preferences_patch)
 
-        environment_map_patch = _as_optional_dict(pi_payload.get("environment_map_patch"), "environment_map_patch")
-        if environment_map_patch:
-            sessions.patch_environment(session_id, environment_map_patch)
+        environment_patch = _as_optional_dict(pi_payload.get("environment_map_patch"), "environment_map_patch")
+        if environment_patch:
+            sessions.patch_environment(session_id, environment_patch)
 
         skill_state_patch = _normalize_skill_state_patch(
             skill_name,
@@ -316,7 +305,7 @@ def commit_skill_turn(
             latest_result_patch=latest_result_patch,
             skill_state_patch=skill_state_patch,
             user_preferences_patch=user_preferences_patch,
-            environment_map_patch=environment_map_patch,
+            environment_patch=environment_patch,
             robot_response=robot_response or session_result.get("robot_response"),
             tool=pi_payload.get("tool"),
             tool_output=tool_output,

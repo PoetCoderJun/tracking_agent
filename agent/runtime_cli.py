@@ -38,17 +38,17 @@ def parse_args() -> argparse.Namespace:
     session_show.add_argument("--device-id", default="robot_01")
     session_show.add_argument("--state-root", default="./.runtime/agent-runtime")
 
-    tracking_track = subparsers.add_parser(
-        "tracking-track",
-        help="Run one deterministic backend tracking step against the current session state.",
+    tracking_followup = subparsers.add_parser(
+        "tracking-init-followup",
+        help="Run one deterministic backend follow-up tracking step against the current session state.",
     )
-    tracking_track.add_argument("--session-id", default=None)
-    tracking_track.add_argument("--text", default="继续跟踪")
-    tracking_track.add_argument("--device-id", default="robot_01")
-    tracking_track.add_argument("--state-root", default="./.runtime/agent-runtime")
-    tracking_track.add_argument("--env-file", default=".ENV")
-    tracking_track.add_argument("--artifacts-root", default="./.runtime/pi-agent")
-    tracking_track.add_argument("--request-id", default=None)
+    tracking_followup.add_argument("--session-id", default=None)
+    tracking_followup.add_argument("--text", default="继续跟踪")
+    tracking_followup.add_argument("--device-id", default="robot_01")
+    tracking_followup.add_argument("--state-root", default="./.runtime/agent-runtime")
+    tracking_followup.add_argument("--env-file", default=".ENV")
+    tracking_followup.add_argument("--artifacts-root", default="./.runtime/pi-agent")
+    tracking_followup.add_argument("--request-id", default=None)
 
     tracking_init = subparsers.add_parser(
         "tracking-init",
@@ -119,7 +119,7 @@ def main() -> int:
         print(json.dumps(_session_payload(session), ensure_ascii=False))
         return 0
 
-    if args.command == "tracking-track":
+    if args.command == "tracking-init-followup":
         sessions = _session_store_from_args(args)
         session_id = _resolved_active_or_explicit_session_id(args)
         payload = process_tracking_request_direct(

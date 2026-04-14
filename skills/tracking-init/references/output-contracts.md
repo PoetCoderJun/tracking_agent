@@ -19,7 +19,7 @@ Notes:
 - `session_result` is the minimal final result for the target-selection turn.
 - `tool_output` may be included for debugging or downstream inspection.
 - `robot_response` may be included when the caller needs a top-level action payload.
-- `skill_state_patch` only updates tracking-owned fields under `state.capabilities["tracking"]`.
+- `skill_state_patch` only updates tracking-owned fields under `state.capabilities["tracking-init"]`.
 - `rewrite_memory_input` and `rewrite_output` are tracking-only extensions. Do not emit them unless the turn actually schedules or resolves memory rewrite work.
 - Keep canonical names such as `target_id`, `bounding_box_id`, `found`, and `text`.
 

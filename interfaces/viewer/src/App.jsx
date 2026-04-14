@@ -30,7 +30,7 @@ function syncStateLabel(syncState) {
 }
 
 function deriveViewerStatus(viewerState, syncState) {
-  const trackingModule = viewerState?.modules?.tracking || {};
+  const trackingModule = viewerState?.modules?.["tracking-init"] || {};
   const summaryStatusLabel = viewerState?.summary?.status_label;
   const summaryStatusKind = viewerState?.summary?.status_kind;
   if (syncState === "error") {
@@ -237,7 +237,7 @@ export default function App() {
     return () => observer.disconnect();
   }, []);
 
-  const displayFrame = viewerState?.modules?.tracking?.display_frame || viewerState?.observation?.latest_frame || null;
+  const displayFrame = viewerState?.modules?.["tracking-init"]?.display_frame || viewerState?.observation?.latest_frame || null;
   const displayImageUrl =
     displayFrame?.rendered_image_path && viewerState?.updated_at
       ? `${VIEWER_FRAME_URL}?v=${encodeURIComponent(
@@ -245,7 +245,7 @@ export default function App() {
         )}`
       : "";
   const viewerStatus = deriveViewerStatus(viewerState, syncState);
-  const memoryHistory = [...(viewerState?.modules?.tracking?.memory_history || [])].reverse();
+  const memoryHistory = [...(viewerState?.modules?.["tracking-init"]?.memory_history || [])].reverse();
   const conversationHistory = [...(viewerState?.agent?.conversation_history || [])].reverse();
   const viewerStageStyle = useMemo(() => {
     if (!imageSize.width || !imageSize.height || !stageHostSize.width || !stageHostSize.height) {
@@ -347,7 +347,7 @@ export default function App() {
             <div className="current-memory-card">
               <div className="card-label">当前记忆</div>
               <pre className="memory-block">
-                {viewerState?.modules?.tracking?.current_memory || "当前还没有 tracking memory。"}
+                {viewerState?.modules?.["tracking-init"]?.current_memory || "当前还没有 tracking memory。"}
               </pre>
             </div>
 

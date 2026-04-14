@@ -250,11 +250,11 @@ def _cleanup_supervisor_state(
             "turn_started_at": None,
         },
     )
-    tracking_state = dict((sessions.load(session_id).capabilities.get("tracking") or {}))
+    tracking_state = dict((sessions.load(session_id).capabilities.get("tracking-init") or {}))
     if tracking_state.get("latest_target_id") not in (None, "", []):
         sessions.patch_skill_state(
             session_id,
-            skill_name="tracking",
+            skill_name="tracking-init",
             patch={
                 "lifecycle_status": TRACKING_LIFECYCLE_STOPPED,
                 "stop_reason": reason,

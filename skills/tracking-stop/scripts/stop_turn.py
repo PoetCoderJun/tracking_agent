@@ -23,7 +23,7 @@ from capabilities.tracking.runtime.effects import (
 )
 from capabilities.tracking.state.memory import reset_tracking_memory_snapshot
 
-TRACKING_SKILL_NAME = "tracking"
+TRACKING_SKILL_NAME = "tracking-init"
 TRACKING_STOP_SKILL_NAME = "tracking-stop"
 DEFAULT_STATE_ROOT = "./.runtime/agent-runtime"
 

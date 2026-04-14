@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.session_store import ActiveSessionStore, LiveSessionStore
+from agent.session_store import ActiveSessionStore, BackendStore
 
 
 def _refresh_viewer_snapshot(*, state_root: Path, session_id: str | None = None) -> None:
@@ -102,12 +102,8 @@ class AgentSession:
         return dict(self.state.get("user_preferences", {}))
 
     @property
-    def environment_map(self) -> Dict[str, Any]:
-        return dict(self.state.get("environment", {}))
-
-    @property
     def environment(self) -> Dict[str, Any]:
-        return self.environment_map
+        return dict(self.state.get("environment", {}))
 
     @property
     def perception(self) -> Dict[str, Any]:
@@ -117,7 +113,7 @@ class AgentSession:
         }
 
     @property
-    def runner_state(self) -> Dict[str, Any]:
+    def runner(self) -> Dict[str, Any]:
         return dict(self.state.get("runner", {}))
 
     @property
@@ -162,7 +158,7 @@ class AgentSession:
 class AgentSessionStore:
     def __init__(self, state_root: Path):
         self._state_root = state_root
-        self._store = LiveSessionStore(state_root=state_root)
+        self._store = BackendStore(state_root=state_root)
 
     @property
     def state_root(self) -> Path:
@@ -253,13 +249,13 @@ class AgentSessionStore:
 
     def patch_environment(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
         self._ensure_session(session_id)
-        self._store.patch_agent_state(session_id, environment_map=patch)
+        self._store.patch_agent_state(session_id, environment=patch)
         _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_runner_state(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
         self._ensure_session(session_id)
-        self._store.patch_agent_state(session_id, runner_state=patch)
+        self._store.patch_agent_state(session_id, runner=patch)
         _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
@@ -271,7 +267,7 @@ class AgentSessionStore:
         patch: Dict[str, Any],
     ) -> AgentSession:
         self._ensure_session(session_id)
-        self._store.patch_agent_state(session_id, skill_cache={skill_name: patch})
+        self._store.patch_agent_state(session_id, capabilities={skill_name: patch})
         _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 

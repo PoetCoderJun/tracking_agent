@@ -9,7 +9,7 @@ This repository builds a `chat-first`, environment-grounded embodied agent kerne
 - runtime capabilities handle the continuous follow-up path.
 - shared session state is the single agent-owned truth.
 
-`tracking` is the primary proof point. `speech` / `tts` and other skills are examples of how new capabilities plug into the same kernel without becoming framework-level special cases.
+`tracking` is the primary proof point. `tts` and other skills are examples of how new capabilities plug into the same kernel without becoming framework-level special cases.
 
 ## Current System Shape
 The repository is no longer “moving toward” a minimal kernel; it is already organized around one. Keep these as hard constraints:
@@ -18,7 +18,7 @@ The repository is no longer “moving toward” a minimal kernel; it is already 
 - `world/perception/` is the only always-on input layer. It may persist same-frame `system1` outputs, but it must not own high-level task orchestration.
 - There is one runner path for agent work. Do not add parallel decision paths, detached lifecycle workers, or shadow action authorities.
 - Agent-owned persistent state lives in one session-state truth. Avoid duplicate memory mirrors, cache layers, or parallel lifecycle stores.
-- `tracking-init`, `tracking-stop`, `tts`, `speech`, and other skills/capabilities should remain ordinary modules with explicit contracts, not plugin-framework magic.
+- `tracking-init`, `tracking-stop`, `tts`, and other skills/capabilities should remain ordinary modules with explicit contracts, not plugin-framework magic.
 - `interfaces/viewer/` is read-only. It may visualize state, but it must not drive orchestration or become a second runtime.
 - Prefer deleting wrappers, compatibility layers, fallback branches, and old stack scripts over rewrapping them.
 
@@ -47,12 +47,12 @@ Do not reintroduce deleted wrapper scripts such as tracking stack launchers, fro
 
 Keep the ownership and naming boundaries explicit:
 
-- `skills/tracking/` is the `tracking-init` skill surface. It is only for the one-shot start/replace turn.
+- `skills/tracking-init/` is the `tracking-init` skill surface. It is only for the one-shot start/replace turn.
 - `skills/tracking-stop/` is the `tracking-stop` skill surface. It is only for the one-shot stop/clear turn.
 - `capabilities/tracking/` is the continuous tracking runtime surface. It owns the Python `Re -> Act -> Commit` logic, runtime prompts, runtime memory rewrite, and benchmark/runtime helpers.
 - Do not mix skill-owned files and runtime-owned files in the same path just because both belong to “tracking”.
 - Prompt/template/config ownership must match implementation ownership:
-  `tracking-init` prompt assets stay under `skills/tracking/`;
+  `tracking-init` prompt assets stay under `skills/tracking-init/`;
   continuous-tracking and memory-rewrite prompt assets/config stay under `capabilities/tracking/`.
 - Naming must make the boundary obvious. Prefer names such as `tracking_init_*`, `tracking_stop_*`, `continuous_tracking_*`, or `tracking_runtime_*` over ambiguous names such as `track_skill_*` when the code is really part of the continuous runtime.
 
@@ -94,10 +94,10 @@ Keep responsibilities sharp:
 
 Tracking-specific path rules:
 
-- `skills/tracking/` means `tracking-init`, not the continuous runtime.
+- `skills/tracking-init/` means `tracking-init`, not the continuous runtime.
 - `skills/tracking-stop/` means stop/clear lifecycle control, not target selection and not continuous runtime.
 - `capabilities/tracking/` means the continuous tracking runtime and its supporting implementation.
-- Do not store continuous runtime prompts/config under `skills/tracking/`.
+- Do not store continuous runtime prompts/config under `skills/tracking-init/`.
 - Do not store skill contract prompts/helpers under `capabilities/tracking/` unless the file is truly runtime-owned.
 
 If you need a new helper, first check whether it belongs in the owning skill or capability instead of adding another generic layer.
@@ -196,4 +196,4 @@ Ignore and avoid committing local artifacts such as:
 - viewer build output unless the task explicitly requires it
 - temporary media captures
 
-If you change interfaces used by `skills/tracking/` or `skills/tracking-stop/`, update the corresponding helper scripts and tests in the same change.
+If you change interfaces used by `skills/tracking-init/` or `skills/tracking-stop/`, update the corresponding helper scripts and tests in the same change.
