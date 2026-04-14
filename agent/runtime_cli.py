@@ -9,7 +9,7 @@ from world.perception.stream import generate_request_id
 from agent.session_store import resolve_session_id
 from agent.project_paths import resolve_project_path
 from agent.session import AgentSessionStore, bootstrap_runner_session
-from capabilities.tracking.deterministic import (
+from capabilities.tracking.entrypoints.turns import (
     process_tracking_init_direct,
     process_tracking_request_direct,
 )

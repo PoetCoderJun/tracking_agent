@@ -11,8 +11,8 @@ from typing import List
 from agent.project_paths import resolve_project_path
 from agent.runner import run_due_tracking_step
 from agent.session import AgentSessionStore, bootstrap_runner_session
-from capabilities.tracking.context import TRACKING_LIFECYCLE_STOPPED
-from capabilities.tracking.memory import tracking_memory_file
+from capabilities.tracking.runtime.context import TRACKING_LIFECYCLE_STOPPED
+from capabilities.tracking.state.memory import tracking_memory_file
 from skills.catalog import project_skill_paths
 from world.perception.service import LocalPerceptionService
 

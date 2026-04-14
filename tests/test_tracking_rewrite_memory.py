@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from capabilities.tracking.prompt_templates import (
+from capabilities.tracking.policy.prompt_templates import (
     TRACKING_MEMORY_INIT_PROMPT_PATH,
     TRACKING_MEMORY_UPDATE_PROMPT_PATH,
 )
-from capabilities.tracking.rewrite_memory import execute_rewrite_memory_tool
+from capabilities.tracking.policy.rewrite_memory import execute_rewrite_memory_tool
 
 
 def _image(path: Path) -> Path:
@@ -30,7 +30,7 @@ def test_execute_rewrite_memory_tool_uses_flash_model(tmp_path: Path, monkeypatc
     requested_models: list[str] = []
 
     monkeypatch.setattr(
-        "capabilities.tracking.rewrite_memory.load_settings",
+        "capabilities.tracking.policy.rewrite_memory.load_settings",
         lambda _env_file: SimpleNamespace(
             api_key="test-key",
             base_url="https://example.com",
@@ -58,7 +58,7 @@ def test_execute_rewrite_memory_tool_uses_flash_model(tmp_path: Path, monkeypatc
             ),
         }
 
-    monkeypatch.setattr("capabilities.tracking.rewrite_memory.call_model", _fake_call_model)
+    monkeypatch.setattr("capabilities.tracking.policy.rewrite_memory.call_model", _fake_call_model)
 
     payload = execute_rewrite_memory_tool(
         session_file=session_file,

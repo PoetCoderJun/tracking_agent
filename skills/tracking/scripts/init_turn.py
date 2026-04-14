@@ -9,7 +9,7 @@ from world.perception.stream import generate_request_id
 from agent.session_store import resolve_session_id
 from agent.project_paths import resolve_project_path
 from agent.session import AgentSessionStore
-from capabilities.tracking.deterministic import process_tracking_init_direct
+from capabilities.tracking.entrypoints.turns import process_tracking_init_direct
 
 DEFAULT_STATE_ROOT = "./.runtime/agent-runtime"
 

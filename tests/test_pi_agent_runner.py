@@ -9,8 +9,8 @@ import agent.e_agent as e_agent
 from agent.runner import commit_skill_turn, run_ordinary_skill_turn
 from agent.session import AgentSessionStore
 from agent.skill_payload import processed_skill_payload, reply_session_result
-import capabilities.tracking.deterministic as tracking_deterministic
-from capabilities.tracking.deterministic import process_tracking_init_direct
+import capabilities.tracking.entrypoints.turns as tracking_deterministic
+from capabilities.tracking.entrypoints.turns import process_tracking_init_direct
 import skills.feishu.scripts.notify_turn as feishu_turn
 import skills.tts.scripts.speak_turn as tts_turn
 

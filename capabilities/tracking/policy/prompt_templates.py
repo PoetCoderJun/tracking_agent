@@ -5,21 +5,21 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 TRACKING_INIT_SELECT_PROMPT_PATH = (
     ROOT / "skills" / "tracking" / "references" / "prompts" / "tracking-init-select.md"
 )
 CONTINUOUS_TRACKING_SELECT_PROMPT_PATH = (
-    ROOT / "capabilities" / "tracking" / "references" / "prompts" / "continuous-tracking-select.md"
+    ROOT / "capabilities" / "tracking" / "policy" / "references" / "prompts" / "continuous-tracking-select.md"
 )
 TRACKING_MEMORY_INIT_PROMPT_PATH = (
-    ROOT / "capabilities" / "tracking" / "references" / "prompts" / "tracking-memory-init.md"
+    ROOT / "capabilities" / "tracking" / "policy" / "references" / "prompts" / "tracking-memory-init.md"
 )
 TRACKING_MEMORY_UPDATE_PROMPT_PATH = (
-    ROOT / "capabilities" / "tracking" / "references" / "prompts" / "tracking-memory-update.md"
+    ROOT / "capabilities" / "tracking" / "policy" / "references" / "prompts" / "tracking-memory-update.md"
 )
 TRACKING_RUNTIME_CONFIG_PATH = (
-    ROOT / "capabilities" / "tracking" / "references" / "tracking-runtime-config.json"
+    ROOT / "capabilities" / "tracking" / "policy" / "references" / "tracking-runtime-config.json"
 )
 
 PROMPT_TEMPLATE_PATHS = {

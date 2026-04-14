@@ -11,12 +11,12 @@ import skills.tracking.scripts.init_turn as tracking_init_turn
 from world.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 from agent.session import AgentSessionStore
 from capabilities.tracking.agent import Re, run_tracking_agent_turn
-from capabilities.tracking.deterministic import process_tracking_init_direct
-from capabilities.tracking.effects import PENDING_REWRITE_INPUT_KEY
+from capabilities.tracking.entrypoints.turns import process_tracking_init_direct
 from capabilities.tracking.loop import supervisor_tracking_step
-from capabilities.tracking.memory import read_tracking_memory_snapshot, write_tracking_memory_snapshot
-from capabilities.tracking.select import _select_with_model, execute_select_tool
-from capabilities.tracking.types import TRIGGER_CADENCE_REVIEW, TrackingTrigger
+from capabilities.tracking.policy.select import _select_with_model, execute_select_tool
+from capabilities.tracking.runtime.effects import PENDING_REWRITE_INPUT_KEY
+from capabilities.tracking.runtime.types import TRIGGER_CADENCE_REVIEW, TrackingTrigger
+from capabilities.tracking.state.memory import read_tracking_memory_snapshot, write_tracking_memory_snapshot
 from interfaces.viewer import stream as viewer_stream
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -203,7 +203,7 @@ def test_tracking_init_writes_memory_synchronously_before_tracking_starts(tmp_pa
     )
 
     monkeypatch.setattr(
-        "capabilities.tracking.deterministic.execute_select_tool",
+        "capabilities.tracking.entrypoints.turns.execute_select_tool",
         lambda **_: {
             "behavior": "init",
             "frame_id": "frame_000001",
@@ -228,7 +228,7 @@ def test_tracking_init_writes_memory_synchronously_before_tracking_starts(tmp_pa
         },
     )
     monkeypatch.setattr(
-        "capabilities.tracking.deterministic.execute_rewrite_memory_tool",
+        "capabilities.tracking.entrypoints.turns.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "init",
             "memory": {
@@ -489,7 +489,7 @@ def test_execute_select_tool_uses_flash_for_init_and_track(tmp_path: Path, monke
     requested_models: list[str] = []
 
     monkeypatch.setattr(
-        "capabilities.tracking.select.load_settings",
+        "capabilities.tracking.policy.select.load_settings",
         lambda _env_file: SimpleNamespace(
             api_key="test-key",
             base_url="https://example.com",
@@ -519,7 +519,7 @@ def test_execute_select_tool_uses_flash_for_init_and_track(tmp_path: Path, monke
             0.01,
         )
 
-    monkeypatch.setattr("capabilities.tracking.select._select_with_model", _fake_select_with_model)
+    monkeypatch.setattr("capabilities.tracking.policy.select._select_with_model", _fake_select_with_model)
 
     execute_select_tool(
         tracking_context=init_context,
@@ -555,7 +555,7 @@ def test_select_with_model_retries_once_after_invalid_json(monkeypatch) -> None:
         ]
     )
 
-    monkeypatch.setattr("capabilities.tracking.select.call_model", lambda **_: next(responses))
+    monkeypatch.setattr("capabilities.tracking.policy.select.call_model", lambda **_: next(responses))
 
     normalized, elapsed_seconds = _select_with_model(
         settings=SimpleNamespace(api_key="test-key", base_url="https://example.com", timeout_seconds=10),
@@ -604,7 +604,7 @@ def test_supervisor_tracking_step_processes_pending_rewrite_when_idle(tmp_path: 
     )
 
     monkeypatch.setattr(
-        "capabilities.tracking.effects.execute_rewrite_memory_tool",
+        "capabilities.tracking.runtime.effects.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "update",
             "memory": {
@@ -675,7 +675,7 @@ def test_supervisor_tracking_step_prioritizes_pending_rewrite_before_new_trackin
     )
 
     monkeypatch.setattr(
-        "capabilities.tracking.effects.execute_rewrite_memory_tool",
+        "capabilities.tracking.runtime.effects.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "update",
             "memory": {

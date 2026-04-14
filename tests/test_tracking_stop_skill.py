@@ -7,13 +7,13 @@ from PIL import Image
 
 from agent.runner import run_ordinary_skill_turn
 from agent.session import AgentSessionStore
-from capabilities.tracking.context import TRACKING_LIFECYCLE_STOPPED
-from capabilities.tracking.effects import (
+from capabilities.tracking.runtime.context import TRACKING_LIFECYCLE_STOPPED
+from capabilities.tracking.runtime.effects import (
     PENDING_REWRITE_ENQUEUED_AT_KEY,
     PENDING_REWRITE_INPUT_KEY,
     PENDING_REWRITE_REQUEST_ID_KEY,
 )
-from capabilities.tracking.memory import read_tracking_memory_snapshot, write_tracking_memory_snapshot
+from capabilities.tracking.state.memory import read_tracking_memory_snapshot, write_tracking_memory_snapshot
 
 
 ROOT = Path(__file__).resolve().parents[1]

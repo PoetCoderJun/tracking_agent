@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from capabilities.tracking.select import enforce_conservative_track_decision
-from capabilities.tracking.prompt_templates import (
+from capabilities.tracking.policy.prompt_templates import (
     CONTINUOUS_TRACKING_SELECT_PROMPT_PATH,
     TRACKING_INIT_SELECT_PROMPT_PATH,
     TRACKING_RUNTIME_CONFIG_PATH,
     load_tracking_runtime_config,
 )
+from capabilities.tracking.policy.select import enforce_conservative_track_decision
 
 
 def test_enforce_conservative_track_decision_downgrades_overlapping_target_box() -> None:
@@ -33,7 +33,7 @@ def test_enforce_conservative_track_decision_downgrades_overlapping_target_box()
     )
     assert result["decision"] == "track"
 
-    from capabilities.tracking.select import detection_records
+    from capabilities.tracking.policy.select import detection_records
 
     result = enforce_conservative_track_decision(
         normalized=normalized,

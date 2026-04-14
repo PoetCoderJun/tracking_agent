@@ -3,14 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.session import AgentSessionStore
-from capabilities.tracking.effects import (
+from capabilities.tracking.runtime.effects import (
     PENDING_REWRITE_INPUT_KEY,
     apply_tracking_decision,
     apply_tracking_payload_compat,
     drain_pending_tracking_memory_rewrite,
 )
-from capabilities.tracking.memory import read_tracking_memory_snapshot
-from capabilities.tracking.types import ACTION_ASK, ACTION_TRACK, TRIGGER_CHAT_INIT, TrackingDecision, TrackingTrigger
+from capabilities.tracking.runtime.types import ACTION_ASK, ACTION_TRACK, TRIGGER_CHAT_INIT, TrackingDecision, TrackingTrigger
+from capabilities.tracking.state.memory import read_tracking_memory_snapshot
 
 
 def test_apply_tracking_decision_chat_init_ask_sets_pending_question(tmp_path: Path) -> None:
@@ -56,7 +56,7 @@ def test_apply_tracking_decision_track_with_memory_effect_enqueues_background_re
     crop_path.write_bytes(b"fake")
 
     monkeypatch.setattr(
-        "capabilities.tracking.effects.execute_rewrite_memory_tool",
+        "capabilities.tracking.runtime.effects.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "init",
             "memory": {
@@ -135,7 +135,7 @@ def test_drain_pending_tracking_memory_rewrite_writes_memory_and_clears_queue(tm
     )
 
     monkeypatch.setattr(
-        "capabilities.tracking.effects.execute_rewrite_memory_tool",
+        "capabilities.tracking.runtime.effects.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "init",
             "memory": {
@@ -273,7 +273,7 @@ def test_drain_pending_tracking_memory_rewrite_drops_stale_request(tmp_path: Pat
         request_id="req_newer",
     )
     monkeypatch.setattr(
-        "capabilities.tracking.effects.execute_rewrite_memory_tool",
+        "capabilities.tracking.runtime.effects.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "init",
             "memory": {

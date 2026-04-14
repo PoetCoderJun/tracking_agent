@@ -7,7 +7,16 @@ from typing import Any, Callable, Dict, Optional
 from agent.project_paths import resolve_project_path
 from agent.session import AgentSessionStore
 from capabilities.tracking.agent import run_tracking_agent_turn
-from capabilities.tracking.context import (
+from capabilities.tracking.artifacts.crop import save_target_crop
+from capabilities.tracking.policy.rewrite_memory import execute_rewrite_memory_tool
+from capabilities.tracking.policy.select import (
+    build_rewrite_memory_input,
+    ensure_session_dirs,
+    execute_select_tool,
+    persist_reference_frame,
+    rewrite_memory_frame_paths,
+)
+from capabilities.tracking.runtime.context import (
     TRACKING_LIFECYCLE_BOUND,
     TRACKING_LIFECYCLE_INACTIVE,
     TRACKING_LIFECYCLE_SCHEDULED,
@@ -16,19 +25,18 @@ from capabilities.tracking.context import (
     build_tracking_init_context,
     normalize_tracking_state,
 )
-from capabilities.tracking.effects import apply_tracking_decision, apply_tracking_payload_compat, decision_from_select_output
-from capabilities.tracking.memory import read_tracking_memory_snapshot, write_tracking_memory_snapshot
-from capabilities.tracking.rewrite_memory import execute_rewrite_memory_tool
-from capabilities.tracking.select import (
-    build_rewrite_memory_input,
-    ensure_session_dirs,
-    execute_select_tool,
-    persist_reference_frame,
-    rewrite_memory_frame_paths,
+from capabilities.tracking.runtime.effects import (
+    apply_tracking_decision,
+    apply_tracking_payload_compat,
+    decision_from_select_output,
 )
-from capabilities.tracking.crop import save_target_crop
-from capabilities.tracking.triggers import latest_tracking_frame
-from capabilities.tracking.types import TRIGGER_CHAT_INIT, TRIGGER_EVENT_REBIND, TrackingTrigger
+from capabilities.tracking.runtime.triggers import latest_tracking_frame
+from capabilities.tracking.runtime.types import (
+    TRIGGER_CHAT_INIT,
+    TRIGGER_EVENT_REBIND,
+    TrackingTrigger,
+)
+from capabilities.tracking.state.memory import read_tracking_memory_snapshot, write_tracking_memory_snapshot
 
 TRACKING_SKILL_NAME = "tracking"
 DEFAULT_TRACKING_INTERVAL_SECONDS = 3.0

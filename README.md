@@ -193,6 +193,17 @@ continuous tracking mini-agent
 
 这里的 `loop` 指的是这段内部 continuous mini Re/Act 逻辑，不是独立 stack。
 
+当前 `capabilities/tracking/` 的内部组织也保持分层但不框架化：
+
+- `loop.py`: continuous tracking supervisor / trigger loop 的主入口
+- `agent.py`: 单次 Re/Act turn
+- `runtime/`: observation、trigger、commit、types 这些核心 runtime 原语
+- `policy/`: select / memory rewrite / prompt templates / runtime references
+- `state/`: tracking memory 持久化
+- `artifacts/`: crop 和可视化输出
+- `entrypoints/`: `tracking-init` / direct turn 这类一次性入口辅助
+- `evaluation/`: benchmark 运行逻辑
+
 ## Usage
 
 ### 1. PI 里触发 tracking init，然后自动进入持续跟踪

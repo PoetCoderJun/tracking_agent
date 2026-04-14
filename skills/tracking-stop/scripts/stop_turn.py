@@ -10,18 +10,18 @@ from agent.project_paths import resolve_project_path
 from agent.session import AgentSession, AgentSessionStore
 from agent.session_store import resolve_session_id
 from agent.skill_payload import processed_skill_payload, reply_session_result
-from capabilities.tracking.context import (
+from capabilities.tracking.runtime.context import (
     TRACKING_LIFECYCLE_INACTIVE,
     TRACKING_LIFECYCLE_STOPPED,
     normalize_tracking_state,
 )
-from capabilities.tracking.effects import (
+from capabilities.tracking.runtime.effects import (
     PENDING_REWRITE_ENQUEUED_AT_KEY,
     PENDING_REWRITE_ERROR_KEY,
     PENDING_REWRITE_INPUT_KEY,
     PENDING_REWRITE_REQUEST_ID_KEY,
 )
-from capabilities.tracking.memory import reset_tracking_memory_snapshot
+from capabilities.tracking.state.memory import reset_tracking_memory_snapshot
 
 TRACKING_SKILL_NAME = "tracking"
 TRACKING_STOP_SKILL_NAME = "tracking-stop"

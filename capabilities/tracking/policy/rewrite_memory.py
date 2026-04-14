@@ -7,22 +7,22 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.config import load_settings
 from capabilities.llm_client import call_model
-from capabilities.tracking.memory import (
+from capabilities.tracking.policy.prompt_templates import (
+    TRACKING_RUNTIME_CONFIG_PATH,
+    load_tracking_runtime_config,
+    render_prompt_template,
+)
+from capabilities.tracking.state.memory import (
     empty_tracking_memory,
     normalize_tracking_memory,
     read_tracking_memory_snapshot,
     tracking_memory_prompt_text,
-)
-from capabilities.tracking.prompt_templates import (
-    TRACKING_RUNTIME_CONFIG_PATH,
-    load_tracking_runtime_config,
-    render_prompt_template,
 )
 
 

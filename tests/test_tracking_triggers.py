@@ -6,8 +6,8 @@ from PIL import Image
 
 from world.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
 from agent.session import AgentSessionStore
-from capabilities.tracking.triggers import derive_continuous_trigger
-from capabilities.tracking.types import TRIGGER_CADENCE_REVIEW, TRIGGER_EVENT_REBIND
+from capabilities.tracking.runtime.triggers import derive_continuous_trigger
+from capabilities.tracking.runtime.types import TRIGGER_CADENCE_REVIEW, TRIGGER_EVENT_REBIND
 
 
 def _frame_image(path: Path) -> Path:

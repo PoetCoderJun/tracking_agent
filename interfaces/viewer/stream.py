@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from agent.project_paths import resolve_project_path
 from agent.session_store import LiveSessionStore, resolve_session_id
-from capabilities.tracking.visualization import save_detection_visualization
+from capabilities.tracking.artifacts.visualization import save_detection_visualization
 from interfaces.viewer.skill_modules import build_viewer_modules
 from world.perception import recent_frames
 from world.perception.service import LocalPerceptionService

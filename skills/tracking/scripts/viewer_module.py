@@ -3,14 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from capabilities.tracking.context import (
+from capabilities.tracking.runtime.context import (
     TRACKING_LIFECYCLE_BOUND,
     TRACKING_LIFECYCLE_RUNNING,
     TRACKING_LIFECYCLE_SCHEDULED,
     TRACKING_LIFECYCLE_SEEKING,
     tracking_state_snapshot,
 )
-from capabilities.tracking.memory import read_tracking_memory_snapshot, tracking_memory_display_text
+from capabilities.tracking.state.memory import (
+    read_tracking_memory_snapshot,
+    tracking_memory_display_text,
+)
 
 
 def _target_bbox(

@@ -261,7 +261,7 @@ def commit_skill_turn(
 
     try:
         if skill_name == TRACKING_SKILL_NAME:
-            from capabilities.tracking.deterministic import apply_processed_tracking_payload
+            from capabilities.tracking.entrypoints.turns import apply_processed_tracking_payload
 
             return apply_processed_tracking_payload(
                 sessions=sessions,

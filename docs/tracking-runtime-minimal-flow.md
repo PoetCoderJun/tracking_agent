@@ -67,6 +67,13 @@ Its control flow is intentionally short:
 
 The mini-agent should stay readable at a glance.
 
+The internal file layout should support that readability:
+
+- keep `capabilities/tracking/loop.py` as the supervisor entry
+- keep `capabilities/tracking/agent.py` as the single-turn Re/Act entry
+- move supporting code into explicit subpackages such as `runtime/`, `policy/`, `state/`, `artifacts/`, `entrypoints/`, and `evaluation/`
+- avoid growing another flat pile of unrelated top-level tracking modules
+
 ## 4. Re
 
 `Re()` observes:

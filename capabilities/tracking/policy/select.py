@@ -12,24 +12,24 @@ from typing import Any, Dict, List, Optional
 
 from PIL import Image, ImageOps
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agent.config import load_settings
 from capabilities.llm_client import call_model, parse_json_block
-from capabilities.tracking.prompt_templates import (
+from capabilities.tracking.artifacts.crop import save_target_crop
+from capabilities.tracking.artifacts.visualization import save_detection_visualization
+from capabilities.tracking.policy.prompt_templates import (
     TRACKING_RUNTIME_CONFIG_PATH,
     load_tracking_runtime_config,
     render_prompt_template,
 )
-from capabilities.tracking.memory import (
+from capabilities.tracking.state.memory import (
     empty_tracking_memory,
     read_tracking_memory_snapshot,
     tracking_memory_flash_prompt_text,
 )
-from capabilities.tracking.visualization import save_detection_visualization
-from capabilities.tracking.crop import save_target_crop
 from world.perception import recent_frames
 
 

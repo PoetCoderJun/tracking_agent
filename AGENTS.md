@@ -65,6 +65,10 @@ Preserve these design rules from `README.md` and `docs/tracking-runtime-minimal-
 - Do not drive continuous tracking from recent dialogue text, ad hoc repo inspection, or raw high-frequency tracker internals.
 - Keep the trigger model explicit and small: `chat_init`, `cadence_review`, and `event_rebind`.
 - Tracking lifecycle state must have one clear write path. Prefer explicit commits in runner/capability code over generic patch protocols.
+- Keep the internal runtime layout shallow and explicit:
+  `loop.py` remains the top-level supervisor entry;
+  `agent.py` remains the single-turn Re/Act entry;
+  supporting code should live under clear subpackages such as `runtime/`, `policy/`, `state/`, `artifacts/`, `entrypoints/`, and `evaluation/` rather than accumulating more unrelated top-level files.
 
 Performance guidance from `docs/tracking-single-turn-latency-2026-04-10.md` and `docs/tracking-no-reason-experiment-2026-04-10.md` is also current:
 
