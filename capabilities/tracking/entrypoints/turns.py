@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from agent.infra.paths import resolve_project_path
 from agent.state.session import AgentSessionStore
@@ -132,62 +132,6 @@ def schedule_tracking_memory_rewrite(
     )
 
 
-def schedule_bound_tracking_memory_rewrite(
-    *,
-    sessions: AgentSessionStore,
-    session_id: str,
-    tracking_state: Dict[str, Any],
-    frame: Dict[str, Any],
-    detection: Dict[str, Any],
-    env_file: Path,
-    artifacts_root: Path,
-) -> bool:
-    image_path = str(frame.get("image_path", "")).strip()
-    frame_id = str(frame.get("frame_id", "")).strip()
-    if not image_path or not frame_id:
-        return False
-
-    target_id = tracking_state.get("latest_target_id")
-    if target_id in (None, "", []):
-        return False
-
-    bbox = detection.get("bbox")
-    if not isinstance(bbox, list) or len(bbox) != 4:
-        return False
-
-    persisted_current_frame_path = resolve_project_path(image_path)
-    if not persisted_current_frame_path.exists():
-        return False
-
-    session_dirs = ensure_session_dirs(artifacts_root, session_id)
-    crop_path = session_dirs["crops_dir"] / f"{persisted_current_frame_path.stem}_id_{target_id}.jpg"
-    save_target_crop(persisted_current_frame_path, bbox, crop_path)
-    current_frame_reference_path = persist_reference_frame(
-        persisted_current_frame_path,
-        session_dirs["frames_dir"] / f"{persisted_current_frame_path.stem}.jpg",
-    )
-    schedule_tracking_memory_rewrite(
-        sessions=sessions,
-        session_id=session_id,
-        rewrite_memory_input=build_rewrite_memory_input(
-            behavior="track",
-            crop_path=crop_path,
-            frame_paths=rewrite_memory_frame_paths(
-                behavior="track",
-                current_frame_path=current_frame_reference_path,
-            ),
-            frame_id=frame_id,
-            target_id=int(target_id),
-            desired_reference_view=desired_reference_view_goal(
-                state_root=sessions.state_root,
-                session_id=session_id,
-            ),
-        ),
-        env_file=env_file,
-    )
-    return True
-
-
 def run_bound_tracking_memory_rewrite_sync(
     *,
     sessions: AgentSessionStore,
@@ -247,12 +191,6 @@ def run_bound_tracking_memory_rewrite_sync(
         rewrite_output=rewrite_output,
     )
     return True
-
-
-def recover_latest_tracking_rewrite_if_stale(*, sessions: AgentSessionStore, session_id: str) -> None:
-    _ = sessions
-    _ = session_id
-    return None
 
 
 def _build_init_trigger(*, request_id: str, text: str, frame_id: str | None) -> TrackingTrigger:

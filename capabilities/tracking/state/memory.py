@@ -173,10 +173,6 @@ def tracking_memory_sections(memory_value: Any) -> Dict[str, str]:
     return sections
 
 
-def memory_history_key(memory_value: Any) -> str:
-    return json.dumps(normalize_tracking_memory(memory_value), ensure_ascii=False, sort_keys=True)
-
-
 def read_tracking_memory_snapshot(
     *,
     state_root: Path,

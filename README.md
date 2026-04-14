@@ -178,7 +178,7 @@ viewer
 - `world/`: 常驻输入层。写 perception、frame artifact、snapshot、system1 result。
 - `agent/`: active session、runner、state commit、`e-agent` supervisor。
 - `capabilities/`: runtime-owned capability logic，例如 tracking runtime。
-- `skills/`: 面向 `pi` 的 skill contract 和 skill-local helper，例如 tracking-init、tts、feishu、web_search。
+- `skills/`: 面向 `pi` 的 skill contract 和 skill-local helper，例如 tracking-init、tts、feishu、web-search。
 - `interfaces/`: viewer 本地快照读取等只读界面。
 
 tracking 的路径归属也要明确区分：

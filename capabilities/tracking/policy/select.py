@@ -10,8 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PIL import Image, ImageOps
-
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -188,16 +186,6 @@ def frame_for_behavior(context: Dict[str, Any], behavior: str) -> Dict[str, Any]
     return latest_frame(context)
 
 
-def track_note(context: Dict[str, Any]) -> str:
-    latest_target_id = context.get("latest_target_id")
-    if latest_target_id in (None, ""):
-        return "当前调用的是 track：说明上一轮目标已经找不到或当前证据不够稳定；默认保守，不要轻易改绑。"
-    return (
-        f"当前调用的是 track：上一轮绑定的 target id {int(latest_target_id)} 已经找不到，或者当前证据不够稳定。"
-        " 默认保守：只有多个关键身份特征同时一致且无明显冲突时才允许改绑；否则优先 wait。"
-    )
-
-
 def session_has_active_target(context: Dict[str, Any]) -> bool:
     return context.get("latest_target_id") not in (None, "", [])
 
@@ -225,16 +213,6 @@ def explicit_target_id(text: str) -> Optional[int]:
         if match:
             return int(match.group(1))
     return None
-
-
-def recent_dialogue_text(chat_history: List[Dict[str, Any]], *, limit: int = 6) -> str:
-    items: List[str] = []
-    for entry in list(chat_history or [])[-limit:]:
-        role = str(entry.get("role", "")).strip() or "unknown"
-        text = str(entry.get("text", "")).strip()
-        if text:
-            items.append(f"{role}: {text}")
-    return "\n".join(items) if items else "(无)"
 
 
 def ensure_session_dirs(artifacts_root: Path, session_id: str) -> Dict[str, Path]:

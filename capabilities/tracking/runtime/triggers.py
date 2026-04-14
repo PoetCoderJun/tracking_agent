@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from agent.state.session import AgentSession
 from capabilities.tracking.runtime.context import TRACKING_LIFECYCLE_SEEKING, normalize_tracking_state

@@ -136,7 +136,7 @@ def build_web_search_payload(
         if request_function not in (None, ""):
             session_result["function"] = str(request_function).strip()
         return processed_skill_payload(
-            skill_name="web_search",
+            skill_name="web-search",
             session_result=session_result,
             tool="search",
             tool_output={"query": query, "configured": False, "error": str(error).strip()},
@@ -154,7 +154,7 @@ def build_web_search_payload(
     if request_function not in (None, ""):
         session_result["function"] = str(request_function).strip()
     return processed_skill_payload(
-        skill_name="web_search",
+        skill_name="web-search",
         session_result=session_result,
         tool="search",
         tool_output=tool_output,

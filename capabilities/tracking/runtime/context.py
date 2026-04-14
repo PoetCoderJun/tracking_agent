@@ -134,16 +134,3 @@ def build_tracking_init_context(
             excluded_track_ids=normalized_excluded_track_ids,
         ),
     }
-
-
-def build_tracking_context(
-    session: AgentSession,
-    *,
-    request_id: str,
-    excluded_track_ids: Optional[List[int]] = None,
-) -> Dict[str, Any]:
-    return build_tracking_init_context(
-        session,
-        request_id=request_id,
-        excluded_track_ids=excluded_track_ids,
-    )

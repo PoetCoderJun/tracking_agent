@@ -184,7 +184,7 @@ def test_chat_can_trigger_skill_for_assist_reply(tmp_path: Path) -> None:
     )
 
     payload = processed_skill_payload(
-        skill_name="web_search",
+        skill_name="web-search",
         session_result={
             "request_id": "req_001",
             "function": "chat",
@@ -203,12 +203,12 @@ def test_chat_can_trigger_skill_for_assist_reply(tmp_path: Path) -> None:
     )
     session = sessions.load("sess_skill")
 
-    assert applied["skill_name"] == "web_search"
+    assert applied["skill_name"] == "web-search"
     assert applied["tool"] == "search"
     assert session.latest_result["function"] == "chat"
     assert session.latest_result["text"] == "我查到两条机器人新闻，已经整理给你。"
-    assert session.capabilities["web_search"]["last_query"] == "机器人新闻"
-    assert session.capabilities["web_search"]["last_summary"] == "两条结果"
+    assert session.capabilities["web-search"]["last_query"] == "机器人新闻"
+    assert session.capabilities["web-search"]["last_summary"] == "两条结果"
     assert [entry["role"] for entry in session.conversation_history] == ["user", "assistant"]
 
 
@@ -393,7 +393,7 @@ def test_tracking_clarification_reply_routes_back_to_init_path(tmp_path: Path, m
 
 def test_web_search_skill_helper_uses_latest_user_text_without_committing(tmp_path: Path) -> None:
     search_turn = _load_script_module(
-        ROOT / "skills" / "web_search" / "scripts" / "search_turn.py",
+        ROOT / "skills" / "web-search" / "scripts" / "search_turn.py",
         "test_web_search_turn",
     )
     state_root = tmp_path / "state"
@@ -416,7 +416,7 @@ def test_web_search_skill_helper_uses_latest_user_text_without_committing(tmp_pa
     )
     session = sessions.load("sess_search")
 
-    assert payload["skill_name"] == "web_search"
+    assert payload["skill_name"] == "web-search"
     assert payload["tool"] == "search"
     assert payload["tool_output"]["query"] == "帮我查一下机器人新闻"
     assert payload["tool_output"]["error"] == "missing TAVILY_API_KEY"
@@ -532,11 +532,11 @@ def test_stale_ordinary_payload_does_not_mutate_session_state(tmp_path: Path) ->
     payload = run_ordinary_skill_turn(
         sessions=sessions,
         session_id="sess_stale_generic",
-        skill_name="web_search",
+        skill_name="web-search",
         env_file=tmp_path / ".ENV",
         request_id="req_old",
         build_payload=lambda _session, request_id, _stale_guard: processed_skill_payload(
-            skill_name="web_search",
+            skill_name="web-search",
             session_result={
                 "request_id": request_id,
                 "function": "chat",
