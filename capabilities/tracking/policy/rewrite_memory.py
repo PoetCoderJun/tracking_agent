@@ -51,7 +51,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame-path", action="append", dest="frame_paths", default=[])
     parser.add_argument("--frame-id", required=True)
     parser.add_argument("--target-id", type=int, required=True)
-    parser.add_argument("--confirmation-reason", default="")
     parser.add_argument("--candidate-checks-json", default="")
     parser.add_argument("--env-file", default=".ENV")
     return parser.parse_args()
@@ -171,13 +170,11 @@ def execute_rewrite_memory_tool(
     config = load_tracking_runtime_config(config_path)
     previous_memory = _load_previous_memory(session_file)
     prompt_key = "tracking_memory_init_prompt" if task == "init" else "tracking_memory_update_prompt"
-    confirmation_reason = _optional_text(arguments.get("confirmation_reason"))
     candidate_checks = _normalize_candidate_checks(arguments.get("candidate_checks"))
     reference_view_goal = _reference_view_goal_prompt_text(arguments.get("desired_reference_view"))
     prompt = render_prompt_template(
         prompt_key=prompt_key,
         current_memory=tracking_memory_prompt_text(previous_memory),
-        confirmation_reason=confirmation_reason or "(none)",
         candidate_checks=_candidate_checks_prompt_text(candidate_checks),
     )
     if reference_view_goal:
@@ -213,7 +210,6 @@ def main() -> int:
             "frame_paths": list(args.frame_paths),
             "frame_id": args.frame_id,
             "target_id": int(args.target_id),
-            "confirmation_reason": args.confirmation_reason,
             "candidate_checks": args.candidate_checks_json,
         },
         env_file=Path(args.env_file),

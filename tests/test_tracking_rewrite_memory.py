@@ -9,6 +9,7 @@ from PIL import Image
 from capabilities.tracking.policy.prompt_templates import (
     TRACKING_MEMORY_INIT_PROMPT_PATH,
     TRACKING_MEMORY_UPDATE_PROMPT_PATH,
+    render_prompt_template,
 )
 from capabilities.tracking.policy.rewrite_memory import execute_rewrite_memory_tool
 
@@ -81,3 +82,14 @@ def test_tracking_memory_prompts_live_under_runtime_capability() -> None:
     assert TRACKING_MEMORY_UPDATE_PROMPT_PATH.exists()
     assert "capabilities/tracking/" in str(TRACKING_MEMORY_INIT_PROMPT_PATH)
     assert "capabilities/tracking/" in str(TRACKING_MEMORY_UPDATE_PROMPT_PATH)
+
+
+def test_tracking_memory_update_prompt_does_not_require_confirmation_reason() -> None:
+    prompt = render_prompt_template(
+        prompt_key="tracking_memory_update_prompt",
+        current_memory="{}",
+        candidate_checks="[]",
+    )
+
+    assert "{confirmation_reason}" not in prompt
+    assert "confirmation_reason" not in prompt

@@ -11,8 +11,8 @@ const runtimeRoot =
 const pythonCommands = [
   process.env.VITE_TRACKING_VIEWER_PYTHON,
   process.env.PYTHON,
-  "python3",
   "python",
+  "python3",
 ].filter(Boolean);
 
 function resolveProjectFile(rawPath) {

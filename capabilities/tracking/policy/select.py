@@ -237,7 +237,6 @@ def build_rewrite_memory_input(
     frame_paths: List[str],
     frame_id: str,
     target_id: int,
-    confirmation_reason: str | None = None,
     candidate_checks: List[Dict[str, Any]] | None = None,
     desired_reference_view: str | None = None,
 ) -> Dict[str, Any]:
@@ -248,9 +247,6 @@ def build_rewrite_memory_input(
         "frame_id": frame_id,
         "target_id": int(target_id),
     }
-    reason = optional_text(confirmation_reason)
-    if reason is not None:
-        payload["confirmation_reason"] = reason
     if candidate_checks:
         payload["candidate_checks"] = list(candidate_checks)
     desired_view = optional_text(desired_reference_view)
@@ -814,7 +810,6 @@ def execute_select_tool(
                 ),
                 frame_id=str(frame["frame_id"]),
                 target_id=int(normalized["target_id"]),
-                confirmation_reason=None,
                 candidate_checks=list(normalized.get("candidate_checks") or []),
             )
             break

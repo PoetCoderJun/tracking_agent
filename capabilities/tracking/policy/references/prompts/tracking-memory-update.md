@@ -1,9 +1,6 @@
 你要根据当前目标 crop、当前场景帧和已有 tracking memory 更新 tracking memory。当前 tracking memory(JSON)：
 {current_memory}
 
-本轮成功确认理由：
-{confirmation_reason}
-
 本轮候选核验记录(JSON)：
 {candidate_checks}
 
@@ -21,7 +18,7 @@
 5. reference_view：当前 crop 适合作为稳定正面参考就写 front，适合作为稳定背面参考就写 back；证据不足就写 unknown。只能填写 front、back 或 unknown。
 
 硬规则：
-1. 只吸收 confirmation_reason 和 candidate_checks 里真正稳定、可迁移、当前可见的身份正证据。
+1. 只吸收 candidate_checks 里真正稳定、可迁移、当前可见的身份正证据。
 2. memory 是身份画像，不是当前帧记录。
 3. distinguish 只写和周边最像的人如何区分，且只能使用稳定外观差异，不能用位置、动作、姿态、手势、步态、朝向。
 4. 位置、动作、姿态、手势、步态、朝向、bbox、轨迹 ID、确认状态都不能进入任何字段。
