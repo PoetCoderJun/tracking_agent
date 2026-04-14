@@ -18,7 +18,11 @@ if str(ROOT) not in sys.path:
 
 from agent.config import load_settings
 from capabilities.llm_client import call_model, parse_json_block
-from world.perception import recent_frames
+from capabilities.tracking.prompt_templates import (
+    TRACKING_RUNTIME_CONFIG_PATH,
+    load_tracking_runtime_config,
+    render_prompt_template,
+)
 from capabilities.tracking.memory import (
     empty_tracking_memory,
     read_tracking_memory_snapshot,
@@ -26,11 +30,10 @@ from capabilities.tracking.memory import (
 )
 from capabilities.tracking.visualization import save_detection_visualization
 from capabilities.tracking.crop import save_target_crop
+from world.perception import recent_frames
 
 
-TRACKING_ROOT = ROOT / "backend" / "tracking"
-SKILL_TRACKING_ROOT = ROOT / "skills" / "tracking"
-DEFAULT_CONFIG_PATH = SKILL_TRACKING_ROOT / "references" / "robot-agent-config.json"
+DEFAULT_CONFIG_PATH = TRACKING_RUNTIME_CONFIG_PATH
 CHAT_HISTORY_LIMIT = 12
 TRACKING_SELECT_MODEL = "qwen3.5-flash"
 SELECT_MODEL_MAX_ATTEMPTS = 2
@@ -50,10 +53,6 @@ class DetectionRecord:
 
 def load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def load_agent_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
-    return json.loads(config_path.read_text(encoding="utf-8"))
 
 
 def optional_text(value: Any) -> Optional[str]:
@@ -712,7 +711,7 @@ def execute_select_tool(
         else str(arguments.get("user_text", "")).strip()
     )
     requested_target_id = explicit_target_id(explicit_request_text)
-    config = load_agent_config(config_path)
+    config = load_tracking_runtime_config(config_path)
 
     if behavior == "init":
         target_description = str(arguments.get("target_description", "")).strip()
@@ -727,7 +726,8 @@ def execute_select_tool(
             elapsed_seconds = 0.0
         else:
             settings = load_settings(env_file)
-            instruction = str(config["prompts"]["init_skill_prompt"]).format(
+            instruction = render_prompt_template(
+                prompt_key="tracking_init_select_prompt",
                 target_description=target_description,
                 candidates=candidate_summary(frame.get("detections", [])),
             )
@@ -736,8 +736,8 @@ def execute_select_tool(
                 model_name=TRACKING_SELECT_MODEL,
                 instruction=instruction,
                 image_paths=[overlay_path],
-                output_contract=config["contracts"]["select_init_target"],
-                max_tokens=int(config["limits"]["select_max_tokens"]),
+                output_contract=config["contracts"]["tracking_init_select_result"],
+                max_tokens=int(config["limits"]["tracking_select_max_tokens"]),
             )
             normalized = normalize_invalid_model_selection(
                 normalized=normalized,
@@ -779,7 +779,8 @@ def execute_select_tool(
             settings = load_settings(env_file)
             reference_assets = reference_crop_assets(context)
             reference_paths = [Path(asset["path"]) for asset in reference_assets]
-            instruction = str(config["prompts"]["track_skill_prompt"]).format(
+            instruction = render_prompt_template(
+                prompt_key="continuous_tracking_select_prompt",
                 memory=tracking_memory_flash_prompt_text(context.get("memory", "")),
                 reference_crops_note=reference_crops_note(reference_assets),
                 candidates=candidate_summary(frame.get("detections", [])),
@@ -789,8 +790,8 @@ def execute_select_tool(
                 model_name=TRACKING_SELECT_MODEL,
                 instruction=instruction,
                 image_paths=[*reference_paths, overlay_path],
-                output_contract=config["contracts"]["select_track_target"],
-                max_tokens=int(config["limits"]["select_max_tokens"]),
+                output_contract=config["contracts"]["continuous_tracking_select_result"],
+                max_tokens=int(config["limits"]["tracking_select_max_tokens"]),
             )
             normalized = normalize_invalid_model_selection(
                 normalized=normalized,

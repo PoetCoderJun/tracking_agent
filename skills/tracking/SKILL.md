@@ -1,9 +1,9 @@
 ---
-name: tracking
-description: Use when one turn asks the robot to start or replace tracking for one visible person, whether by natural-language appearance description or explicit candidate ID.
+name: tracking-init
+description: Use when one turn asks the robot to start tracking or replace the tracked person with one visible person, whether by natural-language appearance description or explicit candidate ID.
 ---
 
-# Tracking Skill
+# Tracking-Init Skill
 
 ## Overview
 
@@ -11,10 +11,13 @@ This skill only does one thing: bind or replace the tracked person from the curr
 
 - Use it when the user is defining or replacing the tracked person.
 - This is a one-shot target-selection skill.
+- Continuous tracking is a separate Python runtime path under `capabilities/tracking/`; it is not owned by this skill.
 - It is not for long-running continuation or polling; those stay in the runtime loop.
 - Natural-language requests such as `请跟踪穿黑衣服的人` and `跟踪前面那个黑衣服的人` belong here.
 - For a clear bind/init request, the first tool action is the tracking helper.
 - In this runtime, `ROBOT_AGENT_SESSION_ID` and `ROBOT_AGENT_STATE_ROOT` are already available. Do not browse `.runtime` or echo env vars before calling the helper.
+- If you need current visual grounding, read `$ROBOT_AGENT_STATE_ROOT/perception/latest_frame.jpg` directly; do not read `snapshot.json` first just to discover the image path.
+- `snapshot.json` and historical frames still matter as structured/history truth, but the current visual fast path is the stable image file above.
 - Do not inspect repository files, runtime directories, or explain the codebase before deciding whether this skill applies.
 
 ## When to Use
@@ -51,7 +54,7 @@ Do not use this skill for:
 1. Decide only whether the current turn is binding or replacing one visible person from the current candidate set.
 2. If the request is a clear bind/init request, call the tracking skill's own helper exactly once as your first tool action.
 3. In this repo, prefer the already-exported env vars `ROBOT_AGENT_SESSION_ID` and `ROBOT_AGENT_STATE_ROOT` over manual runtime inspection.
-4. Do not preflight by reading `.runtime`, echoing env vars, or re-checking session/state when the normal runtime env vars are already expected.
+4. Do not preflight by reading `.runtime`, echoing env vars, re-reading `snapshot.json` just to find the current image path, or re-checking session/state when the normal runtime env vars are already expected.
 5. Do not turn lifecycle, status, explanation, or already-bound continuation turns into init.
 6. If the user has not given enough stable appearance evidence, ask one focused clarification question.
 7. Do not route this through `backend.cli` just because the tracking skill is active.

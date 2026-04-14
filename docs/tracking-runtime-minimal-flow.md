@@ -9,6 +9,12 @@ Tracking is split into two parts:
 
 They do different jobs.
 
+Path ownership should also stay split:
+
+- `skills/tracking/` is the `tracking-init` skill surface.
+- `skills/tracking-stop/` is the stop/clear skill surface.
+- `capabilities/tracking/` is the continuous tracking Python runtime surface.
+
 ## 1. Tracking Init Skill
 
 `tracking-init` is a one-shot skill used only to initialize the target.
@@ -31,6 +37,10 @@ After confirmation, initialization writes:
 ## 2. World Snapshot
 
 Tracking mini-agent only reads the low-frequency world snapshot.
+
+Perception may also maintain `perception/latest_frame.jpg` as a stable direct image alias for the current snapshot frame.
+That file is only a fast path for current visual grounding.
+`snapshot.json` and historical frames remain the persisted truth.
 
 The runtime model is:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -91,6 +92,7 @@ class LocalPerceptionService:
     def reset(self) -> Dict[str, Any]:
         if self._recorder is not None:
             self._recorder.clear()
+        self._clear_latest_frame_artifact()
         snapshot = self._empty_snapshot_payload()
         self._write_snapshot_payload(payload=snapshot)
         return self.read_snapshot()
@@ -149,6 +151,26 @@ class LocalPerceptionService:
             "detections": list(meta.get("detections") or []),
         }
 
+    def latest_frame_artifact_path(self) -> Path:
+        return self._state_root / "perception" / "latest_frame.jpg"
+
+    def read_latest_frame_artifact_path(self) -> Optional[Path]:
+        artifact_path = self.latest_frame_artifact_path()
+        if not artifact_path.exists():
+            return None
+        return artifact_path.resolve()
+
+    def ensure_latest_frame_artifact(self) -> Optional[Path]:
+        latest_frame = self.read_latest_frame()
+        if not isinstance(latest_frame, dict):
+            self._clear_latest_frame_artifact()
+            return None
+        image_path = str(latest_frame.get("image_path", "")).strip()
+        if not image_path:
+            self._clear_latest_frame_artifact()
+            return None
+        return self._write_latest_frame_artifact(source_path=Path(image_path))
+
     def read_latest_frame_result(self) -> Optional[Dict[str, Any]]:
         latest = self.read_snapshot().get("latest_frame_result")
         return None if not isinstance(latest, dict) else dict(latest)
@@ -189,6 +211,11 @@ class LocalPerceptionService:
             if persisted_payload is None
             else {
                 "snapshot_path": str(self._perception_snapshot_path().resolve()),
+                "latest_frame_artifact_path": (
+                    None
+                    if self.read_latest_frame_artifact_path() is None
+                    else str(self.read_latest_frame_artifact_path())
+                ),
                 "recent_camera_observation_count": len(list(persisted_payload.get("recent_camera_observations") or [])),
                 "latest_frame": persisted_payload.get("latest_frame"),
                 "latest_camera_observation": persisted_payload.get("latest_camera_observation"),
@@ -302,6 +329,8 @@ class LocalPerceptionService:
                 ts_ms=event.frame.timestamp_ms,
                 source_path=Path(event.frame.image_path),
             )
+        persisted_image_path = Path(str(saved_path or event.frame.image_path))
+        self._write_latest_frame_artifact(source_path=persisted_image_path)
         observation = {
             "id": event.frame.frame_id,
             "ts_ms": event.frame.timestamp_ms,
@@ -309,7 +338,7 @@ class LocalPerceptionService:
             "kind": "image",
             "payload": {
                 "frame_id": event.frame.frame_id,
-                "image_path": str(saved_path or event.frame.image_path),
+                "image_path": str(persisted_image_path),
             },
             "meta": {
                 "detections": [
@@ -417,3 +446,20 @@ class LocalPerceptionService:
 
     def _perception_snapshot_path(self) -> Path:
         return self._state_root / "perception" / "snapshot.json"
+
+    def _write_latest_frame_artifact(self, *, source_path: Path) -> Optional[Path]:
+        if not source_path.exists():
+            self._clear_latest_frame_artifact()
+            return None
+        artifact_path = self.latest_frame_artifact_path()
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        if source_path.resolve() != artifact_path.resolve():
+            shutil.copy2(source_path, artifact_path)
+        return artifact_path.resolve()
+
+    def _clear_latest_frame_artifact(self) -> None:
+        artifact_path = self.latest_frame_artifact_path()
+        try:
+            artifact_path.unlink()
+        except FileNotFoundError:
+            return

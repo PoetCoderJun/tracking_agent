@@ -19,10 +19,14 @@ from capabilities.tracking.memory import (
     read_tracking_memory_snapshot,
     tracking_memory_prompt_text,
 )
+from capabilities.tracking.prompt_templates import (
+    TRACKING_RUNTIME_CONFIG_PATH,
+    load_tracking_runtime_config,
+    render_prompt_template,
+)
 
 
-SKILL_TRACKING_ROOT = ROOT / "skills" / "tracking"
-DEFAULT_CONFIG_PATH = SKILL_TRACKING_ROOT / "references" / "robot-agent-config.json"
+DEFAULT_CONFIG_PATH = TRACKING_RUNTIME_CONFIG_PATH
 TRACKING_MEMORY_MODEL = "qwen3.5-flash"
 REFERENCE_VIEW_ALIASES = {
     "front": "front",
@@ -51,11 +55,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--candidate-checks-json", default="")
     parser.add_argument("--env-file", default=".ENV")
     return parser.parse_args()
-
-
-def load_agent_config(config_path: Path = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
-    return json.loads(config_path.read_text(encoding="utf-8"))
-
 
 def _load_previous_memory(session_file: Path) -> Any:
     payload = json.loads(session_file.read_text(encoding="utf-8"))
@@ -169,13 +168,14 @@ def execute_rewrite_memory_tool(
         raise ValueError("rewrite_memory requires at least one frame path")
 
     settings = load_settings(env_file)
-    config = load_agent_config(config_path)
+    config = load_tracking_runtime_config(config_path)
     previous_memory = _load_previous_memory(session_file)
-    prompt_key = "memory_init_prompt" if task == "init" else "memory_optimize_prompt"
+    prompt_key = "tracking_memory_init_prompt" if task == "init" else "tracking_memory_update_prompt"
     confirmation_reason = _optional_text(arguments.get("confirmation_reason"))
     candidate_checks = _normalize_candidate_checks(arguments.get("candidate_checks"))
     reference_view_goal = _reference_view_goal_prompt_text(arguments.get("desired_reference_view"))
-    prompt = str(config["prompts"][prompt_key]).format(
+    prompt = render_prompt_template(
+        prompt_key=prompt_key,
         current_memory=tracking_memory_prompt_text(previous_memory),
         confirmation_reason=confirmation_reason or "(none)",
         candidate_checks=_candidate_checks_prompt_text(candidate_checks),
@@ -189,8 +189,8 @@ def execute_rewrite_memory_tool(
         model=TRACKING_MEMORY_MODEL,
         instruction=prompt,
         image_paths=[crop_path, *frame_paths],
-        output_contract=config["contracts"]["memory_json"],
-        max_tokens=int(config["limits"]["memory_max_tokens"]),
+        output_contract=config["contracts"]["tracking_memory_json"],
+        max_tokens=int(config["limits"]["tracking_memory_max_tokens"]),
     )
     return {
         "task": task,

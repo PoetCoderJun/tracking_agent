@@ -49,7 +49,7 @@ uv run e-agent
 
 这条链路里会发生：
 
-- write environment 持续写入 `perception/snapshot.json`
+- write environment 持续写入 `perception/snapshot.json`，并同步维护 `perception/latest_frame.jpg` 作为当前视觉直达文件
 - `tracking-init` skill 读取当前世界快照并确认目标
 - session 中写入 tracking state、text memory、image crop memory
 - `e-agent` 在同一条 session 内继续跑 continuous tracking mini Re/Act
@@ -60,6 +60,7 @@ uv run e-agent
 
 - `chat-first`：PI 对话是主入口。
 - always-on perception：write environment 持续写世界快照和同帧 system1 结果。
+- direct current-vision file：回答“现在你能看到什么”时优先读取 `perception/latest_frame.jpg`；`snapshot.json` 和历史帧继续作为结构化/历史真相。
 - single runner path：高层任务推进和状态提交都走同一条 runner 路径。
 - single session truth：agent-owned state 只有一份持久化 truth。
 - tracking 双段式：`tracking-init` 做初始化，continuous mini-agent 做 review / rebind。
@@ -168,6 +169,12 @@ viewer
 - `capabilities/`: runtime-owned capability logic，例如 tracking runtime。
 - `skills/`: 面向 `pi` 的 skill contract 和 skill-local helper，例如 tracking init、tts、feishu、web-search。
 - `interfaces/`: viewer 本地快照读取等只读界面。
+
+tracking 的路径归属也要明确区分：
+
+- `skills/tracking/` 只表示 `tracking-init` 这个一次性 skill。
+- `skills/tracking-stop/` 只表示 stop/clear 这个一次性 skill。
+- `capabilities/tracking/` 才是 continuous tracking 的 Python Re-Act runtime。
 
 tracking 的核心结构：
 

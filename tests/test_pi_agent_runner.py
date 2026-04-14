@@ -89,8 +89,9 @@ def test_main_bootstraps_pi_runner_with_project_skills(monkeypatch, tmp_path: Pa
     assert len(prompt_args) == 1
     assert "具身智能机器狗" in prompt_args[0]
     assert str((state_root / "perception" / "snapshot.json").resolve()) in prompt_args[0]
+    assert str((state_root / "perception" / "latest_frame.jpg").resolve()) in prompt_args[0]
     assert str((state_root / "tracking_memory" / active_session["session_id"] / "memory.json").resolve()) in prompt_args[0]
-    assert "当前启动时还没有可用的 latest_frame.image_path" in prompt_args[0]
+    assert "当前启动时还没有可用的当前画面直达文件" in prompt_args[0]
     assert "当前还没有可用的跟踪特征记忆" in prompt_args[0]
 
 
@@ -98,6 +99,7 @@ def test_vision_grounding_prompt_uses_latest_frame_path_when_available(tmp_path:
     state_root = tmp_path / "state"
     session_id = "sess_tracking"
     snapshot_path = state_root / "perception" / "snapshot.json"
+    latest_frame_artifact_path = (state_root / "perception" / "latest_frame.jpg").resolve()
     image_path = (tmp_path / "frame.jpg").resolve()
     image_path.write_bytes(b"frame")
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,8 +129,11 @@ def test_vision_grounding_prompt_uses_latest_frame_path_when_available(tmp_path:
     prompt = e_agent._vision_grounding_prompt(state_root=state_root, session_id=session_id)
 
     assert str(snapshot_path.resolve()) in prompt
-    assert f"当前启动时 latest_frame.image_path={str(image_path)}" in prompt
-    assert "不要把这个启动时路径当作长期真相" in prompt
+    assert str(latest_frame_artifact_path) in prompt
+    assert latest_frame_artifact_path.exists()
+    assert latest_frame_artifact_path.read_bytes() == image_path.read_bytes()
+    assert "优先直接读取这张图像" in prompt
+    assert "snapshot.json 和历史帧仍然是持久化真相" in prompt
     assert str((state_root / "tracking_memory" / session_id / "memory.json").resolve()) in prompt
 
 

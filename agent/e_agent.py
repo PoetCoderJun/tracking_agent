@@ -18,6 +18,7 @@ from world.perception.service import LocalPerceptionService
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TRACKING_POLL_SECONDS = 0.25
+VISION_GROUNDING_PROMPT_PATH = PROJECT_ROOT / "agent" / "prompts" / "vision_grounding_system.md"
 
 
 def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
@@ -84,33 +85,27 @@ def _skill_args(extra_skills: List[str]) -> List[str]:
 
 
 def _vision_grounding_prompt(*, state_root: Path, session_id: str) -> str:
+    perception_service = LocalPerceptionService(state_root=state_root)
     snapshot_path = (state_root / "perception" / "snapshot.json").resolve()
+    latest_frame_artifact_path = perception_service.latest_frame_artifact_path().resolve()
     tracking_memory_path = tracking_memory_file(state_root=state_root, session_id=session_id).resolve()
-    latest_frame = LocalPerceptionService(state_root=state_root).read_latest_frame() or {}
-    latest_frame_path = str(latest_frame.get("image_path", "")).strip()
-    if latest_frame_path:
+    available_current_frame_path = perception_service.ensure_latest_frame_artifact()
+    if available_current_frame_path is not None:
         latest_frame_note = (
-            f"当前启动时 latest_frame.image_path={latest_frame_path}。"
-            "如果后续还要确认当前画面，必须重新读取 snapshot.json 里的 latest_frame.image_path，"
-            "不要把这个启动时路径当作长期真相。"
+            f"当前启动时已经有可用的当前画面直达文件：{str(available_current_frame_path)}。"
+            "每次需要确认当前视觉时，优先直接读取这张图像，不要先读 snapshot.json 只是为了找图像路径。"
         )
     else:
         latest_frame_note = (
-            "当前启动时还没有可用的 latest_frame.image_path。"
-            "需要视觉 grounding 时，先读取 snapshot.json 再决定是否有可用画面。"
+            f"当前启动时还没有可用的当前画面直达文件；固定路径是 {latest_frame_artifact_path}。"
+            "如果这张图不存在，就明确说明当前没有可用画面。"
         )
+    template = VISION_GROUNDING_PROMPT_PATH.read_text(encoding="utf-8")
     return (
-        "你是一个具身智能机器狗的 chat-first Agent。\n"
-        "如果你想知道当前世界状态、当前画面、眼前有什么，先读取 perception snapshot，"
-        f"路径是 {snapshot_path}。\n"
-        "当前画面的真实来源是 snapshot.json 里的 latest_frame.image_path；"
-        "读取到这个路径后，把那张图像当作你判断世界状态的依据，只回答真实可见内容，不要猜测。\n"
-        f"{latest_frame_note}\n"
-        "如果你想知道当前正在跟踪的人的已确认特征、正反面描述或区分点，"
-        "先读取当前 session 的 tracking memory，"
-        f"路径是 {tracking_memory_path}。\n"
-        "如果 tracking memory 不存在或为空，就明确说明当前还没有可用的跟踪特征记忆。\n"
-        "如果 snapshot.json 不存在、latest_frame 为空、或图片文件不存在，就明确说明当前没有可用画面。"
+        template.replace("__CURRENT_FRAME_PATH__", str(latest_frame_artifact_path))
+        .replace("__CURRENT_FRAME_NOTE__", latest_frame_note)
+        .replace("__SNAPSHOT_PATH__", str(snapshot_path))
+        .replace("__TRACKING_MEMORY_PATH__", str(tracking_memory_path))
     )
 
 

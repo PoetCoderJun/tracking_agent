@@ -6,6 +6,10 @@ from types import SimpleNamespace
 
 from PIL import Image
 
+from capabilities.tracking.prompt_templates import (
+    TRACKING_MEMORY_INIT_PROMPT_PATH,
+    TRACKING_MEMORY_UPDATE_PROMPT_PATH,
+)
 from capabilities.tracking.rewrite_memory import execute_rewrite_memory_tool
 
 
@@ -70,3 +74,10 @@ def test_execute_rewrite_memory_tool_uses_flash_model(tmp_path: Path, monkeypatc
 
     assert requested_models == ["qwen3.5-flash"]
     assert payload["memory"]["core"] == "黑色上衣，浅色裤子，白色鞋底。"
+
+
+def test_tracking_memory_prompts_live_under_runtime_capability() -> None:
+    assert TRACKING_MEMORY_INIT_PROMPT_PATH.exists()
+    assert TRACKING_MEMORY_UPDATE_PROMPT_PATH.exists()
+    assert "capabilities/tracking/" in str(TRACKING_MEMORY_INIT_PROMPT_PATH)
+    assert "capabilities/tracking/" in str(TRACKING_MEMORY_UPDATE_PROMPT_PATH)

@@ -1,0 +1,11 @@
+{
+  "contracts": {
+    "tracking_init_select_result": "只返回合法 JSON，格式为：{\"found\": true|false, \"bounding_box_id\": 12 | null, \"decision\": \"track|ask|wait\", \"text\": \"给用户的简短回复\", \"reject_reason\": \"仅在 wait 时填写的拒绝绑定理由，否则为空字符串\", \"needs_clarification\": true|false, \"clarification_question\": \"问题或 null\"}。不要输出 reason 字段。",
+    "continuous_tracking_select_result": "只返回合法 JSON，格式为：{\"found\": true|false, \"bounding_box_id\": 12 | null, \"decision\": \"track|ask|wait\", \"text\": \"给用户的简短回复\", \"reject_reason\": \"仅在 wait 时填写的拒绝绑定理由，否则为空字符串\", \"needs_clarification\": true|false, \"clarification_question\": \"问题或 null\", \"candidate_checks\": [{\"bounding_box_id\": 12, \"status\": \"match|unknown|conflict\", \"evidence\": \"简短核验说明\"}]}。不要输出 reason 字段。这里的 bounding_box_id 必须是当前候选框摘要里真实存在的 ID，绝不能填写历史 ID、旧 ID，或当前候选列表里不存在的 ID。candidate_checks 里的 bounding_box_id 也必须全部来自当前候选框摘要。candidate_checks 至少覆盖你真正核验过的主要混淆候选。",
+    "tracking_memory_json": "只返回合法 JSON 对象，不要返回 Markdown，不要使用 ``` 代码块围栏，不要添加解释文字。格式固定为：{\"core\":\"字符串\",\"front_view\":\"字符串\",\"back_view\":\"字符串\",\"distinguish\":\"字符串\",\"reference_view\":\"front|back|unknown\"}。所有字段都必须存在。前四个字段的值一律是字符串，reference_view 只能是 front、back 或 unknown。"
+  },
+  "limits": {
+    "tracking_select_max_tokens": 420,
+    "tracking_memory_max_tokens": 520
+  }
+}

@@ -317,6 +317,26 @@ def test_tracking_result_writes_local_viewer_snapshot(tmp_path: Path) -> None:
     assert snapshot["modules"]["tracking"]["memory_history"][-1]["memory"]
 
 
+def test_perception_writes_latest_frame_artifact_without_overwriting_snapshot_truth(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    image_path = _frame_image(tmp_path / "frame.jpg")
+    _write_observation(state_root=state_root, session_id="sess_tracking", image_path=image_path)
+
+    perception = LocalPerceptionService(state_root)
+    snapshot = perception.read_snapshot()
+    latest_frame_artifact_path = perception.latest_frame_artifact_path().resolve()
+    snapshot_image_path = Path(str((snapshot.get("latest_frame") or {}).get("image_path", ""))).resolve()
+
+    assert latest_frame_artifact_path.exists()
+    assert snapshot_image_path.exists()
+    assert latest_frame_artifact_path.read_bytes() == snapshot_image_path.read_bytes()
+    assert latest_frame_artifact_path != snapshot_image_path
+
+    perception.reset()
+
+    assert not latest_frame_artifact_path.exists()
+
+
 def test_tracking_init_helper_uses_runtime_env_defaults(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -402,6 +422,7 @@ def test_tracking_skill_contract_spells_out_direct_init_fast_path() -> None:
 
     assert "call the tracking helper immediately" in skill_text
     assert "Do not preflight by reading `.runtime`, echoing env vars" in skill_text
+    assert "perception/latest_frame.jpg" in skill_text
     assert "Do not turn lifecycle, status, explanation, or already-bound continuation turns into init." in skill_text
 
 

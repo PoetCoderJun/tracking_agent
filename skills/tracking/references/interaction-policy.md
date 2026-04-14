@@ -1,6 +1,7 @@
 # Interaction Policy
 
 This skill is a single-turn target-selection skill over persistent state.
+It is the `tracking-init` skill surface, not the continuous tracking runtime.
 
 ## Core rule
 
@@ -12,6 +13,7 @@ Natural-language requests like `请跟踪穿黑衣服的人` should be treated a
 If the request is a clear bind/init request, the first tool action should be the tracking helper.
 Do not inspect repository files or runtime directories before deciding whether this skill applies.
 If this runtime already provides `ROBOT_AGENT_SESSION_ID` / `ROBOT_AGENT_STATE_ROOT`, use them directly instead of discovering the active session by reading `.runtime` or echoing env vars first.
+If you need the current visual, read `$ROBOT_AGENT_STATE_ROOT/perception/latest_frame.jpg` directly; do not read `snapshot.json` first only to recover the image path.
 
 ## For each applicable user message
 
