@@ -392,13 +392,13 @@ export default function App() {
                   />
                   <div className="stage-note">
                     <strong>{viewerStatus.label}</strong>
-                    <span>当前显示的是持久化真相中的画面，边框由 viewer 根据落盘检测结果实时叠加。</span>
+                    <span>当前显示的是统一 viewer 结果里的画面，边框由 viewer 根据同一份落盘检测结果叠加。</span>
                   </div>
                 </>
               ) : (
                 <div className="empty-stage">
                   <strong>等待画面</strong>
-                  <span>viewer 会轮询 session、perception 和 tracking memory 真相文件；当前还没有可显示的画面。</span>
+                  <span>viewer 只轮询统一的 viewer 结果；当前还没有可显示的画面。</span>
                 </div>
               )}
             </div>

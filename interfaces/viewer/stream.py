@@ -7,8 +7,6 @@ from typing import Any, Dict, List
 
 from agent.state.active import resolve_session_id
 from agent.state.backend import BackendStore
-from capabilities.tracking.runtime.context import tracking_state_snapshot
-from capabilities.tracking.state.memory import read_tracking_memory_snapshot, tracking_memory_display_text
 from interfaces.viewer.skill_modules import build_viewer_modules
 from world.perception import recent_frames
 from world.perception.service import LocalPerceptionService
@@ -46,6 +44,21 @@ def _enriched_conversation_history(
     return enriched
 
 
+def _with_rendered_image_path(module_payload: Dict[str, Any]) -> Dict[str, Any]:
+    display_frame = module_payload.get("display_frame")
+    if not isinstance(display_frame, dict):
+        return module_payload
+    if not str(display_frame.get("image_path", "")).strip():
+        return module_payload
+    return {
+        **module_payload,
+        "display_frame": {
+            **display_frame,
+            "rendered_image_path": "/viewer-frame.jpg",
+        },
+    }
+
+
 def build_agent_viewer_payload(*, state_root: Path, session_id: str | None = None) -> Dict[str, Any]:
     store = BackendStore(state_root=state_root)
     resolved_session_id = resolve_session_id(state_root=state_root, session_id=session_id)
@@ -78,28 +91,16 @@ def build_agent_viewer_payload(*, state_root: Path, session_id: str | None = Non
         perception_snapshot=perception_snapshot,
         recent_frames=frames,
     )
-    tracking_module = modules.get("tracking-init")
-    if isinstance(tracking_module, dict):
-        tracking_state = tracking_state_snapshot(
-            ((session.get("state") or {}).get("capabilities") or {}).get("tracking-init")
+    normalized_modules = {
+        module_name: (
+            _with_rendered_image_path(dict(module_payload))
+            if isinstance(module_payload, dict)
+            else module_payload
         )
-        memory_snapshot = read_tracking_memory_snapshot(
-            state_root=state_root,
-            session_id=resolved_session_id,
-        )
-        tracking_module["target_id"] = tracking_state.get("latest_target_id")
-        tracking_module["pending_question"] = tracking_state.get("pending_question")
-        tracking_module["lifecycle_status"] = tracking_state.get("lifecycle_status")
-        tracking_module["current_memory"] = tracking_memory_display_text(memory_snapshot.get("memory", {}))
-        tracking_module["memory_history"] = []
-        display_frame = tracking_module.get("display_frame")
-        if isinstance(display_frame, dict) and str(display_frame.get("image_path", "")).strip():
-            tracking_module["display_frame"] = {
-                **display_frame,
-                "rendered_image_path": "/viewer-frame.jpg",
-            }
-    primary_module_name = next(iter(modules.keys()), None)
-    primary_module = {} if primary_module_name is None else dict(modules[primary_module_name] or {})
+        for module_name, module_payload in modules.items()
+    }
+    primary_module_name = next(iter(normalized_modules.keys()), None)
+    primary_module = {} if primary_module_name is None else dict(normalized_modules[primary_module_name] or {})
     latest_frame = primary_module.get("display_frame")
     if latest_frame is None and frames:
         latest_frame = dict(frames[-1])
@@ -121,7 +122,7 @@ def build_agent_viewer_payload(*, state_root: Path, session_id: str | None = Non
             if latest_frame is None
             else len(latest_frame.get("detections") or []),
         },
-        "modules": modules,
+        "modules": normalized_modules,
         "summary": {
             "primary_module": primary_module_name,
             "target_id": primary_module.get("target_id"),
