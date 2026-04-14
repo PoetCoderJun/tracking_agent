@@ -10,7 +10,7 @@ import pytest
 from PIL import Image
 
 from world.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
-from agent.session import AgentSessionStore
+from agent.state.session import AgentSessionStore
 from capabilities.tracking.agent import Re, run_tracking_agent_turn
 import capabilities.tracking.entrypoints.turns as tracking_turns
 from capabilities.tracking.entrypoints.turns import process_tracking_init_direct
@@ -400,19 +400,18 @@ def test_tracking_result_writes_local_viewer_snapshot(tmp_path: Path) -> None:
         },
     )
 
-    snapshot_path = state_root / "viewer" / "latest.json"
-    frame_path = state_root / "viewer" / "latest.jpg"
+    snapshot = viewer_stream.build_agent_viewer_payload(
+        state_root=state_root,
+        session_id="sess_tracking",
+    )
 
-    assert snapshot_path.exists()
-    assert frame_path.exists()
-
-    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-
+    assert not (state_root / "viewer" / "latest.json").exists()
+    assert not (state_root / "viewer" / "latest.jpg").exists()
     assert snapshot["session_id"] == "sess_tracking"
     assert snapshot["agent"]["conversation_history"][-1]["text"] == "继续跟踪当前目标。"
     assert snapshot["summary"]["frame_id"] == "frame_000001"
-    assert snapshot["modules"]["tracking-init"]["display_frame"]["rendered_image_path"] == str(frame_path.resolve())
-    assert snapshot["modules"]["tracking-init"]["memory_history"][-1]["memory"]
+    assert snapshot["modules"]["tracking-init"]["display_frame"]["rendered_image_path"] == "/viewer-frame.jpg"
+    assert snapshot["modules"]["tracking-init"]["memory_history"] == []
 
 
 def test_perception_writes_latest_frame_artifact_without_overwriting_snapshot_truth(tmp_path: Path) -> None:
@@ -573,11 +572,11 @@ def test_viewer_payload_prefers_matching_result_frame(tmp_path: Path) -> None:
     assert payload["modules"]["tracking-init"]["display_frame"]["frame_id"] == "frame_000001"
 
 
-def test_viewer_cli_defaults_to_local_snapshot_output() -> None:
+def test_viewer_cli_defaults_to_local_state_root() -> None:
     args = viewer_stream.parse_args([])
 
     assert args.state_root == "./.runtime/agent-runtime"
-    assert args.output is None
+    assert args.session_id is None
 
 
 def test_execute_select_tool_uses_flash_for_init_and_track(tmp_path: Path, monkeypatch) -> None:

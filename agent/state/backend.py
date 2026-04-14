@@ -779,18 +779,9 @@ class BackendStore:
             tmp_path.replace(session_path)
 
 
-from agent.active_session import (  # noqa: E402
-    ActiveSessionRecord,
-    ActiveSessionStore,
-    resolve_session_id,
-)
-
 __all__ = [
     "ALLOWED_RESULT_FIELDS",
-    "ActiveSessionRecord",
-    "ActiveSessionStore",
     "BackendDetection",
     "BackendSession",
     "BackendStore",
-    "resolve_session_id",
 ]

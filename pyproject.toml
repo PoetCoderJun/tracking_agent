@@ -21,9 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
-e-agent = "agent.e_agent:main"
-robot-agent = "agent.runtime_cli:main"
-robot-agent-perception = "world.perception.cli:main"
+e-agent = "agent.runtime.supervisor:main"
 robot-agent-environment-writer = "world.write_environment:main"
 robot-agent-tracking-benchmark = "capabilities.tracking.benchmark:main"
 

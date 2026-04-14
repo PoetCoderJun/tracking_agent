@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from agent.session import AgentSessionStore
-from agent.session_store import BackendStore
+from agent.state.backend import BackendStore
+from agent.state.session import AgentSessionStore
 
 
 def _write_session_payload(state_root: Path, session_id: str, payload: dict) -> Path:

@@ -5,13 +5,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.session_store import ActiveSessionStore, BackendStore
-
-
-def _refresh_viewer_snapshot(*, state_root: Path, session_id: str | None = None) -> None:
-    from interfaces.viewer.stream import write_agent_viewer_snapshot
-
-    write_agent_viewer_snapshot(state_root=state_root, session_id=session_id)
+from agent.state.active import ActiveSessionStore
+from agent.state.backend import BackendStore
 
 
 def _latest_language_snapshot(session: Dict[str, Any]) -> Dict[str, Any]:
@@ -155,6 +150,7 @@ class AgentSession:
 
         return LocalPerceptionService(Path(self.state_paths["state_root"])).read_snapshot()
 
+
 class AgentSessionStore:
     def __init__(self, state_root: Path):
         self._state_root = state_root
@@ -184,7 +180,6 @@ class AgentSessionStore:
 
     def start_fresh_session(self, session_id: str, *, device_id: str = "") -> AgentSession:
         self._store.start_fresh_session(session_id=session_id, device_id=device_id)
-        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id, device_id=device_id)
 
     def append_chat_request(
@@ -201,7 +196,6 @@ class AgentSessionStore:
             text=text,
             request_id=request_id,
         )
-        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id, device_id=device_id)
 
     def apply_skill_result(
@@ -216,7 +210,6 @@ class AgentSessionStore:
             result,
             session_payload=None if base_session is None else base_session.session,
         )
-        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_latest_result(
@@ -233,30 +226,25 @@ class AgentSessionStore:
             expected_request_id=expected_request_id,
             expected_frame_id=expected_frame_id,
         )
-        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def clear_turn_state(self, session_id: str) -> AgentSession:
         self._store.reset_session_context(session_id)
-        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_user_preferences(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
         self._ensure_session(session_id)
         self._store.patch_agent_state(session_id, user_preferences=patch)
-        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_environment(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
         self._ensure_session(session_id)
         self._store.patch_agent_state(session_id, environment=patch)
-        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_runner_state(self, session_id: str, patch: Dict[str, Any]) -> AgentSession:
         self._ensure_session(session_id)
         self._store.patch_agent_state(session_id, runner=patch)
-        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def patch_skill_state(
@@ -268,7 +256,6 @@ class AgentSessionStore:
     ) -> AgentSession:
         self._ensure_session(session_id)
         self._store.patch_agent_state(session_id, capabilities={skill_name: patch})
-        _refresh_viewer_snapshot(state_root=self._state_root, session_id=session_id)
         return self.load(session_id)
 
     def acquire_turn(
@@ -321,19 +308,11 @@ def bootstrap_runner_session(
     *,
     state_root: Path,
     device_id: str = "robot_01",
-    session_id: str | None = None,
-    fresh: bool = False,
 ) -> AgentSession:
     from world.perception.stream import generate_session_id
 
     sessions = AgentSessionStore(state_root=state_root)
-    requested_session_id = str(session_id or "").strip()
-    resolved_session_id = requested_session_id or generate_session_id(prefix="runtime")
-    session = (
-        sessions.start_fresh_session(resolved_session_id, device_id=device_id)
-        if fresh
-        else sessions.load(resolved_session_id, device_id=device_id)
-    )
+    resolved_session_id = generate_session_id(prefix="runtime")
+    session = sessions.start_fresh_session(resolved_session_id, device_id=device_id)
     ActiveSessionStore(state_root).write(resolved_session_id)
-    _refresh_viewer_snapshot(state_root=state_root, session_id=resolved_session_id)
     return session

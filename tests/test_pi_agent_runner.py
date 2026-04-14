@@ -4,11 +4,11 @@ import importlib.util
 import json
 from pathlib import Path
 
-import agent.e_agent as e_agent
+import agent.runtime.supervisor as e_agent
 
-from agent.runner import commit_skill_turn, run_ordinary_skill_turn
-from agent.session import AgentSessionStore
-from agent.skill_payload import processed_skill_payload, reply_session_result
+from agent.protocol.payloads import processed_skill_payload, reply_session_result
+from agent.runtime.runner import commit_skill_turn, run_ordinary_skill_turn
+from agent.state.session import AgentSessionStore
 import capabilities.tracking.entrypoints.turns as tracking_deterministic
 from capabilities.tracking.entrypoints.turns import process_tracking_init_direct
 import skills.feishu.scripts.notify_turn as feishu_turn
@@ -93,6 +93,13 @@ def test_main_bootstraps_pi_runner_with_project_skills(monkeypatch, tmp_path: Pa
     assert str((state_root / "tracking_memory" / active_session["session_id"] / "memory.json").resolve()) in prompt_args[0]
     assert "当前启动时还没有可用的当前画面直达文件" in prompt_args[0]
     assert "当前还没有可用的跟踪特征记忆" in prompt_args[0]
+
+
+def test_e_agent_cli_starts_fresh_session_without_session_id_option() -> None:
+    args = e_agent.parse_args([])
+
+    assert not hasattr(args, "session_id")
+    assert not hasattr(args, "fresh")
 
 
 def test_vision_grounding_prompt_uses_latest_frame_path_when_available(tmp_path: Path) -> None:

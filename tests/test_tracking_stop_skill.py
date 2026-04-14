@@ -5,8 +5,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from agent.runner import run_ordinary_skill_turn
-from agent.session import AgentSessionStore
+from agent.runtime.runner import run_ordinary_skill_turn
+from agent.state.session import AgentSessionStore
 from capabilities.tracking.runtime.context import TRACKING_LIFECYCLE_STOPPED
 from capabilities.tracking.runtime.effects import (
     PENDING_REWRITE_ENQUEUED_AT_KEY,
@@ -55,7 +55,6 @@ def test_tracking_stop_helper_clears_tracking_state_and_memory(tmp_path: Path) -
             "latest_target_id": 15,
             "pending_question": "请确认目标。",
             "lifecycle_status": "bound",
-            "next_tracking_turn_at": 123.0,
             PENDING_REWRITE_INPUT_KEY: {"target_id": 15, "frame_id": "frame_000001"},
             PENDING_REWRITE_REQUEST_ID_KEY: "req_init",
             PENDING_REWRITE_ENQUEUED_AT_KEY: 456.0,
@@ -90,7 +89,6 @@ def test_tracking_stop_helper_clears_tracking_state_and_memory(tmp_path: Path) -
     assert session.latest_result is None
     assert session.capabilities["tracking-init"]["latest_target_id"] is None
     assert session.capabilities["tracking-init"]["pending_question"] is None
-    assert session.capabilities["tracking-init"]["next_tracking_turn_at"] is None
     assert session.capabilities["tracking-init"]["lifecycle_status"] == TRACKING_LIFECYCLE_STOPPED
     assert session.capabilities["tracking-init"]["stop_reason"] == "manual_stop"
     assert session.capabilities["tracking-init"][PENDING_REWRITE_INPUT_KEY] is None
@@ -147,7 +145,6 @@ def test_runner_commits_tracking_stop_skill_result(tmp_path: Path) -> None:
             "target_description": "穿黑衣服的人",
             "latest_target_id": 15,
             "lifecycle_status": "bound",
-            "next_tracking_turn_at": 123.0,
         },
     )
 

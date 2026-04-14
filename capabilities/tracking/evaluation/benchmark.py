@@ -19,14 +19,11 @@ from world.perception.stream import (
     video_timestamp_seconds,
 )
 from world.perception.stream import RobotDetection
-from agent.project_paths import PROJECT_ROOT, resolve_project_path
-from agent.runner import run_due_tracking_step
-from agent.session import AgentSessionStore
+from agent.infra.paths import PROJECT_ROOT, resolve_project_path
+from agent.runtime.runner import run_due_tracking_step
+from agent.state.session import AgentSessionStore
 from world.system1 import extract_person_detections, load_yolo
-from capabilities.tracking.entrypoints.turns import (
-    process_tracking_init_direct,
-    process_tracking_request_direct,
-)
+from capabilities.tracking.entrypoints.turns import process_tracking_init_direct
 from capabilities.tracking.runtime.context import tracking_state_snapshot
 
 DEFAULT_DATASET_ROOT = PROJECT_ROOT / "tests" / "dataset"
@@ -34,7 +31,6 @@ DEFAULT_MODEL = "yolov8n.pt"
 DEFAULT_TRACKER = "bytetrack.yaml"
 DEFAULT_DISTANCE_THRESHOLD_PX = 50.0
 DEFAULT_TRACKER_FPS = 8.0
-DEFAULT_REBIND_AFTER_MISSED_FRAMES = 1
 DEFAULT_OBSERVATION_INTERVAL_SECONDS = 1.0
 VIDEO_FILENAME = "raw_video.mp4"
 LABELS_FILENAME = "labels.txt"
@@ -87,12 +83,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--tracker-fps",
         type=float,
         default=DEFAULT_TRACKER_FPS,
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--rebind-after-missed-frames",
-        type=int,
-        default=DEFAULT_REBIND_AFTER_MISSED_FRAMES,
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
@@ -367,7 +357,6 @@ def run_sequence_benchmark(
     observation_interval_seconds: float,
     benchmark_run_root: Path,
     tracker_fps: float,
-    rebind_after_missed_frames: int,
 ) -> SequenceBenchmarkResult:
     return run_sequence_benchmark_rebind_fsm(
         sequence=sequence,
@@ -385,7 +374,6 @@ def run_sequence_benchmark(
         benchmark_run_root=benchmark_run_root,
         observation_interval_seconds=observation_interval_seconds,
         tracker_fps=tracker_fps,
-        rebind_after_missed_frames=rebind_after_missed_frames,
     )
 
 
@@ -406,14 +394,11 @@ def run_sequence_benchmark_rebind_fsm(
     benchmark_run_root: Path,
     observation_interval_seconds: float,
     tracker_fps: float,
-    rebind_after_missed_frames: int,
 ) -> SequenceBenchmarkResult:
     if tracker_fps <= 0:
         raise ValueError("tracker_fps must be positive")
     if observation_interval_seconds <= 0:
         raise ValueError("observation_interval_seconds must be positive")
-    if rebind_after_missed_frames <= 0:
-        raise ValueError("rebind_after_missed_frames must be positive")
     if max_frames is not None and max_frames <= 0:
         raise ValueError("max_frames must be positive when provided")
 
@@ -545,7 +530,6 @@ def run_sequence_benchmark_rebind_fsm(
                     artifacts_root=artifacts_root,
                     owner_id=f"bench_loop:{session_id}",
                     continue_text=continue_text,
-                    interval_seconds=observation_interval_seconds,
                 )
                 session = sessions.load(session_id, device_id=device_id)
                 tracking_state = tracking_state_snapshot((session.capabilities.get("tracking-init") or {}))
@@ -657,7 +641,6 @@ def benchmark_dataset(
     observation_interval_seconds: float,
     benchmark_run_root: Path,
     tracker_fps: float,
-    rebind_after_missed_frames: int,
 ) -> Dict[str, object]:
     sequence_results = [
         run_sequence_benchmark(
@@ -676,7 +659,6 @@ def benchmark_dataset(
             observation_interval_seconds=observation_interval_seconds,
             benchmark_run_root=benchmark_run_root,
             tracker_fps=tracker_fps,
-            rebind_after_missed_frames=rebind_after_missed_frames,
         )
         for sequence in discover_benchmark_sequences(dataset_root, requested_names=requested_sequences)
     ]
@@ -709,7 +691,6 @@ def benchmark_dataset(
             ),
         },
         "tracker_fps": round(float(tracker_fps), 3),
-        "rebind_after_missed_frames": int(rebind_after_missed_frames),
         "observation_interval_seconds": round(float(observation_interval_seconds), 3),
         "max_frames": max_frames,
         "sequence_results": [_sequence_result_payload(result) for result in sequence_results],
@@ -727,8 +708,6 @@ def main() -> int:
     args = parse_args()
     if args.tracker_fps <= 0:
         raise ValueError("--tracker-fps must be positive")
-    if args.rebind_after_missed_frames <= 0:
-        raise ValueError("--rebind-after-missed-frames must be positive")
     if args.observation_interval_seconds <= 0:
         raise ValueError("--observation-interval-seconds must be positive")
     if args.distance_threshold_px <= 0:
@@ -755,7 +734,6 @@ def main() -> int:
         observation_interval_seconds=float(args.observation_interval_seconds),
         benchmark_run_root=resolve_project_path(args.benchmark_run_root),
         tracker_fps=float(args.tracker_fps),
-        rebind_after_missed_frames=int(args.rebind_after_missed_frames),
     )
 
     payload = json.dumps(report, indent=2, ensure_ascii=True)

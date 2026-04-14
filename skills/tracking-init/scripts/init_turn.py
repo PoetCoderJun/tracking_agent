@@ -6,9 +6,9 @@ import os
 from typing import List, Optional
 
 from world.perception.stream import generate_request_id
-from agent.session_store import resolve_session_id
-from agent.project_paths import resolve_project_path
-from agent.session import AgentSessionStore
+from agent.infra.paths import resolve_project_path
+from agent.state.active import resolve_session_id
+from agent.state.session import AgentSessionStore
 from capabilities.tracking.entrypoints.turns import process_tracking_init_direct
 
 DEFAULT_STATE_ROOT = "./.runtime/agent-runtime"

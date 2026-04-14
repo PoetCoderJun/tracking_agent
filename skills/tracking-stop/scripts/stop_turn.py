@@ -6,10 +6,10 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from agent.project_paths import resolve_project_path
-from agent.session import AgentSession, AgentSessionStore
-from agent.session_store import resolve_session_id
-from agent.skill_payload import processed_skill_payload, reply_session_result
+from agent.infra.paths import resolve_project_path
+from agent.protocol.payloads import processed_skill_payload, reply_session_result
+from agent.state.active import resolve_session_id
+from agent.state.session import AgentSession, AgentSessionStore
 from capabilities.tracking.runtime.context import (
     TRACKING_LIFECYCLE_INACTIVE,
     TRACKING_LIFECYCLE_STOPPED,
@@ -72,7 +72,6 @@ def _stop_tracking_state(*, sessions: AgentSessionStore, session_id: str) -> Dic
             "latest_target_id": None,
             "pending_question": None,
             "lifecycle_status": TRACKING_LIFECYCLE_STOPPED,
-            "next_tracking_turn_at": None,
             "stop_reason": "manual_stop",
             PENDING_REWRITE_INPUT_KEY: None,
             PENDING_REWRITE_REQUEST_ID_KEY: None,

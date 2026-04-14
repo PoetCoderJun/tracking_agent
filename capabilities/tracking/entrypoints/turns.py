@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agent.project_paths import resolve_project_path
-from agent.session import AgentSessionStore
+from agent.infra.paths import resolve_project_path
+from agent.state.session import AgentSessionStore
 from capabilities.tracking.agent import run_tracking_agent_turn
 from capabilities.tracking.artifacts.crop import save_target_crop
 from capabilities.tracking.policy.rewrite_memory import execute_rewrite_memory_tool

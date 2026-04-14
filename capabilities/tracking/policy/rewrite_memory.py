@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent.config import load_settings
+from agent.infra.config import load_settings
 from capabilities.llm_client import call_model
 from capabilities.tracking.policy.prompt_templates import (
     TRACKING_RUNTIME_CONFIG_PATH,

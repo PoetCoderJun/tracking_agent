@@ -31,9 +31,7 @@ The operator-facing path should stay aligned with `README.md`:
 
 Current first-class CLI surfaces are:
 
-- `e-agent` -> `agent.e_agent:main`
-- `robot-agent` -> `agent.runtime_cli:main`
-- `robot-agent-perception` -> `world.perception.cli:main`
+- `e-agent` -> `agent.runtime.supervisor:main`
 - `robot-agent-environment-writer` -> `world.write_environment:main`
 - `robot-agent-tracking-benchmark` -> `capabilities.tracking.benchmark:main`
 
@@ -86,7 +84,7 @@ Benchmark guidance from `docs/tracking-paper-vs-local-results.md` remains in for
 Keep responsibilities sharp:
 
 - `world/`: always-on environment writing, frame persistence, snapshot truth, same-frame `system1` results.
-- `agent/`: active session bootstrap, runner framing, state commit, utility CLI, `e-agent` supervisor.
+- `agent/`: PI runtime code grouped into `state/`, `runtime/`, `infra/`, and `protocol/`.
 - `capabilities/`: runtime-owned capability logic such as continuous tracking and benchmark code.
 - `skills/`: `pi` skill contracts and skill-local helpers. If a helper exists only for one skill, keep it with that skill.
 - `interfaces/`: read-only interfaces such as the local viewer.
@@ -143,8 +141,6 @@ python -m pytest tests/test_cli_surface.py
 Useful runtime commands:
 
 ```bash
-uv run robot-agent session-show
-uv run robot-agent-perception latest-frame
 uv run robot-agent-tracking-benchmark
 ```
 

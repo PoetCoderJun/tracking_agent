@@ -40,6 +40,8 @@ uv run robot-agent-environment-writer --source 0
 uv run e-agent
 ```
 
+每次启动 `e-agent` 都会新建一条 runtime session，不复用旧 session id。
+
 然后在 `pi` 中输入：
 
 ```text
@@ -53,7 +55,7 @@ uv run e-agent
 - `tracking-init` skill 读取当前世界快照并确认目标
 - session 中写入 tracking state、text memory、image crop memory
 - `e-agent` 在同一条 session 内继续跑 continuous tracking mini Re/Act
-- tracking/runtime 会把 viewer 需要的最新结果写到 `./.runtime/agent-runtime/viewer/latest.json` 和 `latest.jpg`
+- viewer 会直接轮询 session truth、perception snapshot、tracking memory 和当前画面文件，不依赖额外的 viewer 派生落盘
 - viewer 只读这些本地文件，不参与调度
 
 ## Features
@@ -147,7 +149,7 @@ npm run dev
 
 `e-agent` 默认会：
 
-- bootstrap active session
+- bootstrap fresh session
 - 以前台 supervisor 的方式拉起 `pi`
 - 只加载仓库内 project skills
 - 在同一条 session 上接管 continuous tracking follow-up
@@ -248,6 +250,10 @@ uv run robot-agent-tracking-benchmark
 ```
 
 当前 benchmark 只保留一条 runtime-aligned 路径，不再暴露历史多 pipeline 模式。
+benchmark 参数也只保留实际生效的 runtime-aligned 选项。
+
+如果你本地还留着旧版 session state，当前版本不会兼容加载历史扁平结构的 `session.json`。
+升级后请直接清空 `./.runtime/agent-runtime/` 再重启 runtime。
 
 只跑某一个序列：
 
@@ -261,18 +267,4 @@ uv run robot-agent-tracking-benchmark --sequence corridor1
 uv run robot-agent-tracking-benchmark \
   --sequence corridor1 \
   --output-json ./.runtime/tracking-benchmark/corridor1.json
-```
-
-### 3. 查看当前状态
-
-查看 active session：
-
-```bash
-uv run robot-agent session-show
-```
-
-查看 perception 最新 frame：
-
-```bash
-uv run robot-agent-perception latest-frame
 ```

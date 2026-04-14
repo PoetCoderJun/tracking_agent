@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.session import AgentSessionStore
+from agent.state.session import AgentSessionStore
 import capabilities.tracking.runtime.effects as tracking_effects
 from capabilities.tracking.runtime.effects import (
     PENDING_REWRITE_INPUT_KEY,

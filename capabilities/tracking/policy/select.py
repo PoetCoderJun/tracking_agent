@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent.config import load_settings
+from agent.infra.config import load_settings
 from capabilities.llm_client import call_model, parse_json_block
 from capabilities.tracking.artifacts.crop import save_target_crop
 from capabilities.tracking.artifacts.visualization import save_detection_visualization

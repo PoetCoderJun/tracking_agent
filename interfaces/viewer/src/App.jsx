@@ -19,6 +19,10 @@ function formatBoundingBoxIdValue(rawId) {
   return rawId === null || rawId === undefined || rawId === "" ? "未绑定" : String(rawId);
 }
 
+function normalizedTrackId(rawId) {
+  return rawId === null || rawId === undefined || rawId === "" ? "" : String(rawId);
+}
+
 function syncStateLabel(syncState) {
   if (syncState === "ready") {
     return "已同步";
@@ -138,6 +142,70 @@ function ConversationEntry({ entry }) {
       <div className="entry-body">{entry.text || "空内容"}</div>
       {debugText ? <pre className="entry-debug">{debugText}</pre> : null}
     </article>
+  );
+}
+
+function DetectionOverlay({ displayFrame, imageSize, targetId }) {
+  const detections = Array.isArray(displayFrame?.detections) ? [...displayFrame.detections] : [];
+  if ((!detections.length || !detections.some((detection) => normalizedTrackId(detection?.track_id ?? detection?.target_id) === normalizedTrackId(targetId))) && Array.isArray(displayFrame?.bbox) && displayFrame.bbox.length === 4) {
+    detections.push({
+      track_id: targetId,
+      bbox: displayFrame.bbox,
+    });
+  }
+  if (!imageSize.width || !imageSize.height || !detections.length) {
+    return null;
+  }
+  return (
+    <svg
+      className="overlay"
+      viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      {detections.map((detection, index) => {
+        const bbox = Array.isArray(detection?.bbox) && detection.bbox.length === 4 ? detection.bbox : null;
+        if (!bbox) {
+          return null;
+        }
+        const [x1, y1, x2, y2] = bbox;
+        const width = Math.max(1, x2 - x1);
+        const height = Math.max(1, y2 - y1);
+        const detectionId = normalizedTrackId(detection?.track_id ?? detection?.target_id);
+        const isTarget = detectionId && detectionId === normalizedTrackId(targetId);
+        const label = detectionId ? `ID ${detectionId}` : "ID ?";
+        const chipWidth = Math.max(52, label.length * 8 + 12);
+        const chipHeight = 22;
+        const chipY = Math.max(0, y1 - chipHeight - 4);
+        return (
+          <g key={`${detectionId || "unknown"}-${index}`}>
+            <rect
+              className={`bbox ${isTarget ? "bbox-target" : "bbox-candidate"}`}
+              x={x1}
+              y={y1}
+              width={width}
+              height={height}
+              rx="2"
+            />
+            <rect
+              className={`bbox-label-bg ${isTarget ? "bbox-label-bg-target" : "bbox-label-bg-candidate"}`}
+              x={x1}
+              y={chipY}
+              width={chipWidth}
+              height={chipHeight}
+              rx="8"
+            />
+            <text
+              className={`bbox-label ${isTarget ? "bbox-label-target" : ""}`}
+              x={x1 + 8}
+              y={chipY + 15}
+            >
+              {label}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -317,15 +385,20 @@ export default function App() {
                     src={displayImageUrl}
                     alt={`当前结果帧 ${displayFrame?.frame_id || ""}`}
                   />
+                  <DetectionOverlay
+                    displayFrame={displayFrame}
+                    imageSize={imageSize}
+                    targetId={viewerState?.summary?.target_id}
+                  />
                   <div className="stage-note">
                     <strong>{viewerStatus.label}</strong>
-                    <span>当前显示的是 runtime 最新落盘结果帧，Bounding Box 已经直接写进图片。</span>
+                    <span>当前显示的是持久化真相中的画面，边框由 viewer 根据落盘检测结果实时叠加。</span>
                   </div>
                 </>
               ) : (
                 <div className="empty-stage">
                   <strong>等待画面</strong>
-                  <span>tracking 结果会写到本地 `viewer/latest.jpg` 和 `viewer/latest.json`，这里直接读取它们。</span>
+                  <span>viewer 会轮询 session、perception 和 tracking memory 真相文件；当前还没有可显示的画面。</span>
                 </div>
               )}
             </div>
@@ -368,7 +441,7 @@ export default function App() {
                   <MemoryEntry key={`${entry.updated_at || "memory"}-${index}`} entry={entry} />
                 ))
               ) : (
-                <div className="empty-inline">还没有历史 memory。</div>
+                <div className="empty-inline">当前只读取最新 tracking memory，不再维护独立的 viewer 历史镜像。</div>
               )}
             </div>
           </div>
