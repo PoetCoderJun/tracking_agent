@@ -1,0 +1,521 @@
+{
+  "style": 4,
+  "width": 1360,
+  "height": 820,
+  "title": "Embodied Harness",
+  "subtitle": "Grounding, harness, tracking loop, and persisted truth",
+  "footer": "Viewer is read-only. Continuous tracking reads persisted truth only: snapshot, session state, and tracking memory.",
+  "containers": [
+    {
+      "x": 30,
+      "y": 110,
+      "width": 380,
+      "height": 290,
+      "label": "Grounding Layer",
+      "subtitle": "always-on input"
+    },
+    {
+      "x": 450,
+      "y": 110,
+      "width": 380,
+      "height": 260,
+      "label": "Harness",
+      "subtitle": "one runner path"
+    },
+    {
+      "x": 870,
+      "y": 110,
+      "width": 460,
+      "height": 360,
+      "label": "Tracking Mini-Agent",
+      "subtitle": "continuous runtime on the same session"
+    },
+    {
+      "x": 450,
+      "y": 410,
+      "width": 380,
+      "height": 290,
+      "label": "Persisted Truth",
+      "subtitle": "single agent-owned state"
+    },
+    {
+      "x": 870,
+      "y": 520,
+      "width": 460,
+      "height": 150,
+      "label": "Read-Only Surface",
+      "subtitle": "inspect only"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "sensors",
+      "kind": "rect",
+      "x": 70,
+      "y": 180,
+      "width": 130,
+      "height": 64,
+      "type_label": "INPUT",
+      "label": "Sensors",
+      "sublabel": "camera now | radar depth mic later"
+    },
+    {
+      "id": "writer",
+      "kind": "rect",
+      "x": 235,
+      "y": 180,
+      "width": 140,
+      "height": 64,
+      "type_label": "PROCESS",
+      "label": "write environment",
+      "sublabel": "persist world snapshot"
+    },
+    {
+      "id": "perception",
+      "kind": "cylinder",
+      "x": 100,
+      "y": 290,
+      "width": 250,
+      "height": 78,
+      "type_label": "FILES",
+      "label": "Perception Truth",
+      "sublabel": "snapshot.json | latest_frame.jpg | same-frame system1"
+    },
+    {
+      "id": "harness",
+      "kind": "rect",
+      "x": 500,
+      "y": 170,
+      "width": 280,
+      "height": 78,
+      "type_label": "PROCESS",
+      "label": "e-agent harness",
+      "sublabel": "session bootstrap | ordinary turns | single runner"
+    },
+    {
+      "id": "tracking_init",
+      "kind": "rect",
+      "x": 560,
+      "y": 280,
+      "width": 160,
+      "height": 64,
+      "type_label": "SKILL",
+      "label": "tracking-init",
+      "sublabel": "one-shot bind or replace"
+    },
+    {
+      "id": "session_truth",
+      "kind": "cylinder",
+      "x": 530,
+      "y": 460,
+      "width": 220,
+      "height": 82,
+      "type_label": "FILES",
+      "label": "Session Truth",
+      "sublabel": "session.json | latest_result | capability state"
+    },
+    {
+      "id": "tracking_memory",
+      "kind": "cylinder",
+      "x": 530,
+      "y": 580,
+      "width": 220,
+      "height": 82,
+      "type_label": "FILES",
+      "label": "Tracking Memory",
+      "sublabel": "memory.json | front back crops"
+    },
+    {
+      "id": "trigger",
+      "kind": "hexagon",
+      "x": 920,
+      "y": 170,
+      "width": 140,
+      "height": 70,
+      "type_label": "TRIGGER",
+      "label": "Trigger",
+      "sublabel": "chat_init | cadence_review | event_rebind"
+    },
+    {
+      "id": "re",
+      "kind": "rect",
+      "x": 1100,
+      "y": 170,
+      "width": 100,
+      "height": 70,
+      "type_label": "STEP",
+      "label": "Re",
+      "sublabel": "observe"
+    },
+    {
+      "id": "act",
+      "kind": "rect",
+      "x": 1230,
+      "y": 170,
+      "width": 80,
+      "height": 70,
+      "type_label": "STEP",
+      "label": "Act",
+      "sublabel": "decide"
+    },
+    {
+      "id": "commit",
+      "kind": "rect",
+      "x": 1060,
+      "y": 300,
+      "width": 180,
+      "height": 74,
+      "type_label": "STEP",
+      "label": "Commit",
+      "sublabel": "patch session | enqueue rewrite"
+    },
+    {
+      "id": "guardrail",
+      "kind": "rect",
+      "x": 930,
+      "y": 410,
+      "width": 320,
+      "height": 62,
+      "type_label": "RULE",
+      "label": "Persisted inputs only",
+      "sublabel": "snapshot | session state | tracking memory"
+    },
+    {
+      "id": "viewer",
+      "kind": "rect",
+      "x": 1010,
+      "y": 565,
+      "width": 190,
+      "height": 74,
+      "type_label": "INTERFACE",
+      "label": "Viewer",
+      "sublabel": "read-only local inspection"
+    }
+  ],
+  "arrows": [
+    {
+      "source": "sensors",
+      "target": "writer",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "frames",
+      "flow": "control"
+    },
+    {
+      "source": "writer",
+      "target": "perception",
+      "source_port": "bottom",
+      "target_port": "top",
+      "label": "write snapshot",
+      "flow": "control"
+    },
+    {
+      "source": "perception",
+      "target": "harness",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "read current frame + snapshot",
+      "flow": "control"
+    },
+    {
+      "source": "harness",
+      "target": "tracking_init",
+      "source_port": "bottom",
+      "target_port": "top",
+      "label": "track request",
+      "flow": "control"
+    },
+    {
+      "source": "tracking_init",
+      "target": "session_truth",
+      "source_port": "bottom-left",
+      "target_port": "top",
+      "label": "bind target",
+      "flow": "control"
+    },
+    {
+      "source": "tracking_init",
+      "target": "tracking_memory",
+      "source_port": "bottom-right",
+      "target_port": "top",
+      "label": "seed memory",
+      "flow": "control"
+    },
+    {
+      "source": "tracking_init",
+      "target": "trigger",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "chat_init",
+      "flow": "control",
+      "dashed": true
+    },
+    {
+      "source": "perception",
+      "target": "trigger",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "new snapshot",
+      "flow": "control",
+      "route_points": [
+        [
+          350,
+          329
+        ],
+        [
+          860,
+          329
+        ],
+        [
+          860,
+          205
+        ],
+        [
+          920,
+          205
+        ]
+      ]
+    },
+    {
+      "source": "session_truth",
+      "target": "trigger",
+      "source_port": "right",
+      "target_port": "bottom-left",
+      "label": "latest target",
+      "flow": "control",
+      "route_points": [
+        [
+          750,
+          501
+        ],
+        [
+          880,
+          501
+        ],
+        [
+          880,
+          240
+        ],
+        [
+          955,
+          240
+        ]
+      ]
+    },
+    {
+      "source": "trigger",
+      "target": "re",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "runtime turn",
+      "flow": "control"
+    },
+    {
+      "source": "perception",
+      "target": "re",
+      "source_port": "right",
+      "target_port": "bottom-left",
+      "label": "recent frames",
+      "flow": "control",
+      "route_points": [
+        [
+          350,
+          329
+        ],
+        [
+          1040,
+          329
+        ],
+        [
+          1040,
+          240
+        ],
+        [
+          1125,
+          240
+        ]
+      ]
+    },
+    {
+      "source": "session_truth",
+      "target": "re",
+      "source_port": "right",
+      "target_port": "bottom",
+      "label": "tracking state",
+      "flow": "control",
+      "route_points": [
+        [
+          750,
+          501
+        ],
+        [
+          1055,
+          501
+        ],
+        [
+          1055,
+          240
+        ],
+        [
+          1150,
+          240
+        ]
+      ]
+    },
+    {
+      "source": "tracking_memory",
+      "target": "re",
+      "source_port": "right",
+      "target_port": "bottom-right",
+      "label": "memory + crops",
+      "flow": "control",
+      "route_points": [
+        [
+          750,
+          621
+        ],
+        [
+          1070,
+          621
+        ],
+        [
+          1070,
+          240
+        ],
+        [
+          1175,
+          240
+        ]
+      ]
+    },
+    {
+      "source": "re",
+      "target": "act",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "observation",
+      "flow": "control"
+    },
+    {
+      "source": "act",
+      "target": "commit",
+      "source_port": "bottom-left",
+      "target_port": "top-right",
+      "label": "track | wait | ask",
+      "flow": "control"
+    },
+    {
+      "source": "commit",
+      "target": "session_truth",
+      "source_port": "left",
+      "target_port": "right",
+      "label": "latest_result + state",
+      "flow": "control"
+    },
+    {
+      "source": "commit",
+      "target": "tracking_memory",
+      "source_port": "left",
+      "target_port": "right",
+      "label": "rewrite memory",
+      "flow": "control",
+      "dashed": true,
+      "route_points": [
+        [
+          1060,
+          337
+        ],
+        [
+          790,
+          337
+        ],
+        [
+          790,
+          621
+        ],
+        [
+          750,
+          621
+        ]
+      ]
+    },
+    {
+      "source": "perception",
+      "target": "viewer",
+      "source_port": "right",
+      "target_port": "top-left",
+      "label": "perception",
+      "flow": "control",
+      "route_points": [
+        [
+          350,
+          329
+        ],
+        [
+          930,
+          329
+        ],
+        [
+          930,
+          565
+        ],
+        [
+          1010,
+          565
+        ]
+      ]
+    },
+    {
+      "source": "session_truth",
+      "target": "viewer",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "session",
+      "flow": "control",
+      "route_points": [
+        [
+          750,
+          501
+        ],
+        [
+          920,
+          501
+        ],
+        [
+          920,
+          602
+        ],
+        [
+          1010,
+          602
+        ]
+      ]
+    },
+    {
+      "source": "tracking_memory",
+      "target": "viewer",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "memory",
+      "flow": "control",
+      "route_points": [
+        [
+          750,
+          621
+        ],
+        [
+          930,
+          621
+        ],
+        [
+          930,
+          602
+        ],
+        [
+          1010,
+          602
+        ]
+      ]
+    }
+  ]
+}
