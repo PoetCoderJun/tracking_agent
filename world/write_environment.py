@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent.infra.paths import resolve_project_path
+from agent.project_paths import resolve_project_path
 from world import (
     DEFAULT_PERSON_CLASS_ID,
     DEFAULT_SYSTEM1_MODEL,

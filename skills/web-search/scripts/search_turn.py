@@ -8,11 +8,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.infra.config import parse_dotenv
-from agent.infra.paths import resolve_project_path
-from agent.protocol.payloads import processed_skill_payload, reply_session_result
-from agent.state.active import resolve_session_id
-from agent.state.session import AgentSession, AgentSessionStore
+from agent.config import parse_dotenv
+from agent.session_store import resolve_session_id
+from agent.project_paths import resolve_project_path
+from agent.session import AgentSession, AgentSessionStore
+from agent.skill_payload import processed_skill_payload, reply_session_result
 
 TAVILY_URL = "https://api.tavily.com/search"
 
@@ -136,7 +136,7 @@ def build_web_search_payload(
         if request_function not in (None, ""):
             session_result["function"] = str(request_function).strip()
         return processed_skill_payload(
-            skill_name="web-search",
+            skill_name="web_search",
             session_result=session_result,
             tool="search",
             tool_output={"query": query, "configured": False, "error": str(error).strip()},
@@ -154,7 +154,7 @@ def build_web_search_payload(
     if request_function not in (None, ""):
         session_result["function"] = str(request_function).strip()
     return processed_skill_payload(
-        skill_name="web-search",
+        skill_name="web_search",
         session_result=session_result,
         tool="search",
         tool_output=tool_output,

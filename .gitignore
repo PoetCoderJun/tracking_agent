@@ -34,7 +34,7 @@ node_modules/
 *.log
 logs/
 sessions/
-/runtime/
+runtime/
 .runtime/
 claw/target/
 *.pt

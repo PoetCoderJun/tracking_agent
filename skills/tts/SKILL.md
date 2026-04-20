@@ -7,7 +7,7 @@ description: Use when the robot should say or speak one short message aloud as a
 
 ## Overview
 
-This skill turns one text instruction into one tts action.
+This skill turns one text instruction into one speech/tts action.
 
 - Use it when the user explicitly asks the robot to say, speak, or播报 something.
 - This is a single-call capability, not a long-running audio service.
@@ -16,7 +16,7 @@ This skill turns one text instruction into one tts action.
 ## When to Use
 
 - The user says `说一句...` / `播报...` / `念一下...`.
-- The turn is about one tts action, not tracking or web lookup.
+- The turn is about one speech action, not tracking or web lookup.
 - The robot should vocalize a short message to the local environment.
 
 Do not use this skill for:
@@ -29,8 +29,8 @@ Do not use this skill for:
 
 1. Resolve the active session first.
 2. In this runtime, prefer `ROBOT_AGENT_SESSION_ID` and `ROBOT_AGENT_STATE_ROOT` from the environment over hardcoded runtime paths.
-3. Decide whether this turn is asking for one tts action.
-4. If yes, decide whether to use the PI environment's own tts surface or the skill-local helper.
+3. Decide whether this turn is asking for one speech/tts action.
+4. If yes, decide whether to use the PI environment's own speech/action surface or the skill-local helper.
 5. Do not route this through backend-owned TTS skill code.
 6. After the speak action completes, reply naturally to the user with the result.
 

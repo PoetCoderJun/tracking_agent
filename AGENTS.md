@@ -9,7 +9,7 @@ This repository builds a `chat-first`, environment-grounded embodied agent kerne
 - runtime capabilities handle the continuous follow-up path.
 - shared session state is the single agent-owned truth.
 
-`tracking` is the primary proof point. `tts` and other skills are examples of how new capabilities plug into the same kernel without becoming framework-level special cases.
+`tracking` is the primary proof point. `speech` / `tts` and other skills are examples of how new capabilities plug into the same kernel without becoming framework-level special cases.
 
 ## Current System Shape
 The repository is no longer “moving toward” a minimal kernel; it is already organized around one. Keep these as hard constraints:
@@ -18,7 +18,7 @@ The repository is no longer “moving toward” a minimal kernel; it is already 
 - `world/perception/` is the only always-on input layer. It may persist same-frame `system1` outputs, but it must not own high-level task orchestration.
 - There is one runner path for agent work. Do not add parallel decision paths, detached lifecycle workers, or shadow action authorities.
 - Agent-owned persistent state lives in one session-state truth. Avoid duplicate memory mirrors, cache layers, or parallel lifecycle stores.
-- `tracking-init`, `tracking-stop`, `tts`, and other skills/capabilities should remain ordinary modules with explicit contracts, not plugin-framework magic.
+- `tracking`, `tracking_stop`, `tts`, `speech`, and other skills/capabilities should remain ordinary modules with explicit contracts, not plugin-framework magic.
 - `interfaces/viewer/` is read-only. It may visualize state, but it must not drive orchestration or become a second runtime.
 - Prefer deleting wrappers, compatibility layers, fallback branches, and old stack scripts over rewrapping them.
 
@@ -31,7 +31,9 @@ The operator-facing path should stay aligned with `README.md`:
 
 Current first-class CLI surfaces are:
 
-- `e-agent` -> `agent.runtime.supervisor:main`
+- `e-agent` -> `agent.e_agent:main`
+- `robot-agent` -> `agent.runtime_cli:main`
+- `robot-agent-perception` -> `world.perception.cli:main`
 - `robot-agent-environment-writer` -> `world.write_environment:main`
 - `robot-agent-tracking-benchmark` -> `capabilities.tracking.benchmark:main`
 
@@ -43,30 +45,15 @@ Do not reintroduce deleted wrapper scripts such as tracking stack launchers, fro
 1. `tracking-init` skill: bind or replace the target from the current visible candidate set, then seed tracking memory.
 2. Continuous tracking mini-agent: run follow-up review and rebind on the same session.
 
-Keep the ownership and naming boundaries explicit:
-
-- `skills/tracking-init/` is the `tracking-init` skill surface. It is only for the one-shot start/replace turn.
-- `skills/tracking-stop/` is the `tracking-stop` skill surface. It is only for the one-shot stop/clear turn.
-- `capabilities/tracking/` is the continuous tracking runtime surface. It owns the Python `Re -> Act -> Commit` logic, runtime prompts, runtime memory rewrite, and benchmark/runtime helpers.
-- Do not mix skill-owned files and runtime-owned files in the same path just because both belong to “tracking”.
-- Prompt/template/config ownership must match implementation ownership:
-  `tracking-init` prompt assets stay under `skills/tracking-init/`;
-  continuous-tracking and memory-rewrite prompt assets/config stay under `capabilities/tracking/`.
-- Naming must make the boundary obvious. Prefer names such as `tracking_init_*`, `tracking_stop_*`, `continuous_tracking_*`, or `tracking_runtime_*` over ambiguous names such as `track_skill_*` when the code is really part of the continuous runtime.
-
 Preserve these design rules from `README.md` and `docs/tracking-runtime-minimal-flow.md`:
 
 - `tracking-init` is one-shot. It selects or replaces the target; it does not own the continuous loop.
-- `tracking-stop` is also one-shot. It clears the bound target, pending follow-up, and tracking memory for the active session.
+- `tracking_stop` is also one-shot. It clears the bound target, pending follow-up, and tracking memory for the active session.
 - Continuous tracking lives in `capabilities/tracking/loop.py` and related runtime modules, not in detached stacks or shell wrappers.
 - Continuous tracking reads only persisted truth: latest world snapshot, current tracking state, and tracking memory.
 - Do not drive continuous tracking from recent dialogue text, ad hoc repo inspection, or raw high-frequency tracker internals.
 - Keep the trigger model explicit and small: `chat_init`, `cadence_review`, and `event_rebind`.
 - Tracking lifecycle state must have one clear write path. Prefer explicit commits in runner/capability code over generic patch protocols.
-- Keep the internal runtime layout shallow and explicit:
-  `loop.py` remains the top-level supervisor entry;
-  `agent.py` remains the single-turn Re/Act entry;
-  supporting code should live under clear subpackages such as `runtime/`, `policy/`, `state/`, `artifacts/`, `entrypoints/`, and `evaluation/` rather than accumulating more unrelated top-level files.
 
 Performance guidance from `docs/tracking-single-turn-latency-2026-04-10.md` and `docs/tracking-no-reason-experiment-2026-04-10.md` is also current:
 
@@ -84,19 +71,11 @@ Benchmark guidance from `docs/tracking-paper-vs-local-results.md` remains in for
 Keep responsibilities sharp:
 
 - `world/`: always-on environment writing, frame persistence, snapshot truth, same-frame `system1` results.
-- `agent/`: PI runtime code grouped into `state/`, `runtime/`, `infra/`, and `protocol/`.
+- `agent/`: active session bootstrap, runner framing, state commit, utility CLI, `e-agent` supervisor.
 - `capabilities/`: runtime-owned capability logic such as continuous tracking and benchmark code.
 - `skills/`: `pi` skill contracts and skill-local helpers. If a helper exists only for one skill, keep it with that skill.
 - `interfaces/`: read-only interfaces such as the local viewer.
 - `tests/`: pytest coverage, datasets, and fixtures.
-
-Tracking-specific path rules:
-
-- `skills/tracking-init/` means `tracking-init`, not the continuous runtime.
-- `skills/tracking-stop/` means stop/clear lifecycle control, not target selection and not continuous runtime.
-- `capabilities/tracking/` means the continuous tracking runtime and its supporting implementation.
-- Do not store continuous runtime prompts/config under `skills/tracking-init/`.
-- Do not store skill contract prompts/helpers under `capabilities/tracking/` unless the file is truly runtime-owned.
 
 If you need a new helper, first check whether it belongs in the owning skill or capability instead of adding another generic layer.
 
@@ -141,6 +120,8 @@ python -m pytest tests/test_cli_surface.py
 Useful runtime commands:
 
 ```bash
+uv run robot-agent session-show
+uv run robot-agent-perception latest-frame
 uv run robot-agent-tracking-benchmark
 ```
 
@@ -192,4 +173,4 @@ Ignore and avoid committing local artifacts such as:
 - viewer build output unless the task explicitly requires it
 - temporary media captures
 
-If you change interfaces used by `skills/tracking-init/` or `skills/tracking-stop/`, update the corresponding helper scripts and tests in the same change.
+If you change interfaces used by `skills/tracking/` or `skills/tracking_stop/`, update the corresponding helper scripts and tests in the same change.

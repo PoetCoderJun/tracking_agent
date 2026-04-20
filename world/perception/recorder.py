@@ -67,10 +67,17 @@ class PerceptionRecorder:
         sensor_dir = self._root / sensor
         if not sensor_dir.exists():
             return []
-        return sorted(
-            [path for path in sensor_dir.iterdir() if path.is_file()],
-            key=lambda path: path.stat().st_mtime_ns,
-        )
+        ordered_paths: list[tuple[int, Path]] = []
+        for path in sensor_dir.iterdir():
+            try:
+                if not path.is_file():
+                    continue
+                mtime_ns = path.stat().st_mtime_ns
+            except FileNotFoundError:
+                continue
+            ordered_paths.append((mtime_ns, path))
+        ordered_paths.sort(key=lambda item: item[0])
+        return [path for _, path in ordered_paths]
 
     def clear(self) -> None:
         for sensor_paths in self._saved_paths.values():

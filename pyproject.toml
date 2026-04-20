@@ -17,11 +17,16 @@ dependencies = [
   "torch==2.2.2",
   "torchvision==0.17.2",
   "openai>=1.0,<2.0",
+  "aiohttp>=3.9,<4.0",
+  "onnxruntime>=1.18,<2.0",
+  "PyAudio>=0.2.14,<1.0",
   "websockets>=12,<16",
 ]
 
 [project.scripts]
-e-agent = "agent.runtime.supervisor:main"
+e-agent = "agent.e_agent:main"
+robot-agent = "agent.runtime_cli:main"
+robot-agent-perception = "world.perception.cli:main"
 robot-agent-environment-writer = "world.write_environment:main"
 robot-agent-tracking-benchmark = "capabilities.tracking.benchmark:main"
 
@@ -31,7 +36,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["agent*", "world*", "capabilities*", "interfaces*", "skills*"]
+include = ["agent*", "world*", "capabilities*", "interfaces*", "skills*", "stt*"]
 
 [tool.uv]
 default-groups = ["dev"]

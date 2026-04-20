@@ -44,7 +44,7 @@ If your current PI environment needs a deterministic local helper, use the skill
 Important:
 
 - Keep the query short and focused.
-- The helper belongs to this skill package; backend does not own `web-search` skill logic.
+- The helper belongs to this skill package; backend does not own web-search skill logic.
 - Keep the helper bounded to one search; do not widen the turn into extra verification work.
 - The helper returns a processed payload; the harness/runner is responsible for the final session-state commit.
 - Do not expose helper JSON to the user.

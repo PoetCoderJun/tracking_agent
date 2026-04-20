@@ -3,16 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from agent.infra.config import parse_dotenv
-from agent.infra.paths import resolve_project_path
-from agent.protocol.payloads import processed_skill_payload, reply_session_result
-from agent.state.active import resolve_session_id
-from agent.state.session import AgentSession, AgentSessionStore
+from capabilities.actions import execute_speak
+from agent.config import parse_dotenv
+from agent.session_store import resolve_session_id
+from agent.project_paths import resolve_project_path
+from agent.session import AgentSession, AgentSessionStore
+from agent.skill_payload import processed_skill_payload, reply_session_result
 
 
 def _utc_now() -> str:
@@ -30,26 +30,6 @@ def _tts_command(env_file: Path) -> list[str]:
     values = parse_dotenv(env_file)
     configured = str(values.get("ROBOT_TTS_COMMAND", "")).strip()
     return shlex.split(configured) if configured else []
-
-
-def _execute_tts_command(*, text: str, command_prefix: List[str]) -> Dict[str, Any]:
-    cleaned_text = str(text).strip()
-    if not cleaned_text:
-        raise ValueError("tts text must not be empty")
-    argv = [*list(command_prefix), cleaned_text]
-    completed = subprocess.run(
-        argv,
-        capture_output=True,
-        text=True,
-        timeout=30.0,
-        check=False,
-    )
-    return {
-        "command": argv,
-        "returncode": int(completed.returncode),
-        "stdout": completed.stdout,
-        "stderr": completed.stderr,
-    }
 
 
 def _mock_outbox_path(artifacts_root: Path) -> Path:
@@ -88,14 +68,14 @@ def _real_tts(text: str, *, env_file: Path, artifacts_root: Path) -> Dict[str, A
     command = _tts_command(env_file)
     if not command:
         return _mock_tts(text, artifacts_root=artifacts_root)
-    result = _execute_tts_command(text=text, command_prefix=command)
+    result = execute_speak(text=text, command_prefix=command)
     return {
         "mode": "real",
         "configured": True,
-        "command": list(result["command"]),
-        "returncode": int(result["returncode"]),
-        "stdout": str(result["stdout"]),
-        "stderr": str(result["stderr"]),
+        "command": list(result.argv),
+        "returncode": int(result.returncode),
+        "stdout": result.stdout,
+        "stderr": result.stderr,
         "sent_at": _utc_now(),
         "outbox_path": str(_mock_outbox_path(artifacts_root)),
     }

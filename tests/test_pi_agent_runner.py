@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import types
 from pathlib import Path
 
-import agent.runtime.supervisor as e_agent
+import agent.e_agent as e_agent
 
-from agent.protocol.payloads import processed_skill_payload, reply_session_result
-from agent.runtime.runner import commit_skill_turn, run_ordinary_skill_turn
-from agent.state.session import AgentSessionStore
-import capabilities.tracking.entrypoints.turns as tracking_deterministic
-from capabilities.tracking.entrypoints.turns import process_tracking_init_direct
+from agent.runner import commit_skill_turn, run_ordinary_skill_turn
+from agent.session import AgentSessionStore
+from agent.skill_payload import processed_skill_payload, reply_session_result
+import capabilities.tracking.deterministic as tracking_deterministic
+from capabilities.tracking.deterministic import process_tracking_init_direct
 import skills.feishu.scripts.notify_turn as feishu_turn
 import skills.tts.scripts.speak_turn as tts_turn
 
@@ -49,6 +50,7 @@ def test_main_bootstraps_pi_runner_with_project_skills(monkeypatch, tmp_path: Pa
     captured: dict[str, object] = {}
     state_root = tmp_path / "state"
 
+    monkeypatch.setattr(e_agent, "_resolved_pi_bin", lambda raw: str(raw))
     monkeypatch.setattr(
         e_agent.subprocess,
         "Popen",
@@ -73,6 +75,7 @@ def test_main_bootstraps_pi_runner_with_project_skills(monkeypatch, tmp_path: Pa
     command = captured["command"]
     skill_args = [command[index + 1] for index, item in enumerate(command[:-1]) if item == "--skill"]
     prompt_args = [command[index + 1] for index, item in enumerate(command[:-1]) if item == "--append-system-prompt"]
+    session_dir_args = [command[index + 1] for index, item in enumerate(command[:-1]) if item == "--session-dir"]
 
     assert exit_code == 0
     assert captured["env"]["ROBOT_AGENT_SESSION_ID"] == active_session["session_id"]
@@ -80,33 +83,84 @@ def test_main_bootstraps_pi_runner_with_project_skills(monkeypatch, tmp_path: Pa
     assert captured["env"]["ROBOT_AGENT_TURN_OWNER_ID"] == "pi"
     assert command[0] == "pi"
     assert command[1:3] == ["--thinking", "minimal"]
+    assert session_dir_args == [str((state_root / "pi_sessions" / active_session["session_id"]).resolve())]
     assert "--no-skills" in command
     assert "--model" in command
     assert skill_args
-    assert any(path.endswith("/skills/tracking-init") for path in skill_args)
-    assert any(path.endswith("/skills/tracking-stop") for path in skill_args)
-    assert any(path.endswith("/skills/tts") for path in skill_args)
+    assert any(Path(path).name == "tracking" for path in skill_args)
+    assert any(Path(path).name == "tracking-stop" for path in skill_args)
+    assert any(Path(path).name == "tts" for path in skill_args)
     assert len(prompt_args) == 1
     assert "具身智能机器狗" in prompt_args[0]
     assert str((state_root / "perception" / "snapshot.json").resolve()) in prompt_args[0]
-    assert str((state_root / "perception" / "latest_frame.jpg").resolve()) in prompt_args[0]
     assert str((state_root / "tracking_memory" / active_session["session_id"] / "memory.json").resolve()) in prompt_args[0]
-    assert "当前启动时还没有可用的当前画面直达文件" in prompt_args[0]
+    assert "当前启动时还没有可用的 latest_frame.image_path" in prompt_args[0]
     assert "当前还没有可用的跟踪特征记忆" in prompt_args[0]
 
 
-def test_e_agent_cli_starts_fresh_session_without_session_id_option() -> None:
-    args = e_agent.parse_args([])
+def test_resolved_pi_bin_prefers_windows_launchers(monkeypatch) -> None:
+    monkeypatch.setattr(e_agent.os, "name", "nt")
+    monkeypatch.setattr(
+        e_agent.shutil,
+        "which",
+        lambda candidate: {
+            "pi.cmd": r"C:\Users\tester\AppData\Roaming\npm\pi.cmd",
+            "pi.exe": None,
+            "pi": None,
+        }.get(candidate),
+    )
 
-    assert not hasattr(args, "session_id")
-    assert not hasattr(args, "fresh")
+    assert e_agent._resolved_pi_bin("pi") == r"C:\Users\tester\AppData\Roaming\npm\pi.cmd"
+
+
+def test_voice_input_dispatches_text_to_continued_pi_session(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {"voice_texts": []}
+    state_root = tmp_path / "state"
+
+    class _FakeVoiceBridge:
+        def __init__(self, on_text):
+            self._on_text = on_text
+
+        def start(self) -> None:
+            self._on_text("voice follow-up")
+
+        def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(e_agent, "_resolved_pi_bin", lambda raw: str(raw))
+    monkeypatch.setattr(
+        e_agent.subprocess,
+        "Popen",
+        lambda command, env: _FakeProcess(captured, command, env),
+    )
+    monkeypatch.setattr(e_agent, "_write_voice_text_to_console", lambda text: captured["voice_texts"].append(text))
+    monkeypatch.setattr(e_agent, "_create_voice_input_bridge", lambda *, args, on_text: _FakeVoiceBridge(on_text))
+    monkeypatch.setattr(e_agent, "_sandbox_profile_path", lambda args, env: tmp_path / "pi-readonly.sb")
+    monkeypatch.setattr(e_agent, "run_due_tracking_step", lambda **kwargs: {"status": "idle"})
+
+    exit_code = e_agent.main(
+        [
+            "--state-root",
+            str(state_root),
+            "--pi-bin",
+            "pi.cmd",
+            "--voice-input",
+            "--supervisor-poll-seconds",
+            "0.05",
+        ]
+    )
+
+    active_session = json.loads((state_root / "active_session.json").read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert captured["voice_texts"] == ["voice follow-up"]
+    assert captured["env"]["ROBOT_AGENT_SESSION_ID"] == active_session["session_id"]
 
 
 def test_vision_grounding_prompt_uses_latest_frame_path_when_available(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     session_id = "sess_tracking"
     snapshot_path = state_root / "perception" / "snapshot.json"
-    latest_frame_artifact_path = (state_root / "perception" / "latest_frame.jpg").resolve()
     image_path = (tmp_path / "frame.jpg").resolve()
     image_path.write_bytes(b"frame")
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
@@ -136,11 +190,8 @@ def test_vision_grounding_prompt_uses_latest_frame_path_when_available(tmp_path:
     prompt = e_agent._vision_grounding_prompt(state_root=state_root, session_id=session_id)
 
     assert str(snapshot_path.resolve()) in prompt
-    assert str(latest_frame_artifact_path) in prompt
-    assert latest_frame_artifact_path.exists()
-    assert latest_frame_artifact_path.read_bytes() == image_path.read_bytes()
-    assert "优先直接读取这张图像" in prompt
-    assert "snapshot.json 和历史帧仍然是持久化真相" in prompt
+    assert f"当前启动时 latest_frame.image_path={str(image_path)}" in prompt
+    assert "不要把这个启动时路径当作长期真相" in prompt
     assert str((state_root / "tracking_memory" / session_id / "memory.json").resolve()) in prompt
 
 
@@ -184,7 +235,7 @@ def test_chat_can_trigger_skill_for_assist_reply(tmp_path: Path) -> None:
     )
 
     payload = processed_skill_payload(
-        skill_name="web-search",
+        skill_name="web_search",
         session_result={
             "request_id": "req_001",
             "function": "chat",
@@ -203,12 +254,12 @@ def test_chat_can_trigger_skill_for_assist_reply(tmp_path: Path) -> None:
     )
     session = sessions.load("sess_skill")
 
-    assert applied["skill_name"] == "web-search"
+    assert applied["skill_name"] == "web_search"
     assert applied["tool"] == "search"
     assert session.latest_result["function"] == "chat"
     assert session.latest_result["text"] == "我查到两条机器人新闻，已经整理给你。"
-    assert session.capabilities["web-search"]["last_query"] == "机器人新闻"
-    assert session.capabilities["web-search"]["last_summary"] == "两条结果"
+    assert session.capabilities["web_search"]["last_query"] == "机器人新闻"
+    assert session.capabilities["web_search"]["last_summary"] == "两条结果"
     assert [entry["role"] for entry in session.conversation_history] == ["user", "assistant"]
 
 
@@ -344,12 +395,12 @@ def test_tracking_skill_trigger_updates_session_with_clarification_when_frames_m
     )
     session = sessions.load("sess_tracking")
 
-    assert payload["skill_name"] == "tracking-init"
+    assert payload["skill_name"] == "tracking"
     assert payload["tool"] == "init"
     assert payload["session_result"]["needs_clarification"] is True
     assert "当前无法确认目标" in payload["session_result"]["text"]
     assert session.latest_result["function"] == "chat"
-    assert session.capabilities["tracking-init"]["pending_question"] == "当前无法确认目标，请补充描述。"
+    assert session.capabilities["tracking"]["pending_question"] == "当前无法确认目标，请补充描述。"
 
 
 def test_tracking_clarification_reply_routes_back_to_init_path(tmp_path: Path, monkeypatch) -> None:
@@ -359,7 +410,7 @@ def test_tracking_clarification_reply_routes_back_to_init_path(tmp_path: Path, m
     sessions.start_fresh_session("sess_tracking", device_id="robot_01")
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking-init",
+        skill_name="tracking",
         patch={
             "pending_question": "当前无法确认目标，请补充描述。",
             "latest_target_id": None,
@@ -371,7 +422,7 @@ def test_tracking_clarification_reply_routes_back_to_init_path(tmp_path: Path, m
 
     def _fake_init(**kwargs):
         captured.update(kwargs)
-        return {"status": "processed", "skill_name": "tracking-init", "tool": "init"}
+        return {"status": "processed", "skill_name": "tracking", "tool": "init"}
 
     monkeypatch.setattr(tracking_deterministic, "process_tracking_init_direct", _fake_init)
 
@@ -416,7 +467,7 @@ def test_web_search_skill_helper_uses_latest_user_text_without_committing(tmp_pa
     )
     session = sessions.load("sess_search")
 
-    assert payload["skill_name"] == "web-search"
+    assert payload["skill_name"] == "web_search"
     assert payload["tool"] == "search"
     assert payload["tool_output"]["query"] == "帮我查一下机器人新闻"
     assert payload["tool_output"]["error"] == "missing TAVILY_API_KEY"
@@ -532,11 +583,11 @@ def test_stale_ordinary_payload_does_not_mutate_session_state(tmp_path: Path) ->
     payload = run_ordinary_skill_turn(
         sessions=sessions,
         session_id="sess_stale_generic",
-        skill_name="web-search",
+        skill_name="web_search",
         env_file=tmp_path / ".ENV",
         request_id="req_old",
         build_payload=lambda _session, request_id, _stale_guard: processed_skill_payload(
-            skill_name="web-search",
+            skill_name="web_search",
             session_result={
                 "request_id": request_id,
                 "function": "chat",

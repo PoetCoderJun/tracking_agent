@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Sequence
 
-from agent.infra.paths import resolve_project_path
+from agent.project_paths import resolve_project_path
 from world.perception.stream import RobotDetection
 
 DEFAULT_SYSTEM1_MODEL = "yolov8n.pt"

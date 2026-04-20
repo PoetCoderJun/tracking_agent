@@ -3,31 +3,53 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
-from agent.infra.paths import resolve_project_path
-from agent.state.active import resolve_session_id
-from agent.state.session import AgentSessionStore
+from agent.config import parse_dotenv
+from agent.session_store import resolve_session_id
+from agent.project_paths import resolve_project_path
+from agent.session import AgentSessionStore
 from capabilities.tracking.agent import run_tracking_agent_turn
-from capabilities.tracking.runtime.effects import (
-    drain_pending_tracking_memory_rewrite,
-    pending_tracking_memory_rewrite,
-)
-from capabilities.tracking.runtime.triggers import derive_continuous_trigger, tracking_runtime_status
+from capabilities.tracking.effects import drain_pending_tracking_memory_rewrite, pending_tracking_memory_rewrite
+from capabilities.tracking.triggers import derive_continuous_trigger, tracking_runtime_status
 
 DEFAULT_SUPERVISOR_POLL_SECONDS = 0.25
 
 
+def _load_tracking_env_values(env_file: str | Path) -> dict[str, str]:
+    return parse_dotenv(resolve_project_path(env_file))
+
+
+def _float_env_value(values: Mapping[str, str], key: str, default: float) -> float:
+    raw = str(values.get(key, "")).strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def parse_args() -> argparse.Namespace:
+    bootstrap_parser = argparse.ArgumentParser(add_help=False)
+    bootstrap_parser.add_argument("--env-file", default=".ENV")
+    bootstrap_args, _ = bootstrap_parser.parse_known_args()
+    env_values = _load_tracking_env_values(bootstrap_args.env_file)
+
     parser = argparse.ArgumentParser(
         description="Tracking debug adapter. Runs one supervisor-style tracking step against the current session."
     )
     parser.add_argument("--session-id", default=None, help="Optional. If omitted, follows the current active session.")
     parser.add_argument("--device-id", default="robot_01")
     parser.add_argument("--state-root", default="./.runtime/agent-runtime")
-    parser.add_argument("--env-file", default=".ENV")
+    parser.add_argument("--env-file", default=bootstrap_args.env_file)
     parser.add_argument("--artifacts-root", default="./.runtime/pi-agent")
     parser.add_argument("--continue-text", default="继续跟踪")
+    parser.add_argument("--interval-seconds", type=float, default=_float_env_value(env_values, "QUERY_INTERVAL_SECONDS", 3.0))
+    parser.add_argument("--recovery-interval-seconds", type=float, default=_float_env_value(env_values, "TRACKING_RECOVERY_INTERVAL_SECONDS", 1.0))
+    parser.add_argument("--idle-sleep-seconds", type=float, default=_float_env_value(env_values, "TRACKING_IDLE_SLEEP_SECONDS", 3.0))
+    parser.add_argument("--presence-check-seconds", type=float, default=_float_env_value(env_values, "TRACKING_PRESENCE_CHECK_SECONDS", 1.0))
+    parser.add_argument("--rewrite-interval-seconds", type=float, default=_float_env_value(env_values, "TRACKING_MEMORY_REWRITE_INTERVAL_SECONDS", 2.0))
     parser.add_argument("--max-turns", type=int, default=None)
     parser.add_argument("--stop-file", default=None)
     return parser.parse_args()
@@ -46,6 +68,7 @@ def supervisor_tracking_step(
     artifacts_root: Path,
     owner_id: str,
     continue_text: str = "继续跟踪",
+    interval_seconds: float = 3.0,
 ) -> Dict[str, Any]:
     session = sessions.load(session_id, device_id=device_id)
     pending_rewrite = pending_tracking_memory_rewrite(session)
@@ -54,7 +77,7 @@ def supervisor_tracking_step(
         acquired = sessions.acquire_turn(
             session_id=session_id,
             owner_id=owner_id,
-            turn_kind="tracking-init-rewrite",
+            turn_kind="tracking-rewrite",
             request_id=rewrite_request_id,
             device_id=device_id,
             wait=False,
@@ -95,7 +118,7 @@ def supervisor_tracking_step(
     acquired = sessions.acquire_turn(
         session_id=session_id,
         owner_id=owner_id,
-        turn_kind="tracking-init-runtime",
+        turn_kind="tracking",
         request_id=trigger.request_id,
         device_id=device_id,
         wait=False,
@@ -127,7 +150,7 @@ def supervisor_tracking_step(
         "trigger": trigger.type,
         "cause": trigger.cause,
         "payload": payload,
-        "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS,
+        "sleep_seconds": DEFAULT_SUPERVISOR_POLL_SECONDS if interval_seconds > 0 else DEFAULT_SUPERVISOR_POLL_SECONDS,
     }
 
 
@@ -152,6 +175,7 @@ def main() -> int:
         artifacts_root=artifacts_root,
         owner_id=f"tracking-loop-debug:{session_id}",
         continue_text=args.continue_text,
+        interval_seconds=args.interval_seconds,
     )
     print(json.dumps(payload, ensure_ascii=True), flush=True)
     return 0

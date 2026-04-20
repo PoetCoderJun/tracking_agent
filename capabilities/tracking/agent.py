@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from agent.state.session import AgentSession, AgentSessionStore
-from capabilities.tracking.policy.select import execute_select_tool
-from capabilities.tracking.runtime.context import build_tracking_observation
-from capabilities.tracking.runtime.effects import apply_tracking_decision, decision_from_select_output
-from capabilities.tracking.runtime.types import TrackingDecision, TrackingObservation, TrackingTrigger
+from agent.session import AgentSession, AgentSessionStore
+from capabilities.tracking.context import build_tracking_observation
+from capabilities.tracking.effects import apply_tracking_decision, decision_from_select_output
+from capabilities.tracking.select import execute_select_tool
+from capabilities.tracking.types import TrackingDecision, TrackingObservation, TrackingTrigger
 
 
 def _observation_context_payload(observation: TrackingObservation) -> Dict[str, Any]:

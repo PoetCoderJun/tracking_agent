@@ -135,10 +135,14 @@ uv run robot-agent-environment-writer --source tests/fixtures/demo_video.mp4
 
 对文件流，运行时会自动使用实时播放默认行为，不需要再额外传其它参数。
 
-### 2. 启动 PI Agent TUI
+### 2. 启动 PI Agent TUI 文字交互和文字与语音交互
 
 ```bash
 uv run e-agent
+```
+
+```bash
+uv run e-agent --voice-input
 ```
 
 ### 3. 可选启动 viewer UI

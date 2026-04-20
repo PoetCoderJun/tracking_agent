@@ -1,1 +1,1 @@
-"""Helper scripts for the web-search skill."""
+"""Helper scripts for the web_search skill."""

@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-from capabilities.tracking.policy.prompt_templates import (
-    CONTINUOUS_TRACKING_SELECT_PROMPT_PATH,
-    TRACKING_INIT_SELECT_PROMPT_PATH,
-    TRACKING_RUNTIME_CONFIG_PATH,
-    load_tracking_runtime_config,
-)
-from capabilities.tracking.policy.select import enforce_conservative_track_decision
+from capabilities.tracking.select import enforce_conservative_track_decision
 
 
 def test_enforce_conservative_track_decision_downgrades_overlapping_target_box() -> None:
@@ -33,7 +27,7 @@ def test_enforce_conservative_track_decision_downgrades_overlapping_target_box()
     )
     assert result["decision"] == "track"
 
-    from capabilities.tracking.policy.select import detection_records
+    from capabilities.tracking.select import detection_records
 
     result = enforce_conservative_track_decision(
         normalized=normalized,
@@ -43,17 +37,3 @@ def test_enforce_conservative_track_decision_downgrades_overlapping_target_box()
     assert result["decision"] == "wait"
     assert result["found"] is False
     assert "重叠" in result["reject_reason"]
-
-
-def test_tracking_prompt_ownership_and_runtime_config_are_separated() -> None:
-    config = load_tracking_runtime_config()
-
-    assert TRACKING_INIT_SELECT_PROMPT_PATH.exists()
-    assert CONTINUOUS_TRACKING_SELECT_PROMPT_PATH.exists()
-    assert TRACKING_RUNTIME_CONFIG_PATH.exists()
-    assert "skills/tracking-init/" in str(TRACKING_INIT_SELECT_PROMPT_PATH)
-    assert "capabilities/tracking/" in str(CONTINUOUS_TRACKING_SELECT_PROMPT_PATH)
-    assert "capabilities/tracking/" in str(TRACKING_RUNTIME_CONFIG_PATH)
-    assert "prompt_files" not in config
-    assert "tracking_init_select_result" in config["contracts"]
-    assert "continuous_tracking_select_result" in config["contracts"]

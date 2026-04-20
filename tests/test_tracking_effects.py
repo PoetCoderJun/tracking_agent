@@ -2,19 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.state.session import AgentSessionStore
-import capabilities.tracking.runtime.effects as tracking_effects
-from capabilities.tracking.runtime.effects import (
+from agent.session import AgentSessionStore
+from capabilities.tracking.effects import (
     PENDING_REWRITE_INPUT_KEY,
     apply_tracking_decision,
+    apply_tracking_payload_compat,
     drain_pending_tracking_memory_rewrite,
 )
-from capabilities.tracking.runtime.types import ACTION_ASK, ACTION_TRACK, TRIGGER_CHAT_INIT, TrackingDecision, TrackingTrigger
-from capabilities.tracking.state.memory import read_tracking_memory_snapshot
-
-
-def test_tracking_effects_remove_compat_writer_adapter() -> None:
-    assert not hasattr(tracking_effects, "apply_tracking_payload_compat")
+from capabilities.tracking.memory import read_tracking_memory_snapshot
+from capabilities.tracking.types import ACTION_ASK, ACTION_TRACK, TRIGGER_CHAT_INIT, TrackingDecision, TrackingTrigger
 
 
 def test_apply_tracking_decision_chat_init_ask_sets_pending_question(tmp_path: Path) -> None:
@@ -48,8 +44,8 @@ def test_apply_tracking_decision_chat_init_ask_sets_pending_question(tmp_path: P
     session = sessions.load("sess_tracking")
 
     assert payload["skill_state_patch"]["pending_question"] == "当前无法确认目标，请补充描述。"
-    assert session.capabilities["tracking-init"]["pending_question"] == "当前无法确认目标，请补充描述。"
-    assert session.capabilities["tracking-init"]["target_description"] == "请跟踪穿黑衣服的人"
+    assert session.capabilities["tracking"]["pending_question"] == "当前无法确认目标，请补充描述。"
+    assert session.capabilities["tracking"]["target_description"] == "请跟踪穿黑衣服的人"
 
 
 def test_apply_tracking_decision_track_with_memory_effect_enqueues_background_rewrite(tmp_path: Path, monkeypatch) -> None:
@@ -60,7 +56,7 @@ def test_apply_tracking_decision_track_with_memory_effect_enqueues_background_re
     crop_path.write_bytes(b"fake")
 
     monkeypatch.setattr(
-        "capabilities.tracking.runtime.effects.execute_rewrite_memory_tool",
+        "capabilities.tracking.effects.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "init",
             "memory": {
@@ -105,8 +101,8 @@ def test_apply_tracking_decision_track_with_memory_effect_enqueues_background_re
     assert memory_snapshot["memory"]["core"] == ""
     assert payload["session_result"]["text"] == session.latest_result["text"]
     assert session.conversation_history[-1]["text"] == session.latest_result["text"]
-    assert session.capabilities["tracking-init"]["latest_target_id"] == 15
-    assert session.capabilities["tracking-init"][PENDING_REWRITE_INPUT_KEY]["target_id"] == 15
+    assert session.capabilities["tracking"]["latest_target_id"] == 15
+    assert session.capabilities["tracking"][PENDING_REWRITE_INPUT_KEY]["target_id"] == 15
 
 
 def test_drain_pending_tracking_memory_rewrite_writes_memory_and_clears_queue(tmp_path: Path, monkeypatch) -> None:
@@ -123,7 +119,7 @@ def test_drain_pending_tracking_memory_rewrite_writes_memory_and_clears_queue(tm
 
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking-init",
+        skill_name="tracking",
         patch={
             "latest_target_id": 15,
             PENDING_REWRITE_INPUT_KEY: {
@@ -139,7 +135,7 @@ def test_drain_pending_tracking_memory_rewrite_writes_memory_and_clears_queue(tm
     )
 
     monkeypatch.setattr(
-        "capabilities.tracking.runtime.effects.execute_rewrite_memory_tool",
+        "capabilities.tracking.effects.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "init",
             "memory": {
@@ -164,7 +160,40 @@ def test_drain_pending_tracking_memory_rewrite_writes_memory_and_clears_queue(tm
 
     assert payload["status"] == "processed"
     assert memory_snapshot["memory"]["core"] == "黑色上衣，白色鞋底。"
-    assert session.capabilities["tracking-init"].get(PENDING_REWRITE_INPUT_KEY) is None
+    assert session.capabilities["tracking"].get(PENDING_REWRITE_INPUT_KEY) is None
+
+
+def test_apply_tracking_payload_compat_accepts_request_id_and_commits(tmp_path: Path) -> None:
+    sessions = AgentSessionStore(tmp_path / "state")
+    sessions.start_fresh_session("sess_tracking", device_id="robot_01")
+
+    payload = apply_tracking_payload_compat(
+        sessions=sessions,
+        session_id="sess_tracking",
+        env_file=tmp_path / ".ENV",
+        pi_payload={
+            "skill_name": "tracking",
+            "session_result": {
+                "request_id": "req_compat",
+                "behavior": "track",
+                "frame_id": "frame_000001",
+                "target_id": 15,
+                "bounding_box_id": 15,
+                "found": True,
+                "decision": "track",
+                "text": "继续跟踪当前目标。",
+                "reason": "兼容路径提交。",
+            },
+            "tool_output": {"decision": "track"},
+        },
+    )
+    session = sessions.load("sess_tracking")
+
+    assert payload["status"] == "processed"
+    assert session.latest_result["request_id"] == "req_compat"
+    assert session.capabilities["tracking"]["latest_target_id"] == 15
+
+
 def test_apply_tracking_decision_drops_stale_request_without_mutating_tracking_state(tmp_path: Path) -> None:
     sessions = AgentSessionStore(tmp_path / "state")
     sessions.start_fresh_session("sess_tracking", device_id="robot_01")
@@ -223,7 +252,7 @@ def test_drain_pending_tracking_memory_rewrite_drops_stale_request(tmp_path: Pat
     crop_path.write_bytes(b"fake")
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking-init",
+        skill_name="tracking",
         patch={
             "latest_target_id": 15,
             PENDING_REWRITE_INPUT_KEY: {
@@ -244,7 +273,7 @@ def test_drain_pending_tracking_memory_rewrite_drops_stale_request(tmp_path: Pat
         request_id="req_newer",
     )
     monkeypatch.setattr(
-        "capabilities.tracking.runtime.effects.execute_rewrite_memory_tool",
+        "capabilities.tracking.effects.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "init",
             "memory": {
@@ -269,4 +298,4 @@ def test_drain_pending_tracking_memory_rewrite_drops_stale_request(tmp_path: Pat
     assert payload["status"] == "dropped"
     assert final_session.session["latest_request_id"] == "req_newer"
     assert memory_snapshot["memory"]["core"] == ""
-    assert final_session.capabilities["tracking-init"].get(PENDING_REWRITE_INPUT_KEY) is None
+    assert final_session.capabilities["tracking"].get(PENDING_REWRITE_INPUT_KEY) is None

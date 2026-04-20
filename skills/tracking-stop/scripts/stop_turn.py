@@ -6,24 +6,24 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from agent.infra.paths import resolve_project_path
-from agent.protocol.payloads import processed_skill_payload, reply_session_result
-from agent.state.active import resolve_session_id
-from agent.state.session import AgentSession, AgentSessionStore
-from capabilities.tracking.runtime.context import (
+from agent.project_paths import resolve_project_path
+from agent.session import AgentSession, AgentSessionStore
+from agent.session_store import resolve_session_id
+from agent.skill_payload import processed_skill_payload, reply_session_result
+from capabilities.tracking.context import (
     TRACKING_LIFECYCLE_INACTIVE,
     TRACKING_LIFECYCLE_STOPPED,
     normalize_tracking_state,
 )
-from capabilities.tracking.runtime.effects import (
+from capabilities.tracking.effects import (
     PENDING_REWRITE_ENQUEUED_AT_KEY,
     PENDING_REWRITE_ERROR_KEY,
     PENDING_REWRITE_INPUT_KEY,
     PENDING_REWRITE_REQUEST_ID_KEY,
 )
-from capabilities.tracking.state.memory import reset_tracking_memory_snapshot
+from capabilities.tracking.memory import reset_tracking_memory_snapshot
 
-TRACKING_SKILL_NAME = "tracking-init"
+TRACKING_SKILL_NAME = "tracking"
 TRACKING_STOP_SKILL_NAME = "tracking-stop"
 DEFAULT_STATE_ROOT = "./.runtime/agent-runtime"
 
@@ -72,6 +72,7 @@ def _stop_tracking_state(*, sessions: AgentSessionStore, session_id: str) -> Dic
             "latest_target_id": None,
             "pending_question": None,
             "lifecycle_status": TRACKING_LIFECYCLE_STOPPED,
+            "next_tracking_turn_at": None,
             "stop_reason": "manual_stop",
             PENDING_REWRITE_INPUT_KEY: None,
             PENDING_REWRITE_REQUEST_ID_KEY: None,

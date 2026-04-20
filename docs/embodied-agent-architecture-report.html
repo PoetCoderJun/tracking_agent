@@ -975,7 +975,7 @@
               这个内核以对话作为 Agent 的入口，让感知保持常驻，使大模型在任意一轮都能接入当前现实。它坚持单一的动作提交路径，让每一次行动都能被放进清晰的因果链中验证。它把跨轮信息写入共享状态，而不是让长期认知漂浮在 prompt 里。
             </p>
             <p>
-              更重要的是，它把 tracking、tts 乃至未来更多能力都收敛成可调用的 tools，而不是框架内置的逻辑。这意味着，内核不是为某一个 skill 定制出来的脚手架，而是一个<strong>可以让不同 embodied capabilities 被统一组织起来的认知底座</strong>。
+              更重要的是，它把 tracking、speech 乃至未来更多能力都收敛成可调用的 tools，而不是框架内置的逻辑。这意味着，内核不是为某一个 skill 定制出来的脚手架，而是一个<strong>可以让不同 embodied capabilities 被统一组织起来的认知底座</strong>。
             </p>
             <p>
               这份内核说明刻意强调的是当前仓库的最小形态：先把<strong>主常驻输入层、单一动作提交权、单一 agent state</strong>站稳。更正式的 embodied harness 在更严苛的延迟目标下，往往还会长出常驻低延迟辅助层与后台 recovery/eval 面，但这些层应建立在上述硬边界之上，而不是反客为主地重新长成一个重调度框架。
@@ -989,16 +989,16 @@
               </p>
             </div>
             <div class="card card-border-top">
-              <strong>TTS 的角色</strong>
+              <strong>Speech 的角色</strong>
               <p style="margin-bottom: 0;">
-                TTS 说明这个内核不只服务于视觉或空间任务。任何能返回结构化结果的能力，都能自然接入同一个 Agent 工作空间。
+                Speech 说明这个内核不只服务于视觉或空间任务。任何能返回结构化结果的能力，都能自然接入同一个 Agent 工作空间。
               </p>
             </div>
           </div>
         </div>
 
         <div class="pull-quote" style="margin: 0;">
-          "我们现在做成的，不是一个 tracking agent，而是一个以 tracking 和 tts 为能力样例的 embodied agent kernel。"
+          "我们现在做成的，不是一个 tracking agent，而是一个以 tracking 和 speech 为能力样例的 embodied agent kernel。"
         </div>
       </div>
       <div class="page-number">07</div>
@@ -1074,7 +1074,7 @@
             </div>
             <div>
               <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Capability Surface</h4>
-              <p style="font-size: 0.9rem;">把 tracking、tts、navigation 等能力收敛成统一 contract，使新能力可以按同一方式接入。</p>
+              <p style="font-size: 0.9rem;">把 tracking、speech、navigation 等能力收敛成统一 contract，使新能力可以按同一方式接入。</p>
             </div>
             <div>
               <h4 style="font-size: 1rem; margin-bottom: 8px; color: var(--accent-forest);">Recovery & Eval Layer</h4>

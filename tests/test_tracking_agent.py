@@ -1,41 +1,25 @@
 from __future__ import annotations
 
-import importlib.util
 import json
-import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from PIL import Image
 
+import skills.tracking.scripts.init_turn as tracking_init_turn
 from world.perception import LocalPerceptionService, RobotDetection, RobotFrame, RobotIngestEvent
-from agent.state.session import AgentSessionStore
+from agent.session import AgentSessionStore
 from capabilities.tracking.agent import Re, run_tracking_agent_turn
-import capabilities.tracking.entrypoints.turns as tracking_turns
-from capabilities.tracking.entrypoints.turns import process_tracking_init_direct
+from capabilities.tracking.deterministic import process_tracking_init_direct
+from capabilities.tracking.effects import PENDING_REWRITE_INPUT_KEY
 from capabilities.tracking.loop import supervisor_tracking_step
-from capabilities.tracking.policy.select import _select_with_model, execute_select_tool
-from capabilities.tracking.runtime.effects import PENDING_REWRITE_INPUT_KEY
-from capabilities.tracking.runtime.types import TRIGGER_CADENCE_REVIEW, TrackingTrigger
-from capabilities.tracking.state.memory import read_tracking_memory_snapshot, write_tracking_memory_snapshot
+from capabilities.tracking.memory import read_tracking_memory_snapshot, write_tracking_memory_snapshot
+from capabilities.tracking.select import _select_with_model, execute_select_tool
+from capabilities.tracking.types import TRIGGER_CADENCE_REVIEW, TrackingTrigger
 from interfaces.viewer import stream as viewer_stream
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load_module(path: Path, module_name: str):
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-tracking_init_turn = _load_module(
-    ROOT / "skills" / "tracking-init" / "scripts" / "init_turn.py",
-    "tracking_init_turn",
-)
 
 
 def _frame_image(path: Path) -> Path:
@@ -113,7 +97,7 @@ def test_re_exposes_observation_without_dialogue(tmp_path: Path) -> None:
     )
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking-init",
+        skill_name="tracking",
         patch={"latest_target_id": 15, "lifecycle_status": "bound"},
     )
     write_tracking_memory_snapshot(
@@ -152,7 +136,7 @@ def test_run_tracking_agent_turn_keeps_top_level_flow_and_commits_result(tmp_pat
     sessions.start_fresh_session("sess_tracking", device_id="robot_01")
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking-init",
+        skill_name="tracking",
         patch={"latest_target_id": 15, "lifecycle_status": "bound"},
     )
     write_tracking_memory_snapshot(
@@ -202,7 +186,7 @@ def test_run_tracking_agent_turn_keeps_top_level_flow_and_commits_result(tmp_pat
 
     assert payload["status"] == "processed"
     assert session.latest_result["text"] == "继续跟踪当前目标。"
-    assert session.capabilities["tracking-init"]["last_reviewed_trigger"] == TRIGGER_CADENCE_REVIEW
+    assert session.capabilities["tracking"]["last_reviewed_trigger"] == TRIGGER_CADENCE_REVIEW
 
 
 def test_tracking_init_writes_memory_synchronously_before_tracking_starts(tmp_path: Path, monkeypatch) -> None:
@@ -219,7 +203,7 @@ def test_tracking_init_writes_memory_synchronously_before_tracking_starts(tmp_pa
     )
 
     monkeypatch.setattr(
-        "capabilities.tracking.entrypoints.turns.execute_select_tool",
+        "capabilities.tracking.deterministic.execute_select_tool",
         lambda **_: {
             "behavior": "init",
             "frame_id": "frame_000001",
@@ -244,7 +228,7 @@ def test_tracking_init_writes_memory_synchronously_before_tracking_starts(tmp_pa
         },
     )
     monkeypatch.setattr(
-        "capabilities.tracking.entrypoints.turns.execute_rewrite_memory_tool",
+        "capabilities.tracking.deterministic.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "init",
             "memory": {
@@ -272,91 +256,9 @@ def test_tracking_init_writes_memory_synchronously_before_tracking_starts(tmp_pa
     session = sessions.load("sess_tracking")
 
     assert payload["status"] == "processed"
-    assert session.capabilities["tracking-init"]["latest_target_id"] == 15
-    assert session.capabilities["tracking-init"].get(PENDING_REWRITE_INPUT_KEY) is None
+    assert session.capabilities["tracking"]["latest_target_id"] == 15
+    assert session.capabilities["tracking"].get(PENDING_REWRITE_INPUT_KEY) is None
     assert memory_snapshot["memory"]["core"] == "黑色上衣，黑框眼镜，黑色耳机。"
-
-
-def test_tracking_request_direct_routes_native_decision_flow_to_tracking_writer(tmp_path: Path, monkeypatch) -> None:
-    state_root = tmp_path / "state"
-    artifacts_root = tmp_path / "artifacts"
-    sessions = AgentSessionStore(state_root)
-    sessions.start_fresh_session("sess_tracking", device_id="robot_01")
-    sessions.patch_skill_state(
-        "sess_tracking",
-        skill_name="tracking-init",
-        patch={"latest_target_id": 15, "lifecycle_status": "bound"},
-    )
-    write_tracking_memory_snapshot(
-        state_root=state_root,
-        session_id="sess_tracking",
-        memory={
-            "core": "黑色上衣，浅色裤子。",
-            "front_view": "",
-            "back_view": "",
-            "distinguish": "",
-        },
-    )
-    image_path = _frame_image(tmp_path / "frame.jpg")
-    _write_observation(state_root=state_root, session_id="sess_tracking", image_path=image_path)
-
-    captured: dict[str, object] = {}
-
-    monkeypatch.setattr(
-        "capabilities.tracking.agent.execute_select_tool",
-        lambda **_: {
-            "behavior": "track",
-            "frame_id": "frame_000001",
-            "target_id": 15,
-            "bounding_box_id": 15,
-            "found": True,
-            "decision": "track",
-            "text": "继续跟踪当前目标。",
-            "reason": "身份特征一致。",
-            "candidate_checks": [],
-        },
-    )
-
-    def _fake_apply_tracking_decision(**kwargs):
-        captured["trigger"] = kwargs["trigger"]
-        captured["decision"] = kwargs["decision"]
-        return {
-            "status": "processed",
-            "skill_name": "tracking-init",
-            "tool": "track",
-            "session_result": {"text": kwargs["decision"].text},
-        }
-
-    monkeypatch.setattr("capabilities.tracking.agent.apply_tracking_decision", _fake_apply_tracking_decision)
-
-    payload = tracking_turns.process_tracking_request_direct(
-        sessions=sessions,
-        session_id="sess_tracking",
-        device_id="robot_01",
-        text="继续跟踪",
-        request_id="req_track",
-        env_file=tmp_path / ".ENV",
-        artifacts_root=artifacts_root,
-    )
-
-    trigger = captured["trigger"]
-    decision = captured["decision"]
-
-    assert payload["status"] == "processed"
-    assert trigger.type == "event_rebind"
-    assert trigger.cause == "direct_request"
-    assert trigger.source == "tracking_direct"
-    assert decision.action == "track"
-    assert decision.target_id == 15
-
-
-def test_tracking_entrypoints_remove_compat_override_and_helpers() -> None:
-    init_signature = inspect.signature(tracking_turns.process_tracking_init_direct)
-    request_signature = inspect.signature(tracking_turns.process_tracking_request_direct)
-
-    assert "apply_tracking_payload" not in init_signature.parameters
-    assert "apply_tracking_payload" not in request_signature.parameters
-    assert not hasattr(tracking_turns, "apply_processed_tracking_payload")
 
 
 def test_tracking_result_writes_local_viewer_snapshot(tmp_path: Path) -> None:
@@ -365,7 +267,7 @@ def test_tracking_result_writes_local_viewer_snapshot(tmp_path: Path) -> None:
     sessions.start_fresh_session("sess_tracking", device_id="robot_01")
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking-init",
+        skill_name="tracking",
         patch={"latest_target_id": 15, "lifecycle_status": "bound"},
     )
     write_tracking_memory_snapshot(
@@ -400,38 +302,19 @@ def test_tracking_result_writes_local_viewer_snapshot(tmp_path: Path) -> None:
         },
     )
 
-    snapshot = viewer_stream.build_agent_viewer_payload(
-        state_root=state_root,
-        session_id="sess_tracking",
-    )
+    snapshot_path = state_root / "viewer" / "latest.json"
+    frame_path = state_root / "viewer" / "latest.jpg"
 
-    assert not (state_root / "viewer" / "latest.json").exists()
-    assert not (state_root / "viewer" / "latest.jpg").exists()
+    assert snapshot_path.exists()
+    assert frame_path.exists()
+
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+
     assert snapshot["session_id"] == "sess_tracking"
     assert snapshot["agent"]["conversation_history"][-1]["text"] == "继续跟踪当前目标。"
     assert snapshot["summary"]["frame_id"] == "frame_000001"
-    assert snapshot["modules"]["tracking-init"]["display_frame"]["rendered_image_path"] == "/viewer-frame.jpg"
-    assert snapshot["modules"]["tracking-init"]["memory_history"] == []
-
-
-def test_perception_writes_latest_frame_artifact_without_overwriting_snapshot_truth(tmp_path: Path) -> None:
-    state_root = tmp_path / "state"
-    image_path = _frame_image(tmp_path / "frame.jpg")
-    _write_observation(state_root=state_root, session_id="sess_tracking", image_path=image_path)
-
-    perception = LocalPerceptionService(state_root)
-    snapshot = perception.read_snapshot()
-    latest_frame_artifact_path = perception.latest_frame_artifact_path().resolve()
-    snapshot_image_path = Path(str((snapshot.get("latest_frame") or {}).get("image_path", ""))).resolve()
-
-    assert latest_frame_artifact_path.exists()
-    assert snapshot_image_path.exists()
-    assert latest_frame_artifact_path.read_bytes() == snapshot_image_path.read_bytes()
-    assert latest_frame_artifact_path != snapshot_image_path
-
-    perception.reset()
-
-    assert not latest_frame_artifact_path.exists()
+    assert snapshot["modules"]["tracking"]["display_frame"]["rendered_image_path"] == str(frame_path.resolve())
+    assert snapshot["modules"]["tracking"]["memory_history"][-1]["memory"]
 
 
 def test_tracking_init_helper_uses_runtime_env_defaults(
@@ -515,11 +398,10 @@ def test_tracking_init_helper_requires_explicit_or_runtime_session(
 
 
 def test_tracking_skill_contract_spells_out_direct_init_fast_path() -> None:
-    skill_text = (ROOT / "skills" / "tracking-init" / "SKILL.md").read_text(encoding="utf-8")
+    skill_text = (ROOT / "skills" / "tracking" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "call the tracking helper immediately" in skill_text
     assert "Do not preflight by reading `.runtime`, echoing env vars" in skill_text
-    assert "perception/latest_frame.jpg" in skill_text
     assert "Do not turn lifecycle, status, explanation, or already-bound continuation turns into init." in skill_text
 
 
@@ -529,7 +411,7 @@ def test_viewer_payload_prefers_matching_result_frame(tmp_path: Path) -> None:
     sessions.start_fresh_session("sess_tracking", device_id="robot_01")
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking-init",
+        skill_name="tracking",
         patch={"latest_target_id": 15, "lifecycle_status": "bound"},
     )
     first_image = _frame_image(tmp_path / "frame_1.jpg")
@@ -569,14 +451,14 @@ def test_viewer_payload_prefers_matching_result_frame(tmp_path: Path) -> None:
         session_id="sess_tracking",
     )
 
-    assert payload["modules"]["tracking-init"]["display_frame"]["frame_id"] == "frame_000001"
+    assert payload["modules"]["tracking"]["display_frame"]["frame_id"] == "frame_000001"
 
 
-def test_viewer_cli_defaults_to_local_state_root() -> None:
+def test_viewer_cli_defaults_to_local_snapshot_output() -> None:
     args = viewer_stream.parse_args([])
 
     assert args.state_root == "./.runtime/agent-runtime"
-    assert args.session_id is None
+    assert args.output is None
 
 
 def test_execute_select_tool_uses_flash_for_init_and_track(tmp_path: Path, monkeypatch) -> None:
@@ -586,7 +468,7 @@ def test_execute_select_tool_uses_flash_for_init_and_track(tmp_path: Path, monke
     requested_models: list[str] = []
 
     monkeypatch.setattr(
-        "capabilities.tracking.policy.select.load_settings",
+        "capabilities.tracking.select.load_settings",
         lambda _env_file: SimpleNamespace(
             api_key="test-key",
             base_url="https://example.com",
@@ -616,7 +498,7 @@ def test_execute_select_tool_uses_flash_for_init_and_track(tmp_path: Path, monke
             0.01,
         )
 
-    monkeypatch.setattr("capabilities.tracking.policy.select._select_with_model", _fake_select_with_model)
+    monkeypatch.setattr("capabilities.tracking.select._select_with_model", _fake_select_with_model)
 
     execute_select_tool(
         tracking_context=init_context,
@@ -652,7 +534,7 @@ def test_select_with_model_retries_once_after_invalid_json(monkeypatch) -> None:
         ]
     )
 
-    monkeypatch.setattr("capabilities.tracking.policy.select.call_model", lambda **_: next(responses))
+    monkeypatch.setattr("capabilities.tracking.select.call_model", lambda **_: next(responses))
 
     normalized, elapsed_seconds = _select_with_model(
         settings=SimpleNamespace(api_key="test-key", base_url="https://example.com", timeout_seconds=10),
@@ -683,7 +565,7 @@ def test_supervisor_tracking_step_processes_pending_rewrite_when_idle(tmp_path: 
     _write_observation(state_root=state_root, session_id="sess_tracking", image_path=image_path)
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking-init",
+        skill_name="tracking",
         patch={
             "latest_target_id": 15,
             "last_completed_frame_id": "frame_000001",
@@ -701,7 +583,7 @@ def test_supervisor_tracking_step_processes_pending_rewrite_when_idle(tmp_path: 
     )
 
     monkeypatch.setattr(
-        "capabilities.tracking.runtime.effects.execute_rewrite_memory_tool",
+        "capabilities.tracking.effects.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "update",
             "memory": {
@@ -726,7 +608,7 @@ def test_supervisor_tracking_step_processes_pending_rewrite_when_idle(tmp_path: 
 
     assert payload["status"] == "rewrite_processed"
     assert payload["trigger"] == "background_rewrite"
-    assert sessions.load("sess_tracking").capabilities["tracking-init"].get(PENDING_REWRITE_INPUT_KEY) is None
+    assert sessions.load("sess_tracking").capabilities["tracking"].get(PENDING_REWRITE_INPUT_KEY) is None
 
 
 def test_supervisor_tracking_step_prioritizes_pending_rewrite_before_new_tracking_turn(
@@ -754,7 +636,7 @@ def test_supervisor_tracking_step_prioritizes_pending_rewrite_before_new_trackin
     )
     sessions.patch_skill_state(
         "sess_tracking",
-        skill_name="tracking-init",
+        skill_name="tracking",
         patch={
             "latest_target_id": 15,
             "last_completed_frame_id": "frame_000001",
@@ -772,7 +654,7 @@ def test_supervisor_tracking_step_prioritizes_pending_rewrite_before_new_trackin
     )
 
     monkeypatch.setattr(
-        "capabilities.tracking.runtime.effects.execute_rewrite_memory_tool",
+        "capabilities.tracking.effects.execute_rewrite_memory_tool",
         lambda **_: {
             "task": "update",
             "memory": {

@@ -18,8 +18,7 @@ def test_write_environment_keeps_camera_defaults_simple() -> None:
     assert args.realtime_playback is False
 
 
-def test_tracking_benchmark_parse_args_has_no_pipeline_option() -> None:
+def test_tracking_benchmark_defaults_to_runtime_pipeline() -> None:
     args = tracking_benchmark.parse_args([])
 
-    assert not hasattr(args, "pipeline")
-    assert not hasattr(args, "rebind_after_missed_frames")
+    assert args.pipeline == "rebind_fsm"

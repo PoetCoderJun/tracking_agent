@@ -9,12 +9,6 @@ Tracking is split into two parts:
 
 They do different jobs.
 
-Path ownership should also stay split:
-
-- `skills/tracking-init/` is the `tracking-init` skill surface.
-- `skills/tracking-stop/` is the stop/clear skill surface.
-- `capabilities/tracking/` is the continuous tracking Python runtime surface.
-
 ## 1. Tracking Init Skill
 
 `tracking-init` is a one-shot skill used only to initialize the target.
@@ -38,10 +32,6 @@ After confirmation, initialization writes:
 
 Tracking mini-agent only reads the low-frequency world snapshot.
 
-Perception may also maintain `perception/latest_frame.jpg` as a stable direct image alias for the current snapshot frame.
-That file is only a fast path for current visual grounding.
-`snapshot.json` and historical frames remain the persisted truth.
-
 The runtime model is:
 
 - system1 / tracker may run internally at higher frequency
@@ -63,16 +53,9 @@ Its control flow is intentionally short:
 1. derive trigger
 2. `Re(trigger)`
 3. `Act(observation)`
-4. `persist(decision)`
+4. `commit(decision)`
 
 The mini-agent should stay readable at a glance.
-
-The internal file layout should support that readability:
-
-- keep `capabilities/tracking/loop.py` as the supervisor entry
-- keep `capabilities/tracking/agent.py` as the single-turn Re/Act entry
-- move supporting code into explicit subpackages such as `runtime/`, `policy/`, `state/`, `artifacts/`, `entrypoints/`, and `evaluation/`
-- avoid growing another flat pile of unrelated top-level tracking modules
 
 ## 4. Re
 
@@ -128,19 +111,18 @@ There are exactly three trigger concepts:
 - triggered when the latest snapshot shows that the bound target is gone or no longer trustworthy
 - used to recover the correct current `track_id`
 
-## 7. Persist
+## 7. Commit
 
-All continuous tracking authoritative state updates are persisted in one place.
+All continuous tracking side effects are committed in one place.
 
-That writer is responsible for:
+Commit is responsible for:
 
 - persisting assistant result text
 - updating tracking state
 - writing tracking memory
 - enforcing stale-request safety
 
-This is not a generic framework concept.
-It is a narrow single-writer rule for tracking lifecycle truth, because async supervision, leases, and queued rewrite work make split writers error-prone.
+There must not be multiple writers for tracking lifecycle state.
 
 ## 8. Frequency Model
 
@@ -163,4 +145,3 @@ Benchmark should follow the same model as runtime:
 - keep tracker continuity internally
 - drive the mini-agent only from emitted world snapshots
 - do not let benchmark use raw tracker frames as direct tracking-agent input
-- reuse the same production tracking entry/supervision/writer surfaces instead of benchmark-private apply paths
